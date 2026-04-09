@@ -1,0 +1,901 @@
+================================================================================
+  SKILLSWAP CONNECT — FULL PROJECT OVERVIEW & TECH STACK
+================================================================================
+
+Document: docs/PROJECT_OVERVIEW.txt
+Product:  SkillSwap — student peer learning marketplace (credits, not money)
+Repo:     skillswap-connect/
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+SkillSwap Connect is a full-stack peer learning marketplace for students.
+Learners discover peers by skill, book sessions, chat, meet over embedded
+video, and exchange value through an internal CREDIT ECONOMY instead of cash.
+
+The codebase is built as a production-oriented student innovation project:
+  - Strong database-side business rules (110+ SQL migrations)
+  - Enterprise-style admin tooling (RBAC, finance, compliance)
+  - Compliance-oriented documentation in docs/compliance/
+  - Security-first Cloudflare Worker edge (CSP, HSTS, etc.)
+
+Workspace layout:
+  - skillswap-connect/  — Full application (all product code)
+
+================================================================================
+2. PRODUCT VISION & VALUE PROPOSITION
+================================================================================
+
+Audience:     Students who teach what they know and learn from peers
+Monetization: Credits only — no credit card for core flows
+Starter:      10 starter credits (configurable via feature flags)
+Core loop:    Discover → Request → Accept → Schedule → Video → Complete → Credits
+
+Differentiators:
+  - Built-in Jitsi video (meet.jit.si or 8x8 JaaS)
+  - Session-linked messaging
+  - Learning tracks (multi-session paths)
+  - AI suggestions (optional, Gemini-grounded)
+  - Strikes, reports, moderation
+  - Enterprise admin console with RBAC and separation of duties
+
+Landing page workflow (marketing):
+  Request  — Choose a skill and send a session request
+  Accept   — Teachers approve, schedule, and open the video room
+  Learn    — Chat, meet, complete, and transfer credits
+
+Feature pillars on landing page:
+  - Find peer teachers (browse by skills, level, rating)
+  - Exchange with credits (earn by teaching, spend to learn)
+  - Learn face-to-face (embedded Jitsi video room)
+
+Proof points:
+  - No credit card
+  - 10 starter credits
+  - Built-in video
+
+================================================================================
+3. HIGH-LEVEL ARCHITECTURE
+================================================================================
+
+LAYER              TECHNOLOGY                    ROLE
+-----------------  ----------------------------  ----------------------------------
+Presentation       React 19                      UI components
+                   TanStack Router               File-based routes, guards, meta
+                   TanStack Start                SSR shell, full-stack framework
+                   TanStack Query                Client/server state cache
+
+Styling            Tailwind CSS v4               Utility CSS, design tokens
+                   shadcn/ui (Radix)             Accessible primitives
+                   Lucide React                  Icons
+
+Build              Vite 7                        Bundler, dev server
+                   TanStack/React/Tailwind/Cloudflare plugins configured in vite.config.ts
+
+Hosting            Cloudflare Workers            Edge deployment
+                   server.ts                     Custom entry + security headers
+                   wrangler.jsonc                Worker config
+
+Backend            Supabase                      Postgres, Auth, Realtime, Storage
+                   Edge Functions (Deno)         AI, Jitsi tokens, n8n proxy
+
+Video              Jitsi / 8x8 JaaS              Room per accepted session
+
+AI (optional)      Google Gemini                 Dashboard suggestions
+
+Automation         n8n (optional)                Webhooks via Edge Function
+
+CAPTCHA            Turnstile / hCaptcha          Abuse prevention when Auth CAPTCHA on
+
+Auth               Supabase Auth                 Email/password, Google OAuth
+
+ARCHITECTURE FLOW (text diagram):
+
+  [Browser]
+      React 19 + TanStack Router/Start + TanStack Query
+      Supabase JS client
+           |
+           v
+  [Cloudflare Workers]
+      server.ts (CSP, security headers)
+      TanStack Start SSR handler
+           |
+           v
+  [Supabase]
+      PostgreSQL (110 migrations, RPCs, RLS)
+      Auth | Realtime | Storage | Edge Functions
+           |
+           +--> Jitsi / 8x8 JaaS (video)
+           +--> Google Gemini (suggestions)
+           +--> n8n (optional workflows)
+           +--> Turnstile / hCaptcha
+
+Business rules live primarily in PostgreSQL migrations under
+supabase/migrations/, not in a separate REST API server.
+
+================================================================================
+4. CORE USER JOURNEYS & ROUTES
+================================================================================
+
+There are 24 route files under src/routes/.
+
+--- 4.1 Public & Authentication ---
+
+Route              Purpose
+-----              -------
+/                  Landing page — features, workflow, CTAs
+/login             Supabase Auth sign-in
+/signup            Registration; CAPTCHA when enabled
+/onboarding        New-user setup flow
+
+--- 4.2 Learner / Teacher Application ---
+
+Route                      Purpose
+-----                      -------
+/dashboard                 Session hub, incoming requests, upcoming sessions
+/explore                   Browse peers by skills
+/users/$userId             Public user profile
+/profile                   Own profile, skills, availability editor
+/sessions/$sessionId       Session detail — status, reschedule, reviews, actions
+/messages                  Message inbox (session-linked)
+/messages/$sessionId       Session-scoped chat thread
+/video/$sessionId          Embedded Jitsi video room
+/credits                   Credit balance and ledger
+/history                   Activity history
+/tracks                    Multi-session learning tracks
+/notifications             Notification center
+
+--- 4.3 Admin Console (/admin/*) ---
+
+Protected by get_my_admin_permissions RPC and permission-aware AdminSubNav.
+
+Route              RBAC Domain (typical)     Purpose
+-----              ---------------------     -------
+/admin             analytics:read            Overview / KPIs
+/admin/users       users:read                User governance
+/admin/sessions    sessions:read             Session operations dashboard
+/admin/finance     wallet:read               Wallet, escrow, finance actions
+/admin/reports     moderation:read           Report queue / moderation
+/admin/skills      moderation:update         Skills catalog management
+
+Additional enterprise capabilities (cases, compliance, settings, audit, security,
+access governance, privacy) are implemented primarily in PostgreSQL RPCs and
+migrations. Not every capability has a dedicated route file yet.
+
+--- 4.4 Global App Shell (__root.tsx) ---
+
+Providers and global chrome:
+  - AuthProvider + AuthGateProvider
+  - ThemeProvider (flash-free dark mode via themeInitScript)
+  - QueryClientProvider (TanStack Query)
+  - SiteHeader, SiteFooter (on applicable routes)
+
+Realtime / heads-up UX:
+  - IncomingRequestBanner
+  - MessageHeadsUp
+  - IncomingCallToast
+  - SessionEventHeadsUp
+  - CreditBalanceRealtimeBridge
+
+Other global:
+  - ErrorBoundary
+  - Toaster (Sonner)
+  - 404 NotFoundComponent with branded glass UI
+
+Meta / SEO:
+  - Title: "SkillSwap - Teach. Learn. Grow Together."
+  - Open Graph and Twitter card meta
+  - Theme color for light/dark
+  - Apple mobile web app capable
+
+================================================================================
+5. DOMAIN MODEL & BUSINESS LOGIC (DATABASE-CENTRIC)
+================================================================================
+
+Approximately 110 SQL migration files under supabase/migrations/.
+Generated types: src/integrations/supabase/types.ts (Database type, 80+ RPCs).
+
+--- 5.1 Core Tables (user-facing) ---
+
+Table                      Purpose
+-----                      -------
+profiles                   User profile, credits balance, admin flags, suspension
+skills                     Platform skill catalog
+user_teaching_skills       Skills the user can teach
+user_learning_skills       Skills the user wants to learn
+sessions                   Lifecycle, credits, escrow, meet_link, duration
+messages                   Session-linked chat (edit/delete, safety filter)
+notifications              In-app notifications
+reviews                    Post-session ratings (blind/edit windows)
+reports                    User reports with evidence snapshots
+credit_transactions        Credit ledger / audit trail
+learning_tracks            Structured multi-session learning paths
+track_planned_sessions     Planned sessions within a track
+reschedule_proposals       Two-sided reschedule flow
+
+(Additional admin, audit, strike, settlement, and feature-flag tables exist
+in migrations; many are accessed only via secured RPCs.)
+
+--- 5.2 Session Lifecycle ---
+
+session_status enum values:
+  - pending
+  - accepted
+  - active
+  - pending_review
+  - completed
+  - cancelled
+
+Typical flow:
+  1. REQUEST    — Learner creates pending session; duplicate open sessions prevented
+  2. ACCEPT     — accept_session RPC: escrow learner credits, store meet_link
+  3. ATTEND     — record_session_join / record_session_leave track seconds
+  4. ACTIVE     — Session in progress; messaging allowed when active
+  5. REVIEW     — move_due_sessions_to_review; pending_review status
+  6. SETTLE     — auto_settle_session, complete_session; attendance-based outcomes
+  7. COMPLETE   — Credits released or refunded; reviews; terminal status
+
+Key RPCs (examples):
+  - accept_session, reject_session, cancel_session
+  - complete_session, auto_settle_session, dispute_session
+  - record_session_join, record_session_leave, session_attended_seconds
+  - move_due_sessions_to_review, settle_pending_review_sessions
+  - propose_reschedule, accept_reschedule, reject_reschedule, withdraw_reschedule
+
+--- 5.3 Credit & Escrow Model ---
+
+Before escrow (legacy):
+  Credits moved only on complete_session() — teacher could be ghosted.
+
+After escrow migration (20260508050000_session_escrow.sql):
+  - credits held when teacher ACCEPTS (escrow_held = true on sessions)
+  - Completion releases escrow to teacher
+  - Cancellation refunds learner
+  - credit_transactions ledger records holds, releases, refunds
+  - Client direct writes to credits/session status LOCKED via later migrations
+
+Settlement (20260512060000_session_review_and_settlement.sql):
+  - Attendance-based partial splits
+  - session_settlement audit table
+  - Outcomes: full pay teacher, partial split, full refund, no-show rules
+  - Terminal status: completed if teacher paid, cancelled on full refund
+
+Finance admin:
+  - request_finance_action / approve_finance_action (maker-checker)
+  - run_finance_reconciliation, create_finance_report_manifest
+
+--- 5.4 Trust & Safety ---
+
+  - user strikes and suspension (user_active_strike_weight, user_suspension_state)
+  - my_strike_summary RPC for UI (StrikeBanner component)
+  - admin_issue_strike, admin_revoke_strike
+  - reports with hardened creation and evidence snapshots
+  - message safety filter (server-side migration)
+  - account deletion with tombstones (sessions, messages, reviews)
+  - delete_my_account RPC
+
+--- 5.5 Availability & Matching ---
+
+  - set_my_availability / get_my_availability
+  - compute_intersection_slots for scheduling
+  - teachers_intersection_status / has_any_intersection for explore UX
+  - match.ts and explore route use intersection data
+
+--- 5.6 Learning Tracks ---
+
+  - propose_track, accept_track, reject_track, end_track
+  - materialize_due_planned_sessions
+  - get_my_tracks
+  - TrackProposalDialog component on /tracks
+
+--- 5.7 Reviews ---
+
+  - Blind review window (migration 20260508000000)
+  - Edit window and report linkage (20260508010000)
+  - Reviews locked from direct client writes; RPC-driven
+
+--- 5.8 Enterprise Admin (phased migrations) ---
+
+Phases in migration filenames (20260511070000 through 20260511130000+):
+
+  Phase 1 — Enterprise admin foundation
+  Phase 2 — Audit and security dashboards
+  Phase 3 — Cases and access governance
+  Phase 4 — Finance (wallet, reconciliation)
+  Phase 5 — Privacy and compliance (GDPR-style requests, retention)
+  Phase 6 — Settings and change management (propose/approve/publish)
+
+Capabilities include:
+  - RBAC: domain:action permissions (get_my_admin_permissions)
+  - Admin cases from reports (admin_cases, notes, SLA)
+  - JIT admin access requests (request_admin_access, approve/reject)
+  - Break-glass emergency access with expiry and ticket reference
+  - Audit event chain (get_admin_audit_events, verify_admin_audit_chain)
+  - Feature flags in database (get_admin_feature_flags)
+  - PII reveal controls (reveal_admin_user_pii)
+  - Privacy export/anonymization/retention purge RPCs
+  - System health dashboard
+  - Admin broadcast notifications
+
+RBAC documented in: docs/compliance/rbac-sod-model.md
+
+Permission format: domain:action
+
+Domains:
+  moderation, users, sessions, wallet, analytics, compliance, settings,
+  incident-response, access-governance, security, privacy
+
+Actions:
+  read, create, update, approve, export, override, reveal, delete
+
+Role templates:
+  moderator          — Report queue, limited context
+  trust_lead         — Escalation, export capability
+  finance_ops        — Wallet/escrow; maker-checker for high-risk
+  compliance_auditor — Read/export only at runtime
+  super_admin        — Platform admin; maps from profiles.is_admin
+  break_glass        — Emergency only; expiry + incident ticket required
+
+================================================================================
+6. FRONTEND ARCHITECTURE (DETAILED)
+================================================================================
+
+--- 6.1 Routing & Data Loading ---
+
+TanStack Router:
+  - File-based routes in src/routes/*.tsx
+  - beforeLoad guards (e.g. /admin checks auth + permissions client-side)
+  - Note: SSR cannot read localStorage session; admin guard is client-side
+  - Head/meta per route (title, description, OG tags)
+  - routeTree.gen.ts auto-generated
+
+TanStack Start:
+  - Full-stack React on Vite
+  - SSR shell in __root.tsx (RootShell, RootComponent)
+  - Deployed via Cloudflare Workers
+
+TanStack Query:
+  - QueryClient in root layout
+  - Used for profiles, admin dashboards, feature flags, credits
+  - staleTime configured per query (e.g. feature flags 60s)
+
+Vite config (vite.config.ts):
+  - autoCodeSplitting: true (each route = own chunk)
+  - Dev warmup: __root, dashboard, explore, messages, profile
+  - optimizeDeps: supabase, tanstack, sonner, recharts, etc.
+  - allowedHosts: ngrok, trycloudflare for tunnel testing
+  - Uses TanStack Start, React, Tailwind, Cloudflare, and tsconfig-path plugins directly
+
+--- 6.2 Domain Libraries (src/lib/) ---
+
+File                   Responsibility
+----                   ----------------
+auth-context.tsx       Session state, onAuthStateChange, cache scrub on sign-out
+auth-gate.tsx          Route-level auth gating helpers
+auth-redirect.ts       OAuth / email verification code exchange
+sessions.ts            Session operations patterns
+session-queries.ts     Query helpers for session data
+match.ts               Peer/skill matching
+jitsi.ts               Video room URL generation
+jitsi-token.ts         JaaS token client wrapper
+ratings.ts             Review/rating UX helpers
+skill-paths.ts         Skill progression graph (synced with Edge Function)
+ai-suggestions.ts      Client wrapper for generate-suggestions
+n8n.ts                 Authenticated n8n-webhook calls
+captcha.ts             Turnstile/hCaptcha integration
+feature-flags.ts       DB-driven toggles (useFeatureFlags, useFeatureEnabled)
+messageFilter.ts       Message safety helpers
+admin.ts               Permission checks (hasAdminPermission, useAdminPermissions)
+admin-format.ts        Admin UI formatting
+oauth.ts               Google account linking
+avatars.ts             Supabase Storage avatar URLs
+errors.ts              Error normalization
+redirect.ts            Navigation redirect helpers
+page-caches.ts         Client-side page cache keys
+profile-events.ts      Profile update events
+call-signals.ts        Incoming call signaling
+search-config.ts       Global search configuration
+utils.ts               cn() and shared utilities
+
+--- 6.3 Hooks (src/hooks/) ---
+
+  - use-mobile.tsx          Responsive breakpoint detection
+  - useDebouncedCallback.ts Debounced callbacks
+  - useMyCreditBalance.ts   Credit balance + realtime bridge
+
+--- 6.4 Components (~75 TSX files) ---
+
+src/components/ui/     shadcn-style primitives (Radix + CVA):
+  button, card, dialog, form, table, chart, sidebar, sonner, etc.
+
+Feature components:
+  AdminSubNav, AvailabilityEditor, CaptchaChallenge, ConfirmAction,
+  EmptyState, ErrorBoundary, GlobalSearch, IncomingCallToast,
+  IncomingRequestBanner, Logo, MessageBubble, MessageHeadsUp,
+  NotificationsMenu, PageLoading, ReportDialog, RescheduleSection,
+  ReviewDialog, SessionEventHeadsUp, SessionRequestDialog, SiteFooter,
+  SiteHeader, StrikeBanner, TeacherRatingBadge, ThemeToggle,
+  TrackProposalDialog, UserAvatar
+
+Admin components:
+  admin/KpiTile.tsx, admin/AdminCharts.lazy.tsx, admin/ReasonFields.tsx
+
+--- 6.5 Styling & Theming ---
+
+  - Tailwind CSS v4 via @tailwindcss/vite
+  - src/styles.css — design tokens, gradients, glass effects
+  - shadcn config: components.json — "new-york" style, slate base, CSS variables
+  - ThemeToggle + themeInitScript prevents flash of wrong theme
+  - Brand assets: public/brand-mark.png, brand-lockup.png, icon variants
+  - Custom classes: gradient-brand, glass, shadow-glow, etc.
+
+--- 6.6 Forms & Validation ---
+
+  - react-hook-form
+  - zod schemas
+  - @hookform/resolvers
+
+================================================================================
+7. BACKEND & INTEGRATIONS (DETAILED)
+================================================================================
+
+--- 7.1 Supabase Client ---
+
+File: src/integrations/supabase/client.ts
+
+  - Lazy singleton via Proxy (defers creation until first use)
+  - VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY on client
+  - process.env.SUPABASE_* fallback on SSR
+  - Typed with Database from types.ts
+  - Auth: localStorage persistence, autoRefreshToken
+
+Also:
+  - client.server.ts — server-side client variant
+  - auth-middleware.ts — auth middleware helpers
+  - types.ts — generated schema types and RPC signatures
+
+--- 7.2 Supabase Services ---
+
+PostgreSQL:
+  - All business logic, RLS policies, triggers, RPCs
+  - SECURITY DEFINER for privileged operations; INVOKER hardening in later migrations
+  - Revoke PUBLIC/anon execute on internal helpers
+
+Auth:
+  - Email/password signup and login
+  - Google OAuth (oauth.ts, CSP allows accounts.google.com, googleusercontent images)
+  - CAPTCHA when enabled in Supabase Auth settings
+
+Realtime:
+  - Session updates, messages, notifications, credit balance
+  - Migrations: 20260503000000_realtime_sessions.sql and related
+
+Storage:
+  - avatars bucket (20260503030000, 20260511060000 limits)
+  - avatars.ts for signed/public URL handling
+
+--- 7.3 Edge Functions (Deno, supabase/functions/) ---
+
+Function                  Purpose
+--------                  -------
+generate-suggestions      POST — Google Gemini Flash; grounded on DB data
+                          (trending skills, teachers, progressions); caches 6h
+                          Secret: GEMINI_API_KEY
+                          Types: trending, match, progression, profile, swap,
+                                 momentum, general
+
+mint-jitsi-token          JWT for 8x8 JaaS when VITE_JAAS_APP_ID configured
+                          Secrets: JAAS_APP_ID, JAAS_KEY_ID, JAAS_PRIVATE_KEY
+
+n8n-webhook               Server-side proxy to n8n workflows
+                          Secrets: N8N_RECOMMENDATION_WEBHOOK_URL,
+                                   N8N_CREDIT_TRANSFER_WEBHOOK_URL,
+                                   N8N_WEBHOOK_SECRET
+                          Never expose webhook signing secrets to browser
+
+_shared/cors.ts           Shared CORS helpers for Edge Functions
+
+--- 7.4 Jitsi Video ---
+
+Documentation: docs/jitsi-video.md
+
+Default:
+  VITE_JITSI_DOMAIN="meet.jit.si" (or omit — public free tier)
+
+Production option:
+  VITE_JAAS_APP_ID — switches to 8x8.vc (JaaS)
+  mint-jitsi-token Edge Function for moderator/guest tokens
+
+Flow:
+  1. Learner requests session (pending)
+  2. Teacher accepts
+  3. createVideoRoom() generates unique Jitsi URL
+  4. URL saved to sessions.meet_link (legacy column name)
+  5. Both join from Dashboard, Sessions, or /video/:sessionId
+  6. Iframe with camera, mic, fullscreen, screen share permissions
+
+CSP (server.ts) allows:
+  script-src: 8x8.vc, meet.jit.si
+  frame-src:  8x8.vc, meet.jit.si
+  connect-src: (via general Supabase; Jitsi signaling)
+
+--- 7.5 Google Gemini (AI Suggestions) ---
+
+Optional feature flag: features.ai_suggestions.enabled
+
+  - Edge Function calls Gemini with user's profile + real platform signals
+  - Grounded to avoid hallucinated skill names not on platform
+  - SKILL_PROGRESSIONS duplicated in Edge Function (keep in sync with skill-paths.ts)
+  - Results cached in ai_suggestions table per user
+
+--- 7.6 n8n Automation (Optional) ---
+
+  - Browser calls n8n-webhook Edge Function with user JWT
+  - Workflows for recommendations, credit transfers, etc.
+  - Secrets only in Supabase, not .env committed to repo
+
+--- 7.7 CAPTCHA ---
+
+  - VITE_TURNSTILE_SITE_KEY and/or VITE_HCAPTCHA_SITE_KEY
+  - CaptchaChallenge component
+  - Required when Supabase Auth CAPTCHA protection enabled
+  - CSP whitelists challenges.cloudflare.com, hcaptcha.com
+
+================================================================================
+8. SECURITY ENGINEERING
+================================================================================
+
+--- 8.1 Edge Security (server.ts) ---
+
+Custom Cloudflare Worker wraps TanStack Start default handler.
+
+Headers injected on every response:
+  - Content-Security-Policy (detailed multi-directive policy)
+  - X-Frame-Options: DENY
+  - X-Content-Type-Options: nosniff
+  - Strict-Transport-Security: max-age=31536000; includeSubDomains
+  - Referrer-Policy: strict-origin-when-cross-origin
+
+CSP highlights:
+  - frame-ancestors 'none'
+  - default-src 'self'
+  - script-src: self, unsafe-inline (Vite HMR, theme script, charts tradeoff),
+                8x8.vc, meet.jit.si, Turnstile, hCaptcha
+  - style-src: self, unsafe-inline, hCaptcha
+  - img-src: self, data, blob, *.supabase.co, googleusercontent, hCaptcha
+  - connect-src: self, *.supabase.co, wss://*.supabase.co, generativelanguage.googleapis.com,
+                 accounts.google.com, CAPTCHA hosts
+  - frame-src: self, Jitsi, CAPTCHA iframes
+  - object-src 'none'
+  - base-uri 'self'
+  - form-action 'self', accounts.google.com
+  - upgrade-insecure-requests
+
+Rationale: Supabase auth tokens in localStorage — XSS is high impact; CSP mitigates.
+
+--- 8.2 Database Security (migration themes) ---
+
+  - Lock direct client UPDATE on credits, escrow, session status
+  - Lock message, review, notification client writes to RPCs only
+  - Revoke unused admin RPC access from anon/authenticated where inappropriate
+  - hide_public_credits migration
+  - Harden report creation
+  - lock_is_admin_to_self
+  - lock_messages_to_active_sessions
+  - report_evidence_snapshots
+  - lock_sweep_rpcs_to_service_role (cron-style functions)
+  - enterprise admin audit chain verification
+
+--- 8.3 Auth & Session Hygiene ---
+
+  - scrubLocalCaches() on SIGNED_OUT — removes skillswap-* keys from storage
+  - Prevents avatar/credit/profile leaks on shared devices
+  - exchangeAuthCodeFromUrl for email verification redirects
+
+--- 8.4 Compliance Documentation (docs/compliance/) ---
+
+File                              Topic
+----                              -----
+rbac-sod-model.md                 Roles, permissions, separation of duties
+admin-control-matrix.md           Control mapping
+audit-forensics-runbook.md        Audit investigation procedures
+data-retention-privacy-runbook.md Retention and privacy operations
+change-management-process.md      Admin settings change workflow
+phase-0-gap-threat-summary.md     Threat and gap analysis
+
+================================================================================
+9. COMPLETE TECH STACK REFERENCE
+================================================================================
+
+--- 9.1 Application Runtime ---
+
+Package                      Version (package.json)   Role
+-------                      --------------------   ----
+typescript                   ^5.8                   Strict typing, ES2022
+react                        ^19.2                  UI library
+react-dom                    ^19.2                  DOM rendering
+@tanstack/react-router       ^1.168                 File-based routing
+@tanstack/react-start        ^1.167                 Full-stack framework
+@tanstack/react-query        ^5.83                  Async state / cache
+@tanstack/router-plugin      ^1.167                 Route code generation
+
+--- 9.2 UI, Styling & Forms ---
+
+Package                              Role
+-------                              ----
+tailwindcss ^4.2                     Utility CSS
+@tailwindcss/vite ^4.2               Vite integration
+@radix-ui/react-* (20+ packages)     Accessible UI primitives
+class-variance-authority ^0.7        Component variants
+clsx ^2.1                            Class names
+tailwind-merge ^3.5                  Merge Tailwind classes
+lucide-react ^0.575                  Icons
+react-hook-form ^7.71                Forms
+zod ^3.24                            Schema validation
+@hookform/resolvers ^5.2             Zod resolver for RHF
+recharts ^2.15                       Charts (admin)
+sonner ^2.0                          Toast notifications
+vaul ^1.1                            Drawer component
+cmdk ^1.1                            Command palette
+react-day-picker ^9.14                 Date picker
+date-fns ^4.1                        Date utilities
+embla-carousel-react ^8.6            Carousel
+react-resizable-panels ^4.6            Resizable layouts
+input-otp ^1.4                       OTP input
+tw-animate-css ^1.3                  CSS animations
+
+shadcn/ui configuration (components.json):
+  - style: new-york
+  - baseColor: slate
+  - cssVariables: true
+  - iconLibrary: lucide
+  - aliases: @/components, @/lib/utils, @/components/ui, @/hooks
+
+--- 9.3 Data & Platform ---
+
+Package                              Role
+-------                              ----
+@supabase/supabase-js ^2.104         Database, auth, realtime, storage
+@cloudflare/vite-plugin ^1.25        Cloudflare Workers build
+vite ^7.3                            Bundler
+@vitejs/plugin-react ^5.0            React plugin
+vite-tsconfig-paths ^6.0             TS path aliases (@/*)
+
+--- 9.4 Tooling & Quality ---
+
+Tool                                 Role
+----                                 ----
+eslint ^9.32                         Linting
+@eslint/js                           ESLint recommended
+typescript-eslint ^8.56              TS rules
+eslint-plugin-react-hooks ^5.2       Hooks rules
+eslint-plugin-react-refresh ^0.4     Fast refresh rules
+eslint-config-prettier ^10.1         Prettier compatibility
+eslint-plugin-prettier ^5.2          Prettier as ESLint rule
+prettier ^3.7                        Code formatting
+@types/node ^22.16                   Node typings
+@types/react ^19.2                   React typings
+globals ^15.15                       ESLint globals
+
+--- 9.5 Deployment ---
+
+Config           Detail
+------           ------
+wrangler.jsonc   name: tanstack-start-app
+                 main: ./server.ts
+                 compatibility_date: 2025-09-24
+                 compatibility_flags: ["nodejs_compat"]
+
+Target: Cloudflare Workers (edge)
+
+--- 9.6 TypeScript Configuration ---
+
+  - strict-oriented compiler options
+  - moduleResolution: bundler
+  - Path alias: @/* -> ./src/*
+  - ES2022 target
+
+--- 9.7 npm Scripts ---
+
+Script      Command
+------      -------
+dev         vite dev
+build       vite build
+build:dev   vite build --mode development
+preview     vite preview
+lint        eslint .
+format      prettier --write .
+
+================================================================================
+10. ENVIRONMENT VARIABLES
+================================================================================
+
+From .env.example (client-safe VITE_* variables):
+
+Variable                      Purpose
+--------                      -------
+VITE_SUPABASE_PROJECT_ID      Supabase project ID
+VITE_SUPABASE_URL             Supabase API URL
+VITE_SUPABASE_PUBLISHABLE_KEY Supabase anon/publishable key
+VITE_TURNSTILE_SITE_KEY       Cloudflare Turnstile (if used)
+VITE_HCAPTCHA_SITE_KEY        hCaptcha (if used)
+VITE_JITSI_DOMAIN             Optional Jitsi domain override
+VITE_JAAS_APP_ID              8x8 JaaS App ID (public; enables JaaS mode)
+
+Supabase secrets (set via supabase secrets set — NOT in .env):
+
+  GEMINI_API_KEY
+  JAAS_APP_ID, JAAS_KEY_ID, JAAS_PRIVATE_KEY
+  N8N_RECOMMENDATION_WEBHOOK_URL
+  N8N_CREDIT_TRANSFER_WEBHOOK_URL
+  N8N_WEBHOOK_SECRET
+
+Note: .env is gitignored; .env.example is the template.
+
+================================================================================
+11. FEATURE FLAGS (RUNTIME CONFIGURATION)
+================================================================================
+
+Loaded via get_admin_feature_flags RPC (src/lib/feature-flags.ts).
+Fail-soft: if RPC fails, defaults apply so app keeps working.
+
+Flag keys:
+  features.ai_suggestions.enabled     — Gemini dashboard card
+  features.video_calls.enabled          — Video call features
+  features.public_explore.enabled       — Public explore access
+  signup.starting_credits               — { value: number }
+  sessions.default_credits_per_hour     — { value: number }
+
+Hooks:
+  useFeatureFlags()       — full flag object
+  useFeatureEnabled(key)  — boolean with default
+
+================================================================================
+12. REPOSITORY LAYOUT (NAVIGATION MAP)
+================================================================================
+
+skillswap-connect/
+|
+|-- server.ts                    Cloudflare Worker entry + CSP
+|-- wrangler.jsonc               Workers deploy config
+|-- vite.config.ts               Vite + TanStack Start config
+|-- package.json                 Dependencies and scripts
+|-- package-lock.json            Lockfile
+|-- components.json              shadcn/ui configuration
+|-- tsconfig.json                TypeScript config
+|-- eslint.config.js             ESLint 9 flat config
+|-- .prettierrc                  Prettier config
+|-- .env.example                 Environment template
+|-- .gitignore
+|
+|-- public/                      Static assets (icons, brand images)
+|
+|-- src/
+|   |-- routes/                  24 file-based route modules
+|   |-- components/              ~75 components (ui/ + feature)
+|   |-- lib/                     ~24 domain logic modules
+|   |-- hooks/                   Custom React hooks
+|   |-- integrations/supabase/   Client, types, middleware
+|   |-- assets/                  skillswap-logo.png, etc.
+|   |-- router.tsx               Router setup
+|   |-- routeTree.gen.ts         Auto-generated route tree
+|   |-- styles.css               Global styles + Tailwind
+|
+|-- supabase/
+|   |-- migrations/              ~110 SQL migration files
+|   |-- functions/               Edge Functions (Deno)
+|   |-- config.toml              Supabase CLI configuration
+|
+|-- docs/
+    |-- PROJECT_OVERVIEW.md      Shorter markdown overview
+    |-- PROJECT_OVERVIEW.txt     This file (full detailed overview)
+    |-- jitsi-video.md           Video integration guide
+    |-- compliance/              Governance and ops runbooks
+
+================================================================================
+13. KEY INTEGRATIONS SUMMARY
+================================================================================
+
+Integration    Type              When Used
+-----------    ----              ---------
+Supabase       BaaS              Always — core backend
+Jitsi          Video SaaS        Session video (default free tier)
+8x8 JaaS       Video SaaS        Production video with tokens
+Google OAuth   Auth              Optional social login
+Google Gemini  AI API            Optional dashboard suggestions
+Cloudflare     Hosting + CAPTCHA Workers deploy; Turnstile
+hCaptcha       CAPTCHA           Alternative to Turnstile
+n8n            Automation        Optional workflows
+TanStack       Framework         Router, Start, Query
+Cloudflare     CDN/Edge          Worker deployment target
+
+================================================================================
+14. ENGINEERING THEMES & PROJECT SCALE INDICATORS
+================================================================================
+
+1. Database as source of truth
+   - 110 migrations; business logic in RPCs, not a separate REST API
+
+2. Security-first edge
+   - Custom Worker with documented CSP for every third-party origin
+
+3. Enterprise admin
+   - RBAC, SoD, maker-checker finance, audit chain, privacy requests
+   - Unusual depth for a student innovation project
+
+4. Optional intelligence
+   - Gemini suggestions grounded in real DB data (anti-hallucination design)
+
+5. Realtime product feel
+   - Banners and toasts for sessions, messages, calls, credit updates
+
+6. Compliance awareness
+   - Runbooks for audit, retention, RBAC, change management
+
+Scale indicators:
+  - 24 routes
+  - ~75 components
+  - ~24 lib modules
+  - 110 SQL migrations
+  - 80+ database RPCs in generated types
+  - 3 Edge Functions + shared CORS
+  - 6 compliance documents
+
+================================================================================
+15. WHAT THIS PROJECT IS NOT
+================================================================================
+
+  - NOT a traditional REST API backend — API is Supabase Postgres RPCs + RLS
+  - NOT payment-processor integrated for core flows — credits only
+  - NOT a monorepo with multiple apps — single application folder
+  - NOT a mobile native app — responsive web (PWA-capable meta tags)
+
+================================================================================
+16. DEVELOPMENT WORKFLOW
+================================================================================
+
+Prerequisites:
+  - Node.js (for npm)
+  - Supabase project (URL + anon key in .env)
+  - Optional: Supabase CLI for migrations and Edge Functions
+  - Optional: Cloudflare account for Workers deploy
+
+Local development:
+  1. Copy .env.example to .env and fill Supabase variables
+  2. npm install
+  3. npm run dev
+  4. Open Vite dev server URL
+
+Production build:
+  npm run build
+  Deploy via Wrangler to Cloudflare Workers
+
+Database:
+  Apply migrations with Supabase CLI: supabase db push (or linked project workflow)
+
+Edge Functions:
+  Deploy with Supabase CLI; set secrets for GEMINI, JAAS, N8N
+
+Tunnel testing:
+  vite.config.ts allows ngrok and trycloudflare hosts for OAuth/CAPTCHA testing
+
+================================================================================
+17. RELATED DOCUMENTATION
+================================================================================
+
+  docs/PROJECT_OVERVIEW.md           — Shorter markdown summary
+  docs/PROJECT_OVERVIEW.txt          — This file (full detail)
+  docs/jitsi-video.md                — Jitsi setup and session flow
+  docs/compliance/rbac-sod-model.md  — Admin roles and permissions
+  docs/compliance/admin-control-matrix.md
+  docs/compliance/audit-forensics-runbook.md
+  docs/compliance/data-retention-privacy-runbook.md
+  docs/compliance/change-management-process.md
+  docs/compliance/phase-0-gap-threat-summary.md
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+Maintained overview of SkillSwap Connect codebase.
+Update when major architecture, routes, or stack changes land.
