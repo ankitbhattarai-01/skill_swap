@@ -1,0 +1,12 @@
+# Normalize line endings on checkout so Prettier doesn't fight git on Windows.
+* text=auto eol=lf
+
+# Lockfiles and binary assets keep their native form.
+*.lock binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
