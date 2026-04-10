@@ -67,15 +67,7 @@ export async function invalidateAiSuggestionsCache(): Promise<void> {
   const { data } = await supabase.auth.getUser();
   const userId = data?.user?.id;
   if (!userId) return;
-  // `ai_suggestions` exists at runtime but isn't in the generated types
-  // (the Edge Function reads/writes it via the service-role admin client,
-  // not via PostgREST from the app). Cast through `unknown` to suppress the
-  // strict overload match without losing the RLS-protected DELETE behaviour.
-  await (supabase.from("ai_suggestions" as never) as unknown as {
-    delete: () => { eq: (col: string, val: string) => Promise<unknown> };
-  })
-    .delete()
-    .eq("user_id", userId);
+  await supabase.from("ai_suggestions").delete().eq("user_id", userId);
 }
 
 function tidySuggestion(s: AiSuggestion): AiSuggestion {

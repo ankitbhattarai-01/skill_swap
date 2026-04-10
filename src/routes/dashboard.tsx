@@ -558,7 +558,7 @@ function DashboardPage() {
           // before flipping the flag — see the migration that locks the
           // column down. We still pre-check on the client so we don't
           // bounce a brand-new user through a doomed RPC call.
-          const { error: onboardedFlipError } = await supabase.rpc("complete_onboarding" as never);
+          const { error: onboardedFlipError } = await supabase.rpc("complete_onboarding");
           if (onboardedFlipError) {
             console.error("[dashboard] failed to flip onboarded flag", onboardedFlipError);
             setLoading(false);

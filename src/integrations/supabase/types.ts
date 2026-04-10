@@ -556,6 +556,216 @@ export type Database = {
           },
         ];
       };
+      session_attendance: {
+        Row: {
+          id: string;
+          session_id: string;
+          user_id: string;
+          joined_at: string;
+          left_at: string | null;
+          last_heartbeat_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          user_id: string;
+          joined_at?: string;
+          left_at?: string | null;
+          last_heartbeat_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          user_id?: string;
+          joined_at?: string;
+          left_at?: string | null;
+          last_heartbeat_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "session_attendance_session_id_fkey";
+            columns: ["session_id"];
+            isOneToOne: false;
+            referencedRelation: "sessions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      session_settlement: {
+        Row: {
+          session_id: string;
+          outcome: string;
+          reason: string;
+          learner_attended_seconds: number;
+          teacher_attended_seconds: number;
+          duration_seconds: number;
+          amount_to_teacher: number;
+          amount_refunded_to_learner: number;
+          settled_at: string;
+          settled_by: string | null;
+        };
+        Insert: {
+          session_id: string;
+          outcome: string;
+          reason: string;
+          learner_attended_seconds?: number;
+          teacher_attended_seconds?: number;
+          duration_seconds: number;
+          amount_to_teacher: number;
+          amount_refunded_to_learner: number;
+          settled_at?: string;
+          settled_by?: string | null;
+        };
+        Update: {
+          session_id?: string;
+          outcome?: string;
+          reason?: string;
+          learner_attended_seconds?: number;
+          teacher_attended_seconds?: number;
+          duration_seconds?: number;
+          amount_to_teacher?: number;
+          amount_refunded_to_learner?: number;
+          settled_at?: string;
+          settled_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "session_settlement_session_id_fkey";
+            columns: ["session_id"];
+            isOneToOne: true;
+            referencedRelation: "sessions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      user_strikes: {
+        Row: {
+          id: string;
+          user_id: string;
+          reason: string;
+          weight: number;
+          session_id: string | null;
+          report_id: string | null;
+          notes: string | null;
+          created_at: string;
+          expires_at: string;
+          created_by: string | null;
+          revoked_at: string | null;
+          revoked_by: string | null;
+          revoke_reason: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          reason: string;
+          weight: number;
+          session_id?: string | null;
+          report_id?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          created_by?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
+          revoke_reason?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          reason?: string;
+          weight?: number;
+          session_id?: string | null;
+          report_id?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          created_by?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
+          revoke_reason?: string | null;
+        };
+        Relationships: [];
+      };
+      user_availability: {
+        Row: {
+          id: string;
+          user_id: string;
+          mode: string;
+          day_of_week: number;
+          start_minute: number;
+          end_minute: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          mode: string;
+          day_of_week: number;
+          start_minute: number;
+          end_minute: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          mode?: string;
+          day_of_week?: number;
+          start_minute?: number;
+          end_minute?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      ai_suggestions: {
+        Row: {
+          user_id: string;
+          suggestions: Json;
+          generated_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          user_id: string;
+          suggestions: Json;
+          generated_at?: string;
+          expires_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          suggestions?: Json;
+          generated_at?: string;
+          expires_at?: string;
+        };
+        Relationships: [];
+      };
+      call_decline_signals: {
+        Row: {
+          id: string;
+          session_id: string;
+          decliner_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          decliner_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          decliner_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "call_decline_signals_session_id_fkey";
+            columns: ["session_id"];
+            isOneToOne: false;
+            referencedRelation: "sessions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -1325,6 +1535,26 @@ export type Database = {
       reject_session: {
         Args: { p_session_id: string };
         Returns: Database["public"]["Tables"]["sessions"]["Row"];
+      };
+      record_session_join_for: {
+        Args: { p_session_id: string; p_user_id: string };
+        Returns: string;
+      };
+      record_session_heartbeat: {
+        Args: { p_session_id: string };
+        Returns: undefined;
+      };
+      emit_call_decline: {
+        Args: { p_session_id: string };
+        Returns: undefined;
+      };
+      complete_onboarding: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      is_suspended_self: {
+        Args: Record<string, never>;
+        Returns: boolean;
       };
     };
     Enums: {

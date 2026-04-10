@@ -297,9 +297,9 @@ function VideoCallPage() {
       // is forgiving but a tab that stops heartbeating (closed, crashed,
       // forged-from-console) stops accruing credited time within ~90s.
       stopHeartbeat();
-      void supabase.rpc("record_session_heartbeat" as never, { p_session_id: session.id } as never);
+      void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
       heartbeatTimer = window.setInterval(() => {
-        void supabase.rpc("record_session_heartbeat" as never, { p_session_id: session.id } as never);
+        void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
       }, 30_000);
     };
 

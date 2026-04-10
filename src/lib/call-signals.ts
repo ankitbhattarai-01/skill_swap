@@ -65,5 +65,5 @@ export async function sendCallDeclined(
   // emit_call_decline is a thin SECURITY INVOKER RPC that wraps the INSERT
   // so we don't need to regenerate supabase types for the new table. The
   // table's RLS policy still applies — RPC is just the call shape.
-  await supabase.rpc("emit_call_decline" as never, { p_session_id: payload.sessionId } as never);
+  await supabase.rpc("emit_call_decline", { p_session_id: payload.sessionId });
 }
