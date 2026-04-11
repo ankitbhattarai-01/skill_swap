@@ -1,0 +1,304 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-purple: var(--brand-purple);
+  --color-brand-cyan: var(--brand-cyan);
+}
+
+:root {
+  --radius: 1.5rem;
+
+  --background: #f9fafb;
+  --foreground: #111827;
+
+  --card: rgb(255 255 255 / 0.8);
+  --card-foreground: #111827;
+
+  --popover: rgb(255 255 255 / 0.95);
+  --popover-foreground: #111827;
+
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f3f4f6;
+  --secondary-foreground: #374151;
+
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+
+  --accent: #10b981;
+  --accent-foreground: #ffffff;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: rgb(0 0 0 / 0.08);
+  --input: rgb(0 0 0 / 0.05);
+  --ring: #7c3aed;
+
+  --brand-blue: #7c3aed;
+  --brand-purple: #a855f7;
+  --brand-cyan: #10b981;
+  --brand-green: #10b981;
+  --brand-yellow: #f59e0b;
+
+  --glass-bg: rgb(255 255 255 / 0.7);
+  --glass-border: rgb(255 255 255 / 0.5);
+  --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.08);
+  --gradient-brand: linear-gradient(135deg, #7c3aed, #10b981);
+  --gradient-brand-soft: linear-gradient(135deg, rgb(124 58 237 / 0.12), rgb(16 185 129 / 0.12));
+  --gradient-hero: radial-gradient(at 20% 20%, rgb(124 58 237 / 0.12) 0%, transparent 48%),
+                   radial-gradient(at 80% 10%, rgb(16 185 129 / 0.1) 0%, transparent 48%),
+                   var(--background);
+  --page-background: var(--background);
+  --shadow-glow: 0 16px 42px -18px rgb(124 58 237 / 0.34);
+  --shadow-glow-blue: 0 12px 34px -18px rgb(16 185 129 / 0.34);
+  --shadow-card: var(--glass-shadow);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --background: #050505;
+  --foreground: #f9fafb;
+
+  --card: rgb(17 17 17 / 0.8);
+  --card-foreground: #f9fafb;
+
+  --popover: rgb(17 17 17 / 0.95);
+  --popover-foreground: #f9fafb;
+
+  --primary: #a78bfa;
+  --primary-foreground: #050505;
+
+  --secondary: #1f1f1f;
+  --secondary-foreground: #e5e7eb;
+
+  --muted: #1f1f1f;
+  --muted-foreground: #9ca3af;
+
+  --accent: #34d399;
+  --accent-foreground: #050505;
+
+  --destructive: #f87171;
+  --destructive-foreground: #050505;
+
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.05);
+  --ring: #a78bfa;
+
+  --brand-blue: #a78bfa;
+  --brand-purple: #a78bfa;
+  --brand-cyan: #34d399;
+  --brand-green: #34d399;
+  --brand-yellow: #fbbf24;
+
+  --glass-bg: rgb(17 17 17 / 0.7);
+  --glass-border: rgb(255 255 255 / 0.1);
+  --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.4);
+  --gradient-brand: linear-gradient(135deg, #a78bfa, #34d399);
+  --gradient-brand-soft: linear-gradient(135deg, rgb(167 139 250 / 0.18), rgb(52 211 153 / 0.18));
+  --gradient-hero: radial-gradient(at 20% 20%, rgb(167 139 250 / 0.2) 0%, transparent 52%),
+                   radial-gradient(at 82% 12%, rgb(52 211 153 / 0.14) 0%, transparent 52%),
+                   var(--background);
+  --page-background: var(--background);
+  --shadow-glow: 0 16px 42px -18px rgb(167 139 250 / 0.55);
+  --shadow-glow-blue: 0 12px 34px -16px rgb(52 211 153 / 0.5);
+  --shadow-card: var(--glass-shadow);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+button, [role="button"], a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The previous version of this rule forced border-radius: 6px on the focused
+   element, overwriting Tailwind's rounded-3xl (24px) / rounded-2xl (16px) on
+   cards and visibly clipping their corners during keyboard focus. Modern
+   browsers draw `outline` following the element's own border-radius, so we
+   just let that pass through and only style the outline itself. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  body.messages-chat-open {
+    overflow: hidden;
+  }
+
+  .mobile-chat-shell {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--mobile-chat-top, 0px);
+    height: var(--mobile-chat-height, 100dvh);
+  }
+
+  body.messages-chat-open header.md\:hidden {
+    display: none;
+  }
+
+  body.messages-chat-open nav.md\:hidden {
+    display: none;
+  }
+
+  .mobile-message-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    scroll-padding-bottom: 5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background: var(--page-background);
+    background-attachment: fixed;
+    min-height: 100vh;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .border-white\/5,
+  .border-white\/10 {
+    border-color: var(--border);
+  }
+  .bg-white\/5 {
+    background-color: oklch(0.965 0.005 95 / 0.72);
+  }
+  .dark .bg-white\/5 {
+    background-color: oklch(1 0 0 / 0.05);
+  }
+  .gradient-brand {
+    background: var(--gradient-brand);
+  }
+  .gradient-brand-text {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .gradient-hero {
+    background: var(--gradient-hero);
+  }
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+  .glass-strong {
+    background: var(--glass-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+  .glow-border {
+    position: relative;
+  }
+  .glow-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, oklch(0.56 0.24 278 / 0.38), oklch(0.66 0.23 287 / 0.38));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+  .shadow-glow-blue {
+    box-shadow: var(--shadow-glow-blue);
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .glow-primary {
+    box-shadow: 0 0 20px rgb(124 58 237 / 0.3);
+  }
+  .dark .glow-primary {
+    box-shadow: 0 0 30px rgb(167 139 250 / 0.4), 0 0 60px rgb(167 139 250 / 0.2);
+  }
+  .glow-accent {
+    box-shadow: 0 0 20px rgb(16 185 129 / 0.3);
+  }
+  .dark .glow-accent {
+    box-shadow: 0 0 30px rgb(52 211 153 / 0.4), 0 0 60px rgb(52 211 153 / 0.2);
+  }
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pl-safe {
+    padding-left: env(safe-area-inset-left);
+  }
+  .pr-safe {
+    padding-right: env(safe-area-inset-right);
+  }
+}
