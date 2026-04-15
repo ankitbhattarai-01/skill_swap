@@ -8,6 +8,7 @@ import { TrackProposalDialog } from "@/components/TrackProposalDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
+import { isUuid } from "@/lib/uuid";
 import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
 import { SessionRequestDialog } from "@/components/SessionRequestDialog";
@@ -78,6 +79,16 @@ function PublicUserPage() {
   const [myCredits, setMyCredits] = useState<number | null>(null);
 
   useEffect(() => {
+    // Guard against `/users/<garbage>` URLs reaching PostgREST. Without
+    // this every non-UUID param produces "invalid input syntax for type
+    // uuid", which the catch below renders as a noisy "Could not load
+    // profile" toast. Bounce to dashboard with a friendlier message and
+    // skip the round-trip entirely.
+    if (!isUuid(userId)) {
+      toast.error("That user link looks malformed.");
+      navigate({ to: "/dashboard" });
+      return;
+    }
     let alive = true;
     const controller = new AbortController();
 

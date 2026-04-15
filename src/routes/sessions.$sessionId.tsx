@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { getVideoRoomUrl } from "@/lib/jitsi";
 import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
+import { isUuid } from "@/lib/uuid";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { RescheduleSection } from "@/components/RescheduleSection";
 import type { Enums } from "@/integrations/supabase/types";
@@ -88,6 +89,14 @@ function SessionPage() {
 
   const loadSession = async () => {
     if (!user) return;
+    // Guard against `/sessions/<garbage>` URLs. Without this, PostgREST
+    // rejects the eq() with "invalid input syntax for type uuid" and the
+    // catch below shows a confusing 500-style error instead of "not found".
+    if (!isUuid(sessionId)) {
+      toast.error("That session link looks malformed.");
+      navigate({ to: "/dashboard" });
+      return;
+    }
     setLoading(true);
     try {
       const row = await querySessionRow(sessionId);

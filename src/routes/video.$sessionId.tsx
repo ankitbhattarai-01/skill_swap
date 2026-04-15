@@ -14,6 +14,7 @@ import {
 } from "@/lib/jitsi";
 import { fetchJitsiToken } from "@/lib/jitsi-token";
 import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
+import { isUuid } from "@/lib/uuid";
 import { useTheme } from "@/lib/theme-context";
 import { querySessionById } from "@/lib/session-queries";
 import { sendCallRinging } from "@/lib/call-signals";
@@ -92,6 +93,14 @@ function VideoCallPage() {
     const controller = new AbortController();
 
     const loadVideoSession = async () => {
+      // Reject `/video/<garbage>` URLs before hitting PostgREST. An invalid
+      // UUID would otherwise bubble up as a 400 the catch block turns into
+      // a vague "Could not load video room" toast.
+      if (!isUuid(sessionId)) {
+        toast.error("That video link looks malformed.");
+        navigate({ to: "/dashboard" });
+        return;
+      }
       setLoading(true);
       try {
         // Go through the shared helper so this route benefits from the same
