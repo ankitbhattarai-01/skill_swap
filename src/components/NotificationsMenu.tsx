@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Link } from "@tanstack/react-router";
 import { Bell, Loader2, Trash2 } from "lucide-react";
@@ -128,8 +128,32 @@ export function NotificationsMenu() {
   const { user } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
+  // Ref so clearAll/dismiss (defined outside the loader effect) can update the
+  // same Set the realtime/poll handlers read. Without this, deletes only touch
+  // DB rows and the fallback poller happily re-injects the same messages on
+  // next mount because the in-closure Set never learned about them.
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   const unreadCount = notifications.filter((notification) => !notification.read_at).length;
+
+  const markMessagesSeen = useCallback(
+    (messageIds: ReadonlyArray<string>) => {
+      if (!user || messageIds.length === 0) return;
+      let changed = false;
+      for (const id of messageIds) {
+        if (!seenMessageIdsRef.current.has(id)) {
+          seenMessageIdsRef.current.add(id);
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      window.localStorage.setItem(
+        seenMessageKey(user.id),
+        JSON.stringify(Array.from(seenMessageIdsRef.current).slice(-200)),
+      );
+    },
+    [user],
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -137,17 +161,20 @@ export function NotificationsMenu() {
     const controller = new AbortController();
     const cachedNotifications = readCachedNotifications(user.id);
     if (cachedNotifications.length) setNotifications(cachedNotifications);
-    let seenMessageIds = new Set<string>();
     try {
-      seenMessageIds = new Set<string>(
+      seenMessageIdsRef.current = new Set<string>(
         JSON.parse(window.localStorage.getItem(seenMessageKey(user.id)) ?? "[]") as string[],
       );
     } catch {
       window.localStorage.removeItem(seenMessageKey(user.id));
+      seenMessageIdsRef.current = new Set();
     }
 
     const loadNotifications = async () => {
-      setLoading(true);
+      // Don't flash a spinner on top of a populated cache — that's the whole
+      // point of the sessionStorage layer. Only show loading when there's
+      // truly nothing on screen yet.
+      if (!cachedNotifications.length) setLoading(true);
       const { data, error } = await supabase
         .from("notifications")
         .select("id, type, title, body, link, read_at, created_at, metadata")
@@ -158,6 +185,11 @@ export function NotificationsMenu() {
 
       if (alive) {
         const dbNotifications = error ? [] : ((data ?? []) as Notification[]);
+        // Record every DB-backed message notification's underlying messageId so
+        // the fallback poller won't re-create it after the user dismisses.
+        markMessagesSeen(
+          dbNotifications.map(getNotificationMessageId).filter((id): id is string => Boolean(id)),
+        );
         const fallbackNotifications = readFallbackNotifications(user.id);
         const merged = mergeNotifications(fallbackNotifications, dbNotifications);
         setNotifications(merged);
@@ -182,16 +214,9 @@ export function NotificationsMenu() {
       }, 250);
     };
 
-    const rememberMessage = (messageId: string) => {
-      seenMessageIds.add(messageId);
-      window.localStorage.setItem(
-        seenMessageKey(user.id),
-        JSON.stringify(Array.from(seenMessageIds).slice(-100)),
-      );
-    };
-
     const addMessageNotification = async (message: MessagePayload) => {
-      if (!alive || message.sender_id === user.id || seenMessageIds.has(message.id)) return;
+      if (!alive || message.sender_id === user.id || seenMessageIdsRef.current.has(message.id))
+        return;
 
       const { data: sessionData } = await supabase
         .from("sessions")
@@ -211,7 +236,7 @@ export function NotificationsMenu() {
         .eq("id", message.sender_id)
         .maybeSingle();
 
-      rememberMessage(message.id);
+      markMessagesSeen([message.id]);
       const senderName = sender?.full_name ?? "Someone";
       const fallback: Notification = {
         id: `message-${message.id}`,
@@ -317,7 +342,7 @@ export function NotificationsMenu() {
       if (notificationsChannel) void supabase.removeChannel(notificationsChannel);
       if (messagesChannel) void supabase.removeChannel(messagesChannel);
     };
-  }, [user]);
+  }, [user, markMessagesSeen]);
 
   const clearAll = async () => {
     if (!user || notifications.length === 0) return;
@@ -325,6 +350,13 @@ export function NotificationsMenu() {
     // restores both UI and the two cache layers (otherwise we'd leave the
     // bell empty while the server still has every row).
     const previous = notifications;
+    // Mark every cleared message notification's underlying messageId as seen.
+    // Without this, deleting the DB rows only removes them until the next
+    // mount, when pollRecentMessages re-fetches the same messages and the
+    // fallback path re-injects them — the "they come back after refresh" bug.
+    markMessagesSeen(
+      previous.map(getNotificationMessageId).filter((id): id is string => Boolean(id)),
+    );
     setNotifications([]);
     writeFallbackNotifications(user.id, []);
     writeCachedNotifications(user.id, []);
@@ -340,6 +372,10 @@ export function NotificationsMenu() {
   const dismiss = async (notification: Notification) => {
     if (!user) return;
     const previous = notifications;
+    // Mark the underlying message (whether the dismissed entry was a DB row or
+    // a fallback) as seen, so the poller can't resurrect it.
+    const messageId = getNotificationMessageId(notification);
+    if (messageId) markMessagesSeen([messageId]);
     setNotifications((current) => {
       const next = current.filter((item) => item.id !== notification.id);
       writeFallbackNotifications(user.id, next);
@@ -400,7 +436,7 @@ export function NotificationsMenu() {
           </Button>
         </div>
         <DropdownMenuSeparator />
-        {loading && (
+        {loading && notifications.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
@@ -410,7 +446,7 @@ export function NotificationsMenu() {
             No notifications yet.
           </div>
         )}
-        {!loading && notifications.length > 0 && (
+        {notifications.length > 0 && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
@@ -421,46 +457,45 @@ export function NotificationsMenu() {
             <DropdownMenuSeparator />
           </>
         )}
-        {!loading &&
-          notifications.map((notification) => {
-            const messageSessionId =
-              notification.type === "message" ? getNotificationSessionId(notification) : null;
-            const content = (
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  {!notification.read_at && <span className="h-2 w-2 rounded-full bg-brand-cyan" />}
-                  <div className="truncate text-sm font-medium">{notification.title}</div>
-                </div>
-                {notification.body && (
-                  <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                    {notification.body}
-                  </div>
-                )}
+        {notifications.map((notification) => {
+          const messageSessionId =
+            notification.type === "message" ? getNotificationSessionId(notification) : null;
+          const content = (
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {!notification.read_at && <span className="h-2 w-2 rounded-full bg-brand-cyan" />}
+                <div className="truncate text-sm font-medium">{notification.title}</div>
               </div>
-            );
+              {notification.body && (
+                <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                  {notification.body}
+                </div>
+              )}
+            </div>
+          );
 
-            return messageSessionId ? (
-              <DropdownMenuItem key={notification.id} asChild>
-                <Link
-                  to="/messages"
-                  search={{ s: messageSessionId }}
-                  onClick={() => void dismiss(notification)}
-                >
-                  {content}
-                </Link>
-              </DropdownMenuItem>
-            ) : notification.link ? (
-              <DropdownMenuItem key={notification.id} asChild>
-                <Link to={notification.link} onClick={() => void dismiss(notification)}>
-                  {content}
-                </Link>
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem key={notification.id} onClick={() => void dismiss(notification)}>
+          return messageSessionId ? (
+            <DropdownMenuItem key={notification.id} asChild>
+              <Link
+                to="/messages"
+                search={{ s: messageSessionId }}
+                onClick={() => void dismiss(notification)}
+              >
                 {content}
-              </DropdownMenuItem>
-            );
-          })}
+              </Link>
+            </DropdownMenuItem>
+          ) : notification.link ? (
+            <DropdownMenuItem key={notification.id} asChild>
+              <Link to={notification.link} onClick={() => void dismiss(notification)}>
+                {content}
+              </Link>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem key={notification.id} onClick={() => void dismiss(notification)}>
+              {content}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
