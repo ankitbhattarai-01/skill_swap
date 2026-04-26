@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors";
 import { describeViolations, detectViolations } from "@/lib/messageFilter";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -235,7 +236,7 @@ function MessagesIndexPage() {
       .update({ text: nextText })
       .eq("id", messageId);
     if (error) {
-      toast.error(error.message);
+      toastError(error);
       throw error;
     }
     setChatMessages((prev) =>
@@ -252,7 +253,7 @@ function MessagesIndexPage() {
     }
     const { error } = await supabase.from("messages").delete().eq("id", messageId);
     if (error) {
-      toast.error(error.message);
+      toastError(error);
       return;
     }
     setChatMessages((prev) => prev.filter((m) => m.id !== messageId));
@@ -560,7 +561,7 @@ function MessagesIndexPage() {
         .abortSignal(controller.signal);
       if (!alive) return;
       if (error) {
-        toast.error(error.message);
+        toastError(error);
         setChatMessages([]);
         setHasMoreMessages(false);
       } else {
@@ -599,7 +600,7 @@ function MessagesIndexPage() {
       .limit(CHAT_MESSAGE_PAGE_SIZE);
     setLoadingEarlier(false);
     if (error) {
-      toast.error(error.message);
+      toastError(error);
       return;
     }
     const rows = (data ?? []) as MessageRow[];
@@ -864,7 +865,7 @@ function MessagesIndexPage() {
       // user can retry without retyping.
       setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
       setText(trimmed);
-      toast.error(error.message);
+      toastError(error);
       return;
     }
     // Server confirmed — replace the temp row with the persisted one if the

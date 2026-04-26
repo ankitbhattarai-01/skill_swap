@@ -693,13 +693,13 @@ function ProfilePage() {
 
   const removeTeach = async (id: string) => {
     const { error } = await supabase.from("user_teaching_skills").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toastError(error);
     setTeaching(teaching.filter((t) => t.id !== id));
     void invalidateAiSuggestionsCache();
   };
   const removeLearn = async (id: string) => {
     const { error } = await supabase.from("user_learning_skills").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toastError(error);
     setLearning(learning.filter((t) => t.id !== id));
     void invalidateAiSuggestionsCache();
   };
@@ -710,7 +710,7 @@ function ProfilePage() {
       .from("user_teaching_skills")
       .update({ level: lvl })
       .eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toastError(error);
     setTeaching(teaching.map((t) => (t.id === id ? { ...t, level: lvl } : t)));
   };
   const updateLearnLevel = async (id: string, level: string) => {
@@ -719,7 +719,7 @@ function ProfilePage() {
       .from("user_learning_skills")
       .update({ current_level: lvl })
       .eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toastError(error);
     setLearning(learning.map((t) => (t.id === id ? { ...t, current_level: lvl } : t)));
   };
 
@@ -773,7 +773,7 @@ function ProfilePage() {
       .upload(path, file, { upsert: false, contentType: file.type });
     if (uploadError) {
       setUploadingAvatar(false);
-      toast.error(uploadError.message);
+      toastError(uploadError);
       return;
     }
     const { error: updateError } = await supabase
@@ -782,7 +782,7 @@ function ProfilePage() {
       .eq("id", user.id);
     if (updateError) {
       setUploadingAvatar(false);
-      return toast.error(updateError.message);
+      return toastError(updateError);
     }
     // Best-effort cleanup of the previous avatar object. Failure here must not
     // surface to the user — the new avatar is already saved and live.
@@ -813,7 +813,7 @@ function ProfilePage() {
       .select("full_name, bio, avatar_url")
       .single();
     setSaving(false);
-    if (error) return toast.error(error.message);
+    if (error) return toastError(error);
     const nextFullName = data.full_name ?? values.full_name;
     const nextBio = data.bio ?? values.bio;
     setProfile({
@@ -835,7 +835,7 @@ function ProfilePage() {
     const { error } = await supabase.rpc("delete_my_account");
     if (error) {
       setDeleting(false);
-      toast.error(error.message);
+      toastError(error);
       return;
     }
     await signOut();

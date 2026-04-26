@@ -265,6 +265,31 @@ const KNOWN_PATTERNS: Array<{ test: RegExp; message: string }> = [
 // Default copy when we have no error object and no fallback was provided.
 const GENERIC_FALLBACK = "Something went wrong. Please try again.";
 
+// Patterns that indicate an error message contains Postgres / PostgREST /
+// RLS / Supabase internals — table names, constraint names, schema/role
+// names, function signatures, SQLSTATE codes, parser positions. If any of
+// these match an UNMAPPED error, we drop the raw message and return the
+// generic fallback. Intentional human-readable errors (RPC RAISE text,
+// Supabase auth copy) don't match these patterns and pass through.
+const INTERNAL_ERROR_PATTERNS: readonly RegExp[] = [
+  /relation "[^"]+"/i,
+  /column "[^"]+"/i,
+  /constraint "[^"]+"/i,
+  /\bsqlstate\b/i,
+  /row-level security/i,
+  /permission denied for (table|relation|schema|function|sequence|view)/i,
+  /\bschema "/i,
+  /\brole "[^"]+"/i,
+  /function \w+\([^)]*\) does not exist/i,
+  /failed to parse (json|select|filter|order|limit|offset)/i,
+  /at (line|character) \d+/i,
+  /could not (find|identify) (the )?(function|column|relation)/i,
+];
+
+function looksLikeInternalError(message: string): boolean {
+  return INTERNAL_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 // Supabase returns password-complexity errors with the literal character
 // classes the password is missing, e.g.
 //   "Password should contain at least one character of each:
@@ -323,8 +348,12 @@ export function humanizeError(error: AnyError, fallback?: string): string {
     if (test.test(raw)) return message;
   }
 
-  // Unknown error with a message — surface the raw message so existing UX
-  // (where we showed Postgres copy verbatim) doesn't regress.
+  // Unknown error. If the message looks like Postgres / PostgREST / RLS
+  // internals (table names, constraint names, SQLSTATE, etc.) we drop it —
+  // those leak schema and policy details to the client. The original error
+  // is still logged via console.error above, so debugging is unaffected.
+  if (looksLikeInternalError(raw)) return fallback ?? GENERIC_FALLBACK;
+
   return raw;
 }
 
