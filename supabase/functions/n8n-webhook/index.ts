@@ -191,8 +191,8 @@ Deno.serve(async (req) => {
 
     return json(400, { error: "Unsupported webhook type" });
   } catch (error) {
-    return json(500, {
-      error: error instanceof Error ? error.message : "Internal error",
-    });
+    // Don't echo raw upstream/fetch error messages back to the caller.
+    console.error("[n8n-webhook] unhandled error", error);
+    return json(500, { error: "Internal error" });
   }
 });

@@ -11,7 +11,7 @@ import { Loader2, MailCheck } from "lucide-react";
 import { resolvePostAuthRoute, safeRedirectPath } from "@/lib/redirect";
 import { prepareGitHubOAuth, prepareGoogleOAuth } from "@/lib/oauth";
 import { humanizeError, toastError } from "@/lib/errors";
-import { isAuthCaptchaConfigured } from "@/lib/captcha";
+import { isAuthCaptchaConfigured, isAuthCaptchaRequired } from "@/lib/captcha";
 import { useAuth } from "@/lib/auth-context";
 import { allowedDomainsLabel, isAllowedSignupEmail } from "@/lib/email-domains";
 
@@ -45,8 +45,13 @@ function SignupPage() {
   };
 
   const requireCaptchaToken = () => {
-    if (!captchaConfigured || captchaToken) return true;
-    toast.error("Complete the security check first.");
+    if (captchaToken) return true;
+    if (!isAuthCaptchaRequired()) return true;
+    toast.error(
+      captchaConfigured
+        ? "Complete the security check first."
+        : "Sign-up is temporarily unavailable. Please contact support.",
+    );
     return false;
   };
 

@@ -917,8 +917,9 @@ Deno.serve(async (req) => {
 
     return json(200, { suggestions, cached: false, generatedAt });
   } catch (error) {
-    return json(500, {
-      error: error instanceof Error ? error.message : "Internal error",
-    });
+    // Gemini/Supabase error messages can include provider status, request IDs,
+    // or schema fragments. Log for ops, return a generic message to clients.
+    console.error("[generate-suggestions] unhandled error", error);
+    return json(500, { error: "Internal error" });
   }
 });

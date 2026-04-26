@@ -17,3 +17,12 @@ export function getAuthCaptchaConfig(): CaptchaConfig | null {
 export function isAuthCaptchaConfigured() {
   return getAuthCaptchaConfig() !== null;
 }
+
+// True when a CAPTCHA token must be supplied with auth submissions.
+// Why: production builds without a configured provider were fail-open —
+// the UI skipped the check entirely. In prod we now require it regardless,
+// so a missing site key blocks submission instead of silently bypassing.
+// Dev builds stay permissive so local sign-in works without provider keys.
+export function isAuthCaptchaRequired() {
+  return import.meta.env.PROD || isAuthCaptchaConfigured();
+}

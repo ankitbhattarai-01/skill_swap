@@ -13,7 +13,7 @@ import { prepareGitHubOAuth, prepareGoogleOAuth } from "@/lib/oauth";
 import { humanizeError, toastError } from "@/lib/errors";
 import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 import { useAuth } from "@/lib/auth-context";
-import { isAuthCaptchaConfigured } from "@/lib/captcha";
+import { isAuthCaptchaConfigured, isAuthCaptchaRequired } from "@/lib/captcha";
 
 export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>) => ({
@@ -45,8 +45,13 @@ function LoginPage() {
   };
 
   const requireCaptchaToken = () => {
-    if (!captchaConfigured || captchaToken) return true;
-    toast.error("Complete the security check first.");
+    if (captchaToken) return true;
+    if (!isAuthCaptchaRequired()) return true;
+    toast.error(
+      captchaConfigured
+        ? "Complete the security check first."
+        : "Sign-in is temporarily unavailable. Please contact support.",
+    );
     return false;
   };
 

@@ -8,7 +8,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isAuthCaptchaConfigured } from "@/lib/captcha";
+import { isAuthCaptchaConfigured, isAuthCaptchaRequired } from "@/lib/captcha";
 import { toastError } from "@/lib/errors";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -32,8 +32,13 @@ function ForgotPasswordPage() {
   };
 
   const requireCaptchaToken = () => {
-    if (!captchaConfigured || captchaToken) return true;
-    toast.error("Complete the security check first.");
+    if (captchaToken) return true;
+    if (!isAuthCaptchaRequired()) return true;
+    toast.error(
+      captchaConfigured
+        ? "Complete the security check first."
+        : "Password reset is temporarily unavailable. Please contact support.",
+    );
     return false;
   };
 

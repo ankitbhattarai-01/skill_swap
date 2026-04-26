@@ -209,8 +209,10 @@ Deno.serve(async (req) => {
       appId: APP_ID,
     });
   } catch (error) {
-    return json(500, {
-      error: error instanceof Error ? error.message : "Internal error",
-    });
+    // Don't leak raw error.message — Supabase/Postgres/JWT-library errors can
+    // disclose schema, key paths, or library internals. Log details for ops
+    // and return a generic message to the client.
+    console.error("[mint-jitsi-token] unhandled error", error);
+    return json(500, { error: "Internal error" });
   }
 });

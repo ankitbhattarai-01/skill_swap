@@ -18,6 +18,20 @@ function createSupabaseClient() {
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
+      // KNOWN LIMITATION (SEC-L-002, deferred):
+      // Auth tokens live in localStorage. If an XSS bug ever lands, attacker
+      // JS can read the access/refresh tokens and replay them. Mitigations
+      // already in place that defang the realistic attack:
+      //   - strict per-request CSP with nonce + 'strict-dynamic' (server.ts)
+      //     blocks inline-injected <script> from executing
+      //   - no dangerouslySetInnerHTML on user-supplied content
+      //   - X-Frame-Options DENY + frame-ancestors 'none' blocks clickjacking
+      //     that could be used to phish tokens
+      // The clean fix is migrating to @supabase/ssr with httpOnly cookies
+      // and a server-side PKCE exchange. That touches auth-context, the
+      // OAuth callback route, server.ts, and every route loader, so it's
+      // intentionally deferred until after the MVP. Don't loosen the CSP
+      // above without also doing the cookie migration.
       storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,

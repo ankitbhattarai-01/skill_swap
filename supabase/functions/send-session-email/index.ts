@@ -267,9 +267,8 @@ Deno.serve(async (req) => {
   try {
     secret = readSecret("EMAIL_WEBHOOK_SECRET");
   } catch (error) {
-    return jsonResponse(500, {
-      error: error instanceof Error ? error.message : "Misconfigured secrets",
-    });
+    console.error("[send-session-email] secret read failed", error);
+    return jsonResponse(500, { error: "Misconfigured secrets" });
   }
 
   if (!(await verifySignature(rawBody, timestamp, signature, secret))) {
@@ -301,7 +300,8 @@ Deno.serve(async (req) => {
     .maybeSingle<NotificationRow>();
 
   if (notifError) {
-    return jsonResponse(500, { error: `Notification lookup failed: ${notifError.message}` });
+    console.error("[send-session-email] notification lookup failed", notifError);
+    return jsonResponse(500, { error: "Notification lookup failed" });
   }
   if (!notification) {
     return jsonResponse(404, { error: "Notification not found" });
@@ -317,7 +317,8 @@ Deno.serve(async (req) => {
     .maybeSingle<ProfileRow>();
 
   if (profileError) {
-    return jsonResponse(500, { error: `Profile lookup failed: ${profileError.message}` });
+    console.error("[send-session-email] profile lookup failed", profileError);
+    return jsonResponse(500, { error: "Profile lookup failed" });
   }
   if (profile && profile.email_notifications_enabled === false) {
     return jsonResponse(200, { skipped: "user_opted_out" });
@@ -336,9 +337,9 @@ Deno.serve(async (req) => {
   try {
     await sendViaGmail(authUser.user.email, rendered);
   } catch (error) {
-    return jsonResponse(502, {
-      error: error instanceof Error ? error.message : "Email send failed",
-    });
+    // SMTP errors can include the relay banner, auth method names, etc.
+    console.error("[send-session-email] gmail send failed", error);
+    return jsonResponse(502, { error: "Email send failed" });
   }
 
   return jsonResponse(200, { sent: true, to: authUser.user.email });

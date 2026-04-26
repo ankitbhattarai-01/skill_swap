@@ -40,6 +40,15 @@ type LogFileName = "app.log" | "error.log" | "access.log";
 
 const LOG_ENDPOINT_PATH = "/api/logs/client";
 const MAX_CLIENT_LOG_BYTES = 16 * 1024;
+// Rate limit for /api/logs/client. The endpoint stays unauthenticated because
+// the client logger fires on pre-login errors (window.onerror on /login etc.),
+// so we throttle by IP instead. Per-isolate in-memory state — a distributed
+// attacker across many CF isolates can sidestep this, but it raises the cost
+// of a single-host flood from "free" to "30/min".
+const CLIENT_LOG_WINDOW_MS = 60_000;
+const CLIENT_LOG_PER_IP_LIMIT = 30;
+const CLIENT_LOG_GLOBAL_LIMIT = 600;
+const CLIENT_LOG_BUCKETS_MAX = 5_000;
 const LOG_FILES: readonly LogFileName[] = ["app.log", "error.log", "access.log"];
 const SENSITIVE_KEY_PATTERN =
   /(authorization|cookie|token|secret|password|passcode|apikey|api_key|key|credential|session|refresh|access)/i;
@@ -432,7 +441,9 @@ async function appendLog(fileName: LogFileName, event: LogEvent) {
 }
 
 async function writeAppLog(event: Omit<LogEvent, "timestamp">) {
-  const normalizedEvent: LogEvent = { timestamp: nowIso(), ...event };
+  // Cast through the index signature: TS widens level/event to `unknown`
+  // across the spread, even though Omit<LogEvent,"timestamp"> guarantees them.
+  const normalizedEvent = { ...event, timestamp: nowIso() } as LogEvent;
 
   await appendLog("app.log", normalizedEvent);
   if (normalizedEvent.level === "error") {
@@ -487,6 +498,62 @@ function logAccess(
         : undefined,
     }),
   );
+}
+
+type RateBucket = { count: number; windowStart: number; notified: boolean };
+
+const clientLogBuckets = new Map<string, RateBucket>();
+let clientLogGlobalCount = 0;
+let clientLogGlobalWindowStart = 0;
+let clientLogGlobalNotified = false;
+
+// Returns { allowed, retryAfterSec, scope } for the given IP. Fixed-window
+// counter: one window per IP plus one global window. Evicts the oldest bucket
+// when the map grows past CLIENT_LOG_BUCKETS_MAX to bound memory.
+function checkClientLogRate(
+  ip: string,
+  now: number,
+): { allowed: true } | { allowed: false; retryAfterSec: number; scope: "ip" | "global"; firstHit: boolean } {
+  if (clientLogGlobalWindowStart === 0 || now - clientLogGlobalWindowStart >= CLIENT_LOG_WINDOW_MS) {
+    clientLogGlobalWindowStart = now;
+    clientLogGlobalCount = 0;
+    clientLogGlobalNotified = false;
+  }
+
+  let bucket = clientLogBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart >= CLIENT_LOG_WINDOW_MS) {
+    bucket = { count: 0, windowStart: now, notified: false };
+    clientLogBuckets.set(ip, bucket);
+  }
+
+  if (clientLogBuckets.size > CLIENT_LOG_BUCKETS_MAX) {
+    const oldestKey = clientLogBuckets.keys().next().value;
+    if (oldestKey && oldestKey !== ip) clientLogBuckets.delete(oldestKey);
+  }
+
+  if (bucket.count >= CLIENT_LOG_PER_IP_LIMIT) {
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((CLIENT_LOG_WINDOW_MS - (now - bucket.windowStart)) / 1000),
+    );
+    const firstHit = !bucket.notified;
+    bucket.notified = true;
+    return { allowed: false, retryAfterSec, scope: "ip", firstHit };
+  }
+
+  if (clientLogGlobalCount >= CLIENT_LOG_GLOBAL_LIMIT) {
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((CLIENT_LOG_WINDOW_MS - (now - clientLogGlobalWindowStart)) / 1000),
+    );
+    const firstHit = !clientLogGlobalNotified;
+    clientLogGlobalNotified = true;
+    return { allowed: false, retryAfterSec, scope: "global", firstHit };
+  }
+
+  bucket.count += 1;
+  clientLogGlobalCount += 1;
+  return { allowed: true };
 }
 
 async function readLimitedJson(request: Request): Promise<unknown> {
@@ -551,6 +618,31 @@ async function handleClientLogRequest(
     });
   }
 
+  const ip = getClientIp(request) ?? "unknown";
+  const rate = checkClientLogRate(ip, Date.now());
+  if (!rate.allowed) {
+    if (rate.firstHit) {
+      scheduleLog(
+        context,
+        writeAppLog({
+          level: "warn",
+          event: "client_log.rate_limited",
+          requestId,
+          message: `Client log rate limit hit (${rate.scope}).`,
+          scope: rate.scope,
+          ip: rate.scope === "ip" ? ip : undefined,
+        }),
+      );
+    }
+    return new Response("Too Many Requests", {
+      status: 429,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Retry-After": String(rate.retryAfterSec),
+      },
+    });
+  }
+
   try {
     const payload = await readLimitedJson(request);
     const event = normalizeClientLogPayload(payload, request, requestId);
@@ -577,9 +669,14 @@ async function handleClientLogRequest(
 }
 
 export default {
-  async fetch(...args: Parameters<typeof baseFetch>): Promise<Response> {
-    const request = args[0];
-    const context = args[2] as ExecutionContextLike | undefined;
+  // Cloudflare Workers invoke fetch as (request, env, ctx). baseFetch's
+  // declared type only takes (request, opts?), so we accept the CF shape
+  // here and forward just the request to baseFetch.
+  async fetch(
+    request: Request,
+    _env: unknown,
+    context?: ExecutionContextLike,
+  ): Promise<Response> {
     const startedAt = performance.now();
     const requestId = createRequestId();
 
@@ -593,7 +690,7 @@ export default {
       const response =
         url.pathname === LOG_ENDPOINT_PATH
           ? await handleClientLogRequest(request, requestId, context)
-          : await baseFetch(...args);
+          : await baseFetch(request);
 
       // For HTML responses, mint a per-request nonce, stamp it onto every
       // <script> tag in the body, and use a strict CSP that requires the
