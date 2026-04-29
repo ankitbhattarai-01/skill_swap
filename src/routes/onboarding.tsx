@@ -222,10 +222,9 @@ function OnboardingPage() {
           }));
 
         if ((savedTeaching.length > 0 || savedLearning.length > 0) && p?.full_name) {
-          const { error: onboardedFlipError } = await supabase
-            .from("profiles")
-            .update({ onboarded: true })
-            .eq("id", user.id);
+          // complete_onboarding() re-checks both preconditions server-side
+          // so a tampered client can't shortcut the flag.
+          const { error: onboardedFlipError } = await supabase.rpc("complete_onboarding" as never);
           if (onboardedFlipError) {
             console.error("[onboarding] failed to flip onboarded flag", onboardedFlipError);
             // Fall through to the normal onboarding form so the user can re-save
@@ -434,10 +433,10 @@ function OnboardingPage() {
       }
     }
 
-    const { error: onboardError } = await supabase
-      .from("profiles")
-      .update({ onboarded: true })
-      .eq("id", user.id);
+    // complete_onboarding() flips the flag only if full_name + at least
+    // one teaching/learning skill exist server-side. The column itself is
+    // no longer writable from the authenticated role.
+    const { error: onboardError } = await supabase.rpc("complete_onboarding" as never);
     if (onboardError) {
       toast.error(onboardError.message);
       setSaving(false);

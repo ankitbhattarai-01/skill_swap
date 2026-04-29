@@ -554,10 +554,11 @@ function DashboardPage() {
         const hasName = Boolean(p.full_name && p.full_name.trim());
 
         if (hasSkills && hasName) {
-          const { error: onboardedFlipError } = await supabase
-            .from("profiles")
-            .update({ onboarded: true })
-            .eq("id", user.id);
+          // Server-side complete_onboarding re-checks the same conditions
+          // before flipping the flag — see the migration that locks the
+          // column down. We still pre-check on the client so we don't
+          // bounce a brand-new user through a doomed RPC call.
+          const { error: onboardedFlipError } = await supabase.rpc("complete_onboarding" as never);
           if (onboardedFlipError) {
             console.error("[dashboard] failed to flip onboarded flag", onboardedFlipError);
             setLoading(false);
