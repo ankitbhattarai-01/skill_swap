@@ -347,6 +347,11 @@ function SessionsPage() {
   if (authLoading) {
     return <PageLoading variant="hero-stats" />;
   }
+  // Once authLoading flips false but the redirect effect hasn't fired yet,
+  // an unauthenticated visitor would see the empty history shell for a
+  // frame. Returning null here keeps the page blank until the navigate
+  // call sends them to /login.
+  if (!user) return null;
 
   const isInitialLoading = loading && sessions.length === 0;
 

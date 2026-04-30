@@ -879,6 +879,10 @@ function MessagesIndexPage() {
   if (authLoading || (loadingList && threads.length === 0)) {
     return <PageLoading variant="messages" />;
   }
+  // Auth resolved but no user — the redirect effect is about to fire.
+  // Without this gate, the empty messages shell would render for a tick
+  // before /login takes over.
+  if (!user) return null;
 
   const activeSession = selectedThread?.activeSession ?? null;
   const headerSession = activeSession ?? selectedThread?.latestSession ?? null;
