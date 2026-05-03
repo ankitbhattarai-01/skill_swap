@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { Children, Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Children, Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
@@ -1146,6 +1146,56 @@ function DashboardPage() {
     }
   };
 
+  // Memoize the per-render derived state. Without this, realtime ticks /
+  // busy-set updates / credit-balance pushes all re-run pickNextMoves and
+  // both filter passes — wasted work because none of those inputs changed.
+  // Calculated BEFORE the early returns to satisfy React's rules-of-hooks.
+  // The fallback `user?.id ?? ""` keeps the hook stable on the unauthed
+  // render path where `user` is null — the result is discarded by the early
+  // return below anyway.
+  const userId = user?.id ?? "";
+  const nextMoves = useMemo(
+    () => pickNextMoves(userId, sessions, teachers, learning),
+    [userId, sessions, teachers, learning],
+  );
+  const featuredTeacherIds = useMemo(
+    () =>
+      new Set(nextMoves.flatMap((m) => (m.kind === "match" ? m.teachers.map((t) => t.id) : []))),
+    [nextMoves],
+  );
+  const teachersForRow = useMemo(
+    () =>
+      featuredTeacherIds.size > 0
+        ? teachers.filter((t) => !featuredTeacherIds.has(t.id))
+        : teachers,
+    [teachers, featuredTeacherIds],
+  );
+  // The Next Move stack already surfaces pending requests and the soonest upcoming
+  // session. Drop them from the Active sessions strip so the same cards don't render twice.
+  const featuredSessionIds = useMemo(
+    () =>
+      new Set(
+        nextMoves.flatMap((m) =>
+          m.kind === "incoming" || m.kind === "upcoming" ? [m.session.id] : [],
+        ),
+      ),
+    [nextMoves],
+  );
+  const sessionsForStrip = useMemo(
+    () =>
+      featuredSessionIds.size > 0
+        ? sessions.filter((s) => !featuredSessionIds.has(s.id))
+        : sessions,
+    [sessions, featuredSessionIds],
+  );
+  // Build a skill_id → learning row lookup once per render so the teacher
+  // tile loop below doesn't run learning.find() on every iteration.
+  const learningBySkillId = useMemo(() => {
+    const map = new Map<string, LearnRow>();
+    for (const row of learning) map.set(row.skill_id, row);
+    return map;
+  }, [learning]);
+
   // Hard auth gate: if we know the user is signed out, render nothing
   // protected. The useEffect above will navigate to /login on the next tick.
   // Without this early return, the skeleton structure (and any cached profile
@@ -1186,21 +1236,6 @@ function DashboardPage() {
   }
 
   const firstName = profile.full_name?.split(" ")[0] ?? "Friend";
-  const nextMoves = pickNextMoves(user.id, sessions, teachers, learning);
-  const featuredTeacherIds = new Set(
-    nextMoves.flatMap((m) => (m.kind === "match" ? m.teachers.map((t) => t.id) : [])),
-  );
-  const teachersForRow =
-    featuredTeacherIds.size > 0 ? teachers.filter((t) => !featuredTeacherIds.has(t.id)) : teachers;
-  // The Next Move stack already surfaces pending requests and the soonest upcoming
-  // session. Drop them from the Active sessions strip so the same cards don't render twice.
-  const featuredSessionIds = new Set(
-    nextMoves.flatMap((m) =>
-      m.kind === "incoming" || m.kind === "upcoming" ? [m.session.id] : [],
-    ),
-  );
-  const sessionsForStrip =
-    featuredSessionIds.size > 0 ? sessions.filter((s) => !featuredSessionIds.has(s.id)) : sessions;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1315,7 +1350,7 @@ function DashboardPage() {
               actionSearch={{ match: true }}
             >
               {teachersForRow.slice(0, 6).map((t) => {
-                const learningRow = learning.find((l) => l.skill_id === t.skill_id);
+                const learningRow = learningBySkillId.get(t.skill_id);
                 const myLevel = (learningRow?.current_level ?? "basic") as SkillLevel;
                 const nextSlot = teacherAvailability.get(t.user_id);
                 const creditsOk = (liveCreditBalance ?? 0) >= t.credits_per_hour;
