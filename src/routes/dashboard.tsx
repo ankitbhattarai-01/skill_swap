@@ -34,7 +34,10 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
 import { fetchAiSuggestions, type AiSuggestion } from "@/lib/ai-suggestions";
 import { useFeatureEnabled } from "@/lib/feature-flags";
-import { createVideoRoom, getVideoRoomUrl } from "@/lib/jitsi";
+// Jitsi helpers are only needed on the accept-session path and to rewrite
+// already-accepted meet links — both rare on a typical dashboard load. Lazy
+// import keeps the (~small but non-zero) module out of the initial chunk.
+const loadJitsi = () => import("@/lib/jitsi");
 import {
   getOrCreateSession,
   canJoinSession,
@@ -482,30 +485,12 @@ function DashboardPage() {
     // every other [user] effect on the page 3× during bootstrap.
   }, [authLoading, user?.id, navigate]);
 
-  // Fast onboarded pre-check that runs ahead of the full loadDashboard
-  // pipeline. If the user hasn't finished onboarding we bounce immediately
-  // before any dashboard chrome paints. Skipped once the gate is already open
-  // (e.g. cache hydration confirmed it) so we don't issue a redundant query.
-  useEffect(() => {
-    if (authLoading || !user || onboardingGateReady) return;
-    let cancelled = false;
-    void (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("onboarded")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (cancelled) return;
-      if (!data?.onboarded) {
-        navigate({ to: "/onboarding", replace: true });
-        return;
-      }
-      setOnboardingGateReady(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, user?.id, onboardingGateReady, navigate]);
+  // The onboarding gate is opened by `loadDashboard` as soon as it confirms
+  // `profile.onboarded` is true (or by cache hydration below for returning
+  // users). The dedicated pre-check effect that previously fired a separate
+  // `select onboarded` roundtrip was removed because loadDashboard fetches
+  // the same column on its first read — keeping the pre-check duplicated work
+  // and pushed first paint behind an extra serial roundtrip.
 
   useEffect(() => {
     if (!user) return;
@@ -539,15 +524,21 @@ function DashboardPage() {
     // migration 20260511040000_lock_sweep_rpcs_to_service_role.sql.
     setLoading((current) => (profile ? false : current));
     try {
-      const [{ data: p, error: profileError }, { data: creditBalance }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, full_name, bio, onboarded, learning_mode")
-          .eq("id", user.id)
-          .maybeSingle(),
-        supabase.rpc("my_credit_balance"),
-      ]);
+      // Phase 1+2: fire every independent read in parallel. Profile resolves
+      // first so we can short-circuit on !onboarded, but the rest race in the
+      // background instead of waiting for the second wave.
+      const profilePromise = supabase
+        .from("profiles")
+        .select("id, full_name, bio, onboarded, learning_mode")
+        .eq("id", user.id)
+        .maybeSingle();
+      const creditBalancePromise = supabase.rpc("my_credit_balance");
+      const learnPromise = loadMyLearningSkills(user.id);
+      const myTeachPromise = loadMyTeachingSkills(user.id);
+      const sessionsPromise = queryDashboardSessionRows(user.id);
+      const streakPromise = loadStreak(user.id);
 
+      const { data: p, error: profileError } = await profilePromise;
       if (profileError) throw profileError;
 
       if (!p) {
@@ -592,22 +583,36 @@ function DashboardPage() {
         }
       }
       setProfile(p as Profile);
+      // Open the gate the moment we know onboarded=true so the skeleton can
+      // paint without waiting for the rest of the pipeline.
+      setOnboardingGateReady(true);
 
-      const [learn, myTeach, rawSessions, streakCount] = await Promise.all([
-        loadMyLearningSkills(user.id),
-        loadMyTeachingSkills(user.id),
-        queryDashboardSessionRows(user.id),
-        loadStreak(user.id),
-      ]);
+      // The phase-2 reads we kicked off above should be resolved or near it.
+      const [{ data: creditBalance }, learn, myTeach, rawSessions, streakCount] = await Promise.all(
+        [creditBalancePromise, learnPromise, myTeachPromise, sessionsPromise, streakPromise],
+      );
       setStreak(streakCount);
 
       const learnRows = learn ?? [];
       setLearning(learnRows);
+      const myTeachRows = myTeach ?? [];
+      setMyTeaching(myTeachRows);
 
+      // Phase 3: teachers, seekers, session-participant names. These three
+      // share no data — running them in Promise.all means the slowest leg
+      // dominates instead of all three summing.
+      const myCredits = creditBalance ?? null;
       const learnSkillIds = learnRows.map((l) => l.skill_id);
-      let teacherList: TeachOffer[] = [];
-      let ratings = new Map<string, TeacherRating>();
-      if (learnSkillIds.length) {
+      const teachSkillIds = myTeachRows.map((s) => s.skill_id);
+
+      const teacherPipeline = (async () => {
+        if (!learnSkillIds.length) {
+          return {
+            list: [] as TeachOffer[],
+            ratings: new Map<string, TeacherRating>(),
+            availability: new Map<string, string | null>(),
+          };
+        }
         let teacherResult = await supabase
           .from("user_teaching_skills")
           .select(
@@ -626,18 +631,43 @@ function DashboardPage() {
         }
         const { data: t } = teacherResult;
         const teacherRows = (t ?? []) as unknown as TeachOffer[];
+        if (!teacherRows.length) {
+          return {
+            list: [] as TeachOffer[],
+            ratings: new Map<string, TeacherRating>(),
+            availability: new Map<string, string | null>(),
+          };
+        }
         const teacherUserIds = teacherRows.map((row) => row.user_id);
-        const [teacherProfiles, teacherRatingMap, teacherLearningMap, teacherSessionsMap] =
-          await Promise.all([
-            loadProfiles(teacherUserIds),
-            fetchTeacherRatings(teacherUserIds),
-            loadCandidateLearningSkillIds(teacherUserIds),
-            loadCompletedSessionCounts(teacherUserIds),
-          ]);
-        ratings = teacherRatingMap;
-        setTeacherRatings(ratings);
-        const myTeachSkillIdSetForRanking = new Set((myTeach ?? []).map((row) => row.skill_id));
-        teacherList = teacherRows
+        // teachers_free_time_status used to run after the rank-sort+slice; it
+        // only feeds the final ordering, so moving it into the same Promise.all
+        // as profile/ratings shaves one serial roundtrip off this pipeline.
+        const [
+          teacherProfiles,
+          teacherRatingMap,
+          teacherLearningMap,
+          teacherSessionsMap,
+          freeTimeRes,
+        ] = await Promise.all([
+          loadProfiles(teacherUserIds),
+          fetchTeacherRatings(teacherUserIds),
+          loadCandidateLearningSkillIds(teacherUserIds),
+          loadCompletedSessionCounts(teacherUserIds),
+          supabase.rpc("teachers_free_time_status", {
+            p_teacher_ids: teacherUserIds,
+            p_duration_minutes: 30,
+            p_horizon_days: 7,
+          }),
+        ]);
+        const availability = new Map<string, string | null>();
+        for (const r of (freeTimeRes.data ?? []) as {
+          teacher_id: string;
+          next_slot: string | null;
+        }[]) {
+          availability.set(r.teacher_id, r.next_slot);
+        }
+        const myTeachSkillIdSetForRanking = new Set(myTeachRows.map((row) => row.skill_id));
+        const ranked = teacherRows
           .map((row) => {
             const summary = teacherProfiles.get(row.user_id);
             return {
@@ -665,10 +695,10 @@ function DashboardPage() {
               theirMode: a.teaching_mode,
               myLevel: aLearn?.current_level as SkillLevel | undefined,
               theirLevel: a.level as SkillLevel | undefined,
-              rating: ratings.get(a.user_id)?.average ?? null,
+              rating: teacherRatingMap.get(a.user_id)?.average ?? null,
               completedSessions: teacherSessionsMap.get(a.user_id) ?? 0,
               profileUpdatedAt: teacherProfiles.get(a.user_id)?.updated_at ?? null,
-              myCredits: creditBalance ?? null,
+              myCredits,
               theirCreditsPerHour: a.credits_per_hour,
               reciprocal: aReciprocal,
               candidateId: a.user_id + ":" + a.skill_id,
@@ -680,10 +710,10 @@ function DashboardPage() {
               theirMode: b.teaching_mode,
               myLevel: bLearn?.current_level as SkillLevel | undefined,
               theirLevel: b.level as SkillLevel | undefined,
-              rating: ratings.get(b.user_id)?.average ?? null,
+              rating: teacherRatingMap.get(b.user_id)?.average ?? null,
               completedSessions: teacherSessionsMap.get(b.user_id) ?? 0,
               profileUpdatedAt: teacherProfiles.get(b.user_id)?.updated_at ?? null,
-              myCredits: creditBalance ?? null,
+              myCredits,
               theirCreditsPerHour: b.credits_per_hour,
               reciprocal: bReciprocal,
               candidateId: b.user_id + ":" + b.skill_id,
@@ -693,51 +723,27 @@ function DashboardPage() {
           })
           .slice(0, 10);
 
-        // Bulk teacher-free-time lookup for the matched teachers, then
-        // sort so teachers with posted free time appear first. Doing this
-        // BEFORE setTeachers avoids the visible reshuffle from the previous
-        // two-step pattern (initial list paint, then re-sort once
-        // availability lands).
-        const intersectionTeacherIds = Array.from(new Set(teacherList.map((t) => t.user_id)));
-        let finalTeacherList = teacherList;
-        if (intersectionTeacherIds.length > 0) {
-          const { data: intRows } = await supabase.rpc("teachers_free_time_status", {
-            p_teacher_ids: intersectionTeacherIds,
-            p_duration_minutes: 30,
-            p_horizon_days: 7,
-          });
-          const availMap = new Map<string, string | null>();
-          for (const r of intRows ?? []) availMap.set(r.teacher_id, r.next_slot);
-          setTeacherAvailability(availMap);
+        // Stable re-sort: teachers with an upcoming slot float to top,
+        // preserving the rank-sort order within each group.
+        const slotMs = (uid: string) => {
+          const slot = availability.get(uid);
+          if (!slot) return null;
+          const ts = Date.parse(slot);
+          return Number.isNaN(ts) ? null : ts;
+        };
+        const finalList = [...ranked].sort((a, b) => {
+          const aSlot = slotMs(a.user_id);
+          const bSlot = slotMs(b.user_id);
+          if (aSlot != null && bSlot != null) return aSlot - bSlot;
+          if (aSlot != null) return -1;
+          if (bSlot != null) return 1;
+          return 0;
+        });
+        return { list: finalList, ratings: teacherRatingMap, availability };
+      })();
 
-          // Stable re-sort: teachers with an upcoming slot float to top.
-          const slotMs = (uid: string) => {
-            const slot = availMap.get(uid);
-            if (!slot) return null;
-            const t = Date.parse(slot);
-            return Number.isNaN(t) ? null : t;
-          };
-          finalTeacherList = [...teacherList].sort((a, b) => {
-            const aSlot = slotMs(a.user_id);
-            const bSlot = slotMs(b.user_id);
-            if (aSlot != null && bSlot != null) return aSlot - bSlot;
-            if (aSlot != null) return -1;
-            if (bSlot != null) return 1;
-            return 0;
-          });
-        }
-        setTeachers(finalTeacherList);
-      } else {
-        setTeachers([]);
-        setTeacherRatings(new Map());
-      }
-
-      const myTeachRows = myTeach ?? [];
-      setMyTeaching(myTeachRows);
-
-      const teachSkillIds = myTeachRows.map((s) => s.skill_id);
-      let seekerList: Seeker[] = [];
-      if (teachSkillIds.length) {
+      const seekerPipeline = (async () => {
+        if (!teachSkillIds.length) return [] as Seeker[];
         let seekerResult = await supabase
           .from("user_learning_skills")
           .select("id, user_id, skill_id, current_level, learning_mode, skills:skill_id(id, name)")
@@ -754,6 +760,7 @@ function DashboardPage() {
         }
         const { data: s } = seekerResult;
         const seekerRows = (s ?? []) as unknown as Seeker[];
+        if (!seekerRows.length) return [] as Seeker[];
         const seekerUserIds = seekerRows.map((row) => row.user_id);
         const [seekerProfiles, seekerTeachingMap, seekerSessionsMap] = await Promise.all([
           loadProfiles(seekerUserIds),
@@ -762,7 +769,7 @@ function DashboardPage() {
         ]);
         const myLearnSkillIdSetForRanking = new Set(learnRows.map((row) => row.skill_id));
         const myTeachLevelBySkill = new Map(myTeachRows.map((row) => [row.skill_id, row.level]));
-        seekerList = seekerRows
+        return seekerRows
           .map((row) => {
             const summary = seekerProfiles.get(row.user_id);
             return {
@@ -811,52 +818,67 @@ function DashboardPage() {
             return bScore - aScore;
           })
           .slice(0, 10);
-        setSeekers(seekerList);
-      } else {
-        setSeekers([]);
-      }
-      setMatchesHydrated(true);
+      })();
 
-      const participantIds = Array.from(
-        new Set(rawSessions.flatMap((s) => [s.learner_id, s.teacher_id])),
-      );
-      const profileMap = new Map<string, string>();
-      if (participantIds.length) {
-        const { data: people } = await supabase
-          .from("profiles")
-          .select("id, full_name")
-          .in("id", participantIds);
+      const sessionPipeline = (async () => {
+        const participantIds = Array.from(
+          new Set(rawSessions.flatMap((s) => [s.learner_id, s.teacher_id])),
+        );
+        // Jitsi helpers are only needed to rewrite meet links on already-
+        // accepted/active sessions. If the user has none, skip the import.
+        const needsJitsi = rawSessions.some(
+          (s) => s.status === "accepted" || s.status === "active",
+        );
+        const [{ data: people }, jitsi] = await Promise.all([
+          participantIds.length
+            ? supabase.from("profiles").select("id, full_name").in("id", participantIds)
+            : Promise.resolve({ data: [] as { id: string; full_name: string | null }[] }),
+          needsJitsi ? loadJitsi() : Promise.resolve(null),
+        ]);
+        const profileMap = new Map<string, string>();
         for (const person of people ?? []) {
           profileMap.set(person.id, person.full_name ?? "Student");
         }
-      }
-      const sessionList = rawSessions.map((s) => {
-        const normalizedLink =
-          s.status === "accepted" || s.status === "active"
-            ? getVideoRoomUrl({
-                link: s.meet_link,
-                sessionId: s.id,
-                skillName: s.skills?.name,
-              })
-            : s.meet_link;
-        return {
-          ...s,
-          meet_link: normalizedLink,
-          learnerName: profileMap.get(s.learner_id) ?? "Student",
-          teacherName: profileMap.get(s.teacher_id) ?? "Student",
-        };
-      });
+        const getVideoRoomUrl = jitsi?.getVideoRoomUrl;
+        return rawSessions.map((s) => {
+          const normalizedLink =
+            (s.status === "accepted" || s.status === "active") && getVideoRoomUrl
+              ? getVideoRoomUrl({
+                  link: s.meet_link,
+                  sessionId: s.id,
+                  skillName: s.skills?.name,
+                })
+              : s.meet_link;
+          return {
+            ...s,
+            meet_link: normalizedLink,
+            learnerName: profileMap.get(s.learner_id) ?? "Student",
+            teacherName: profileMap.get(s.teacher_id) ?? "Student",
+          };
+        });
+      })();
+
+      const [teacherOutcome, seekerList, sessionList] = await Promise.all([
+        teacherPipeline,
+        seekerPipeline,
+        sessionPipeline,
+      ]);
+      setTeacherRatings(teacherOutcome.ratings);
+      setTeacherAvailability(teacherOutcome.availability);
+      setTeachers(teacherOutcome.list);
+      setSeekers(seekerList);
       setSessions(sessionList);
+      setMatchesHydrated(true);
 
       setDashboardCache(user.id, {
         profile: p as Profile,
         learning: learnRows,
-        teachers: teacherList,
+        teachers: teacherOutcome.list,
         seekers: seekerList,
         myTeaching: myTeachRows,
         sessions: sessionList,
         recs,
-        teacherRatings: Array.from(ratings.entries()),
+        teacherRatings: Array.from(teacherOutcome.ratings.entries()),
         streak: streakCount,
       });
 
@@ -869,6 +891,9 @@ function DashboardPage() {
       setLoading(false);
       setRecs([]);
       setMatchesHydrated(true);
+      // Open the gate even on error so the user sees the skeleton + toast
+      // instead of an indefinite spinner.
+      setOnboardingGateReady(true);
       toastError(error, "Could not load dashboard");
     }
     // Stable across user-object rotations so useEffect(loadDashboard) below
@@ -1070,6 +1095,7 @@ function DashboardPage() {
   const acceptSession = async (session: SessionRow) => {
     markBusy(session.id);
     try {
+      const { createVideoRoom } = await loadJitsi();
       const room = await createVideoRoom({
         sessionId: session.id,
         skillName: session.skills?.name,
