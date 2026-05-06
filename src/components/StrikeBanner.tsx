@@ -62,8 +62,9 @@ export function StrikeBanner() {
 
   return (
     <BannerShell tone="info" icon={<AlertTriangle className="h-5 w-5" />}>
-      You have <span className="font-medium">{effective.active_strike_weight} active strike(s)</span>.
-      Avoid late cancellations and no-shows to keep your account in good standing.
+      You have{" "}
+      <span className="font-medium">{effective.active_strike_weight} active strike(s)</span>. Avoid
+      late cancellations and no-shows to keep your account in good standing.
       {effective.next_strike_expires_at && (
         <> Next strike expires {formatDate(effective.next_strike_expires_at)}.</>
       )}

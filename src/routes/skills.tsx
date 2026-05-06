@@ -6,14 +6,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  ArrowRight,
-  Compass,
-  MessageCircle,
-  Search,
-  Sparkles,
-  Users,
-} from "lucide-react";
+import { ArrowRight, Compass, MessageCircle, Search, Sparkles, Users } from "lucide-react";
 
 type SkillsSearch = { q?: string };
 
@@ -59,10 +52,7 @@ function usePublicSkills() {
       try {
         const [skillsRes, teachingRes] = await Promise.all([
           supabase.from("skills").select("id, name, category").order("name"),
-          supabase
-            .from("user_teaching_skills")
-            .select("skill_id")
-            .limit(5000),
+          supabase.from("user_teaching_skills").select("skill_id").limit(5000),
         ]);
 
         if (cancelled) return;
@@ -72,11 +62,13 @@ function usePublicSkills() {
           counts.set(row.skill_id, (counts.get(row.skill_id) ?? 0) + 1);
         }
 
-        const list: PublicSkill[] = ((skillsRes.data ?? []) as {
-          id: string;
-          name: string;
-          category: string | null;
-        }[]).map((s) => ({
+        const list: PublicSkill[] = (
+          (skillsRes.data ?? []) as {
+            id: string;
+            name: string;
+            category: string | null;
+          }[]
+        ).map((s) => ({
           id: s.id,
           name: s.name,
           category: s.category,
@@ -164,8 +156,7 @@ function PublicSkillsPage() {
       .filter((s) =>
         q.length === 0
           ? true
-          : s.name.toLowerCase().includes(q) ||
-            (s.category ?? "").toLowerCase().includes(q),
+          : s.name.toLowerCase().includes(q) || (s.category ?? "").toLowerCase().includes(q),
       )
       .sort((a, b) => b.teacherCount - a.teacherCount || a.name.localeCompare(b.name));
   }, [skills, query, category]);
@@ -190,11 +181,7 @@ function PublicSkillsPage() {
 
         <section className="border-t border-border/60">
           <div className="mx-auto max-w-7xl px-6 py-6 lg:py-8">
-            <CategoryPills
-              categories={categories}
-              active={category}
-              onChange={setCategory}
-            />
+            <CategoryPills categories={categories} active={category} onChange={setCategory} />
 
             {loading ? (
               <SkeletonGrid />
@@ -301,8 +288,7 @@ function PublicHero({
             </h1>
 
             <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-              Browse the catalog freely. Peers and bookings appear after you sign
-              up.
+              Browse the catalog freely. Peers and bookings appear after you sign up.
             </p>
 
             <div className="mt-5 max-w-xl">
@@ -413,9 +399,7 @@ function SkillCard({ skill }: { skill: PublicSkill }) {
         )}
       </div>
 
-      <h3 className="relative mt-5 text-lg font-black tracking-tight">
-        {skill.name}
-      </h3>
+      <h3 className="relative mt-5 text-lg font-black tracking-tight">{skill.name}</h3>
 
       <div className="relative mt-3 flex items-center justify-between text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
@@ -485,8 +469,8 @@ function PublicCTA() {
           <span className="block gradient-brand-text pb-1">and book a session.</span>
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground sm:text-lg">
-          Start with your student email and 10 starter credits. One flat $2 a
-          month, no per-session fees.
+          Start with your student email and 10 starter credits. One flat $2 a month, no per-session
+          fees.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button variant="hero" size="xl" asChild>

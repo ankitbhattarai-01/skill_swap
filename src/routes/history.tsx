@@ -389,10 +389,30 @@ function SessionsPage() {
                 </>
               ) : (
                 <>
-                  <StatCard label="Recent" value={stats.total} tone="default" icon={<Video className="h-4 w-4" />} />
-                  <StatCard label="Pending" value={stats.pending} tone="pending" icon={<Clock className="h-4 w-4" />} />
-                  <StatCard label="Accepted" value={stats.accepted} tone="accepted" icon={<Check className="h-4 w-4" />} />
-                  <StatCard label="Completed" value={stats.completed} tone="completed" icon={<CheckCircle2 className="h-4 w-4" />} />
+                  <StatCard
+                    label="Recent"
+                    value={stats.total}
+                    tone="default"
+                    icon={<Video className="h-4 w-4" />}
+                  />
+                  <StatCard
+                    label="Pending"
+                    value={stats.pending}
+                    tone="pending"
+                    icon={<Clock className="h-4 w-4" />}
+                  />
+                  <StatCard
+                    label="Accepted"
+                    value={stats.accepted}
+                    tone="accepted"
+                    icon={<Check className="h-4 w-4" />}
+                  />
+                  <StatCard
+                    label="Completed"
+                    value={stats.completed}
+                    tone="completed"
+                    icon={<CheckCircle2 className="h-4 w-4" />}
+                  />
                 </>
               )}
             </div>
@@ -642,10 +662,7 @@ function SessionCard({
       ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
       : null;
   const earlyReleaseAvailable =
-    isAccepted &&
-    !isTeacher &&
-    earlyReleaseUnlockAt !== null &&
-    earlyReleaseUnlockAt <= Date.now();
+    isAccepted && !isTeacher && earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
   const canRespondToPending =
     session.status === "pending" && Boolean(currentUserId && currentUserId !== sessionInitiatorId);
   const displayDate = new Date(session.scheduled_at ?? session.created_at);

@@ -99,9 +99,7 @@ function SidebarItem({
         aria-hidden={collapsed}
         className={cn(
           "truncate transition-[opacity,max-width] duration-200 ease-out",
-          collapsed
-            ? "pointer-events-none max-w-0 opacity-0"
-            : "max-w-[160px] opacity-100",
+          collapsed ? "pointer-events-none max-w-0 opacity-0" : "max-w-[160px] opacity-100",
         )}
       >
         {item.name}

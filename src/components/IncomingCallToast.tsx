@@ -87,11 +87,7 @@ export function IncomingCallToast() {
         // caller as the counterparty. RLS on `sessions` enforces the
         // participant gate, so a non-participant simply gets no row back.
         const payload = msg.payload as CallRingingPayload;
-        if (
-          !payload?.sessionId ||
-          !payload?.callerId ||
-          typeof payload.callerName !== "string"
-        ) {
+        if (!payload?.sessionId || !payload?.callerId || typeof payload.callerName !== "string") {
           return;
         }
         void (async () => {
@@ -101,8 +97,7 @@ export function IncomingCallToast() {
             .eq("id", payload.sessionId)
             .maybeSingle();
           if (cancelled || !session) return;
-          const isParticipant =
-            session.learner_id === user.id || session.teacher_id === user.id;
+          const isParticipant = session.learner_id === user.id || session.teacher_id === user.id;
           const counterpartyId =
             session.learner_id === user.id ? session.teacher_id : session.learner_id;
           if (

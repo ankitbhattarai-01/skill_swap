@@ -5,8 +5,7 @@
 // 5-minute fallback poll that would otherwise resurrect the same 8
 // messages as "new" notifications on every refresh.
 
-export const clearedHorizonKey = (userId: string) =>
-  `skillswap-notifications-cleared-at-${userId}`;
+export const clearedHorizonKey = (userId: string) => `skillswap-notifications-cleared-at-${userId}`;
 
 export function readClearedHorizon(userId: string) {
   if (typeof window === "undefined") return 0;

@@ -41,7 +41,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageLoading } from "@/components/PageLoading";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
-import { formatDate, metricValue } from "@/lib/admin-format";
+import { formatDate } from "@/lib/admin-format";
 import { Metric } from "@/components/admin/KpiTile";
 import {
   adminErrorMessage,
@@ -386,7 +386,9 @@ function AdminSessionsPage() {
               >
                 <TableCell data-label="Session">
                   <div className="space-y-1 text-right md:text-left">
-                    <div className="font-medium break-anywhere">{session.skill_name ?? "Unknown skill"}</div>
+                    <div className="font-medium break-anywhere">
+                      {session.skill_name ?? "Unknown skill"}
+                    </div>
                     <div className="text-xs text-muted-foreground break-anywhere">{session.id}</div>
                     <Badge variant="outline" className="capitalize">
                       {session.status}

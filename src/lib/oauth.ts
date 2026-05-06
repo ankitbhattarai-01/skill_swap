@@ -16,10 +16,7 @@ function couldNotStartMessage(provider: Provider): string {
   return `${label} sign-in could not be started.`;
 }
 
-async function prepareOAuth(
-  provider: Provider,
-  redirectTo: string,
-): Promise<OAuthStartResult> {
+async function prepareOAuth(provider: Provider, redirectTo: string): Promise<OAuthStartResult> {
   // skipBrowserRedirect lets us own the navigation — important because we want
   // the PKCE verifier (written to localStorage by signInWithOAuth) to be in
   // place BEFORE we leave the page. We then navigate ourselves so any failure

@@ -148,9 +148,7 @@ export function loadJitsiExternalApi(): Promise<JitsiExternalApiConstructor> {
     return Promise.reject(new Error("Jitsi requires a browser environment"));
   }
   if (!isJaasMode()) {
-    return Promise.reject(
-      new Error("Video calls are not configured for this environment."),
-    );
+    return Promise.reject(new Error("Video calls are not configured for this environment."));
   }
   if (window.JitsiMeetExternalAPI) {
     return Promise.resolve(window.JitsiMeetExternalAPI);

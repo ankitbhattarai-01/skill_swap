@@ -165,10 +165,9 @@ export function TrackProposalDialog({
                   Propose a learning track
                 </DialogTitle>
                 <DialogDescription className="mt-1">
-                  Wrap multiple{" "}
-                  <span className="font-medium text-foreground">{skillName}</span> sessions toward
-                  one goal. Each session still uses normal credits, the track itself is free.
-                  Either side can end it any time.
+                  Wrap multiple <span className="font-medium text-foreground">{skillName}</span>{" "}
+                  sessions toward one goal. Each session still uses normal credits, the track itself
+                  is free. Either side can end it any time.
                 </DialogDescription>
               </div>
             </div>

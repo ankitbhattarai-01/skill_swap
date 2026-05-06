@@ -27,7 +27,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReasonFields } from "@/components/admin/ReasonFields";
-import { formatDate, metricValue } from "@/lib/admin-format";
+import { formatDate } from "@/lib/admin-format";
 import { Metric } from "@/components/admin/KpiTile";
 import {
   Select,
@@ -44,7 +44,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { PageLoading } from "@/components/PageLoading";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
@@ -542,7 +541,10 @@ function AdminFinancePage() {
                     onClick={() => setDetailRequest(request)}
                     className="cursor-pointer hover:bg-muted/30"
                   >
-                    <TableCell data-label="Maker" className="md:max-w-[180px] md:truncate break-anywhere">
+                    <TableCell
+                      data-label="Maker"
+                      className="md:max-w-[180px] md:truncate break-anywhere"
+                    >
                       {request.maker_email ?? request.maker_id ?? "Deleted admin"}
                     </TableCell>
                     <TableCell data-label="Action">

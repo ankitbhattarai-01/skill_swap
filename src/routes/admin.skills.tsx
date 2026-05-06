@@ -277,7 +277,9 @@ function AdminSkillsPage() {
                 const inUse = skill.teaching_count + skill.learning_count + skill.session_count > 0;
                 return (
                   <TableRow key={skill.id}>
-                    <TableCell data-label="Name" className="font-medium">{skill.name}</TableCell>
+                    <TableCell data-label="Name" className="font-medium">
+                      {skill.name}
+                    </TableCell>
                     <TableCell data-label="Category">
                       {skill.category ? (
                         <Badge variant="outline">{skill.category}</Badge>

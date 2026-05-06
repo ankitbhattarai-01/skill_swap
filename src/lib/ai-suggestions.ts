@@ -93,7 +93,7 @@ function tidyMessage(message: string): string {
 
 function rewriteLeadingNumber(msg: string): string {
   // "1 learner wants X. ..."  /  "3 learners want X. ..."
-  let m = msg.match(/^(\d+)\s+learners?\s+wants?\s+(.+?)\.\s*(.*)$/i);
+  const m = msg.match(/^(\d+)\s+learners?\s+wants?\s+(.+?)\.\s*(.*)$/i);
   if (m) {
     const n = parseInt(m[1], 10);
     const skill = m[2].trim();

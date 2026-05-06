@@ -1081,9 +1081,7 @@ function DashboardPage() {
     nextMoves.flatMap((m) => (m.kind === "match" ? m.teachers.map((t) => t.id) : [])),
   );
   const teachersForRow =
-    featuredTeacherIds.size > 0
-      ? teachers.filter((t) => !featuredTeacherIds.has(t.id))
-      : teachers;
+    featuredTeacherIds.size > 0 ? teachers.filter((t) => !featuredTeacherIds.has(t.id)) : teachers;
   // The Next Move stack already surfaces pending requests and the soonest upcoming
   // session. Drop them from the Active sessions strip so the same cards don't render twice.
   const featuredSessionIds = new Set(
@@ -1092,9 +1090,7 @@ function DashboardPage() {
     ),
   );
   const sessionsForStrip =
-    featuredSessionIds.size > 0
-      ? sessions.filter((s) => !featuredSessionIds.has(s.id))
-      : sessions;
+    featuredSessionIds.size > 0 ? sessions.filter((s) => !featuredSessionIds.has(s.id)) : sessions;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1163,7 +1159,6 @@ function DashboardPage() {
             {/* Desktop credits card — fills the empty right side with a calm,
                 on-brand summary of the user's balance. */}
             <CreditsCard credits={liveCreditBalance ?? 0} />
-
           </div>
         </section>
 
@@ -1503,10 +1498,7 @@ function NextMoveCard({
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2 md:gap-5">
           {[0, 1].map((i) => (
-            <div
-              key={i}
-              className="rounded-xl border border-border/40 bg-card/60 p-4"
-            >
+            <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-4">
               <div className="flex items-center gap-3">
                 <Skeleton className="h-11 w-11 rounded-full" />
                 <div className="flex-1 space-y-2">
@@ -1798,10 +1790,7 @@ function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
       />
       <div className="flex items-start gap-3 pl-1">
         <div
-          className={cn(
-            "h-10 w-10 shrink-0 rounded-xl flex items-center justify-center",
-            meta.bg,
-          )}
+          className={cn("h-10 w-10 shrink-0 rounded-xl flex items-center justify-center", meta.bg)}
         >
           <Icon className={cn("h-5 w-5", meta.fg)} />
         </div>
@@ -1893,9 +1882,7 @@ function PeopleSection({
           <h2 className="inline-flex items-center gap-2 text-sm md:text-base font-semibold">
             {icon} {title}
           </h2>
-          {subtitle && (
-            <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
-          )}
+          {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
         </div>
         {actionLabel && actionTo && (
           <Link

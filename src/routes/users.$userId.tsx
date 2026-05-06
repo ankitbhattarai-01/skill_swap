@@ -300,7 +300,12 @@ function PublicUserPage() {
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative p-5 md:p-8">
-            <Button variant="ghost" size="sm" asChild className="-ml-2 mb-3 md:mb-5 text-muted-foreground hover:text-foreground">
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="-ml-2 mb-3 md:mb-5 text-muted-foreground hover:text-foreground"
+            >
               <Link to="/explore" preload="intent">
                 <ArrowLeft className="h-4 w-4" />
                 Back to Explore
@@ -319,7 +324,9 @@ function PublicUserPage() {
                     {profile.full_name ?? "Student"}
                   </h1>
                   {profile.bio && (
-                    <p className="mt-1.5 sm:mt-2 max-w-2xl text-sm sm:text-base text-muted-foreground">{profile.bio}</p>
+                    <p className="mt-1.5 sm:mt-2 max-w-2xl text-sm sm:text-base text-muted-foreground">
+                      {profile.bio}
+                    </p>
                   )}
                   <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-muted-foreground">
                     {averageRating !== null ? (
@@ -348,12 +355,7 @@ function PublicUserPage() {
               {user?.id !== userId && (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-end">
                   {primaryTeachingSkill && (
-                    <Button
-                      variant="hero"
-                      size="lg"
-                      onClick={openRequest}
-                      disabled={requesting}
-                    >
+                    <Button variant="hero" size="lg" onClick={openRequest} disabled={requesting}>
                       {requesting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
@@ -543,9 +545,7 @@ function SkillSection({
   return (
     <section className="glass rounded-3xl border border-white/10 p-5 md:p-7">
       <div className="mb-4 md:mb-5 flex items-center gap-3">
-        <div
-          className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${tonedBg}`}
-        >
+        <div className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${tonedBg}`}>
           {icon}
         </div>
         <div className="flex items-baseline gap-2">

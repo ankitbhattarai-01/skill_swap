@@ -1326,10 +1326,7 @@ function ProfilePage() {
           </ConfirmAction>
         </div>
 
-        <ChangePasswordDialog
-          open={passwordDialogOpen}
-          onOpenChange={setPasswordDialogOpen}
-        />
+        <ChangePasswordDialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen} />
       </main>
     </div>
   );

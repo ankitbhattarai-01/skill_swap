@@ -25,7 +25,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -41,7 +40,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { PageLoading } from "@/components/PageLoading";
 import { ReasonFields } from "@/components/admin/ReasonFields";
@@ -342,8 +340,8 @@ function AdminUsersPage() {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>
             Showing {filteredUsers.length}
-            {hasFilters ? ` of ${allUsers.length} loaded` : ""} (max 50 per query, narrow the
-            search for more)
+            {hasFilters ? ` of ${allUsers.length} loaded` : ""} (max 50 per query, narrow the search
+            for more)
           </span>
           {hasFilters && (
             <button
@@ -387,8 +385,12 @@ function AdminUsersPage() {
               >
                 <TableCell data-label="User">
                   <div className="space-y-1 text-right md:text-left">
-                    <div className="font-medium break-anywhere">{row.masked_email ?? "masked user"}</div>
-                    <div className="text-xs text-muted-foreground break-anywhere">{row.masked_name ?? row.id}</div>
+                    <div className="font-medium break-anywhere">
+                      {row.masked_email ?? "masked user"}
+                    </div>
+                    <div className="text-xs text-muted-foreground break-anywhere">
+                      {row.masked_name ?? row.id}
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell data-label="Activity">

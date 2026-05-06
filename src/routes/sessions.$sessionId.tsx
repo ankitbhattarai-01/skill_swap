@@ -303,8 +303,7 @@ function SessionPage() {
     session.scheduled_at && session.duration_minutes
       ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
       : null;
-  const earlyReleaseUnlocked =
-    earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
+  const earlyReleaseUnlocked = earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
   const canEarlyRelease = isAcceptedSession && !isTeacher && earlyReleaseUnlocked;
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
   const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);

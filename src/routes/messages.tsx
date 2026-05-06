@@ -10,7 +10,15 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { signAvatarUrls } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Loader2, MessageCircle, MessagesSquare, Search, Send, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  MessageCircle,
+  MessagesSquare,
+  Search,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import { describeViolations, detectViolations } from "@/lib/messageFilter";
 import { Skeleton } from "@/components/ui/skeleton";

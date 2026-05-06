@@ -148,7 +148,9 @@ export function PageLoading({ variant = "hero-stats" }: { variant?: PageLoadingV
     const maxW = variant === "list-wide" ? "max-w-7xl" : "max-w-6xl";
     return (
       <div className="min-h-screen flex flex-col">
-        <main className={`mx-auto w-full ${maxW} flex-1 px-4 py-5 sm:px-6 space-y-4 animate-in fade-in duration-150`}>
+        <main
+          className={`mx-auto w-full ${maxW} flex-1 px-4 py-5 sm:px-6 space-y-4 animate-in fade-in duration-150`}
+        >
           <section className="glass rounded-2xl p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex items-start gap-3">

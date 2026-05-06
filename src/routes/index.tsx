@@ -37,8 +37,7 @@ export const Route = createFileRoute("/")({
       },
       {
         property: "og:description",
-        content:
-          "Find a peer, book a session, learn face-to-face. Credits, not cash.",
+        content: "Find a peer, book a session, learn face-to-face. Credits, not cash.",
       },
     ],
   }),
@@ -232,8 +231,8 @@ function Hero({ stats, loading }: { stats: LandingStats | null; loading: boolean
 
           <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:mt-6 sm:text-lg sm:leading-8 md:text-xl">
             Skills you need, taught by peers who just nailed them.{" "}
-            <span className="font-semibold text-foreground">Two dollars a month.</span>{" "}
-            Credits cover every session.
+            <span className="font-semibold text-foreground">Two dollars a month.</span> Credits
+            cover every session.
           </p>
 
           <div className="mt-7 sm:mt-8">
@@ -258,13 +257,7 @@ function Hero({ stats, loading }: { stats: LandingStats | null; loading: boolean
   );
 }
 
-function ProofPoint({
-  icon: Icon,
-  label,
-}: {
-  icon: LucideIcon;
-  label: string;
-}) {
+function ProofPoint({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
     <div className="flex items-center gap-2">
       <Icon className="h-4 w-4 text-brand-cyan" />
@@ -276,17 +269,15 @@ function ProofPoint({
 const heroAccents = [
   { chip: "bg-primary/10 text-primary", dot: "bg-primary", glow: "from-primary/30" },
   { chip: "bg-brand-cyan/10 text-brand-cyan", dot: "bg-brand-cyan", glow: "from-brand-cyan/30" },
-  { chip: "bg-fuchsia-500/10 text-fuchsia-500", dot: "bg-fuchsia-500", glow: "from-fuchsia-500/30" },
+  {
+    chip: "bg-fuchsia-500/10 text-fuchsia-500",
+    dot: "bg-fuchsia-500",
+    glow: "from-fuchsia-500/30",
+  },
   { chip: "bg-amber-500/10 text-amber-500", dot: "bg-amber-500", glow: "from-amber-500/30" },
 ];
 
-function HeroCard({
-  stats,
-  loading,
-}: {
-  stats: LandingStats | null;
-  loading: boolean;
-}) {
+function HeroCard({ stats, loading }: { stats: LandingStats | null; loading: boolean }) {
   const peerCount = stats?.peerCount ?? 0;
   const skillCount = stats?.skillCount ?? 0;
   const top = stats?.topSkills ?? [];
@@ -336,8 +327,7 @@ function HeroCard({
             aria-hidden
             className="pointer-events-none absolute inset-0 opacity-[0.04]"
             style={{
-              backgroundImage:
-                "radial-gradient(currentColor 1px, transparent 1px)",
+              backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)",
               backgroundSize: "18px 18px",
             }}
           />
@@ -418,13 +408,7 @@ function HeroCard({
   );
 }
 
-function FloatingChip({
-  label,
-  className,
-}: {
-  label: string;
-  className: string;
-}) {
+function FloatingChip({ label, className }: { label: string; className: string }) {
   if (!label) return null;
   return (
     <div
@@ -471,9 +455,7 @@ function FeaturedSkill({
           </div>
           <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
             <span className={`h-1.5 w-1.5 rounded-full ${accent.dot}`} />
-            {teacherCount === 1
-              ? "1 peer teaching now"
-              : `${teacherCount} peers teaching now`}
+            {teacherCount === 1 ? "1 peer teaching now" : `${teacherCount} peers teaching now`}
           </div>
         </div>
       </div>
@@ -560,8 +542,7 @@ function HowItWorks() {
             Three steps. <span className="gradient-brand-text">That's it.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted-foreground sm:mt-5 sm:text-lg sm:leading-8">
-            One flat $2/month platform fee. After that, exchange skills with
-            any peer, any time.
+            One flat $2/month platform fee. After that, exchange skills with any peer, any time.
           </p>
         </div>
 
@@ -584,13 +565,7 @@ function HowItWorks() {
   );
 }
 
-function StepCard({
-  step,
-  isLast,
-}: {
-  step: (typeof steps)[number];
-  isLast: boolean;
-}) {
+function StepCard({ step, isLast }: { step: (typeof steps)[number]; isLast: boolean }) {
   const Icon = step.icon;
   return (
     <div className="group relative">
@@ -638,17 +613,19 @@ function StepCard({
 
 const skillAccents = [
   { chip: "bg-primary/10 text-primary", border: "hover:border-primary/40", dot: "bg-primary" },
-  { chip: "bg-brand-cyan/10 text-brand-cyan", border: "hover:border-brand-cyan/40", dot: "bg-brand-cyan" },
-  { chip: "bg-fuchsia-500/10 text-fuchsia-500", border: "hover:border-fuchsia-500/40", dot: "bg-fuchsia-500" },
+  {
+    chip: "bg-brand-cyan/10 text-brand-cyan",
+    border: "hover:border-brand-cyan/40",
+    dot: "bg-brand-cyan",
+  },
+  {
+    chip: "bg-fuchsia-500/10 text-fuchsia-500",
+    border: "hover:border-fuchsia-500/40",
+    dot: "bg-fuchsia-500",
+  },
 ];
 
-function Momentum({
-  stats,
-  loading,
-}: {
-  stats: LandingStats | null;
-  loading: boolean;
-}) {
+function Momentum({ stats, loading }: { stats: LandingStats | null; loading: boolean }) {
   const top = stats?.topSkills ?? [];
   const hasSkills = top.length > 0;
   const fillerSlots = Math.max(0, 3 - top.length);
@@ -666,9 +643,7 @@ function Momentum({
               Live on SkillSwap
             </div>
             <h2 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl md:text-4xl">
-              {hasSkills
-                ? "What peers are teaching right now"
-                : "Be the first to teach"}
+              {hasSkills ? "What peers are teaching right now" : "Be the first to teach"}
             </h2>
           </div>
           <Button variant="outline" size="sm" className="self-start sm:self-auto" asChild>
@@ -679,10 +654,7 @@ function Momentum({
         {loading ? (
           <div className="mt-8 grid gap-4 sm:mt-10 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-[96px] rounded-2xl border border-border bg-card/60"
-              />
+              <div key={i} className="h-[96px] rounded-2xl border border-border bg-card/60" />
             ))}
           </div>
         ) : hasSkills ? (
@@ -703,9 +675,7 @@ function Momentum({
                     {initial}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-base font-black tracking-tight">
-                      {item.name}
-                    </div>
+                    <div className="truncate text-base font-black tracking-tight">{item.name}</div>
                     <div className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                       <span className={`h-1.5 w-1.5 rounded-full ${accent.dot}`} />
                       {item.teacherCount === 1
@@ -743,8 +713,8 @@ function Momentum({
         ) : (
           <div className="mt-8 rounded-3xl border border-dashed border-border bg-card/40 px-6 py-10 text-center sm:mt-10 sm:px-8 sm:py-12">
             <p className="text-base text-muted-foreground">
-              No skills listed yet. Sign up and add the first one. Every peer
-              who joins makes the platform more useful.
+              No skills listed yet. Sign up and add the first one. Every peer who joins makes the
+              platform more useful.
             </p>
             <div className="mt-6">
               <Button variant="hero" size="lg" asChild>
@@ -772,8 +742,7 @@ function PrivacyBand() {
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 opacity-[0.04] dark:opacity-[0.06]"
         style={{
-          backgroundImage:
-            "radial-gradient(currentColor 1px, transparent 1px)",
+          backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)",
           backgroundSize: "22px 22px",
         }}
       />
@@ -799,9 +768,7 @@ function PrivacyBand() {
             <div className="mt-8 hidden flex-col gap-3 lg:flex">
               <div className="flex items-center gap-3 text-xs text-foreground/40">
                 <span className="h-px w-10 bg-foreground/25" />
-                <span className="font-mono uppercase tracking-[0.22em]">
-                  Three commitments
-                </span>
+                <span className="font-mono uppercase tracking-[0.22em]">Three commitments</span>
               </div>
               <div className="ml-[3.25rem] flex flex-col gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-foreground/55">
                 <div className="flex items-center gap-2">

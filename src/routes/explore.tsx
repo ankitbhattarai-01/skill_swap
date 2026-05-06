@@ -236,11 +236,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <ReportDialog
-            reportedUserId={r.user_id}
-            open={reportOpen}
-            onOpenChange={setReportOpen}
-          />
+          <ReportDialog reportedUserId={r.user_id} open={reportOpen} onOpenChange={setReportOpen} />
         </div>
       </div>
 
@@ -378,10 +374,7 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
             </div>
           </div>
         </Link>
-        <Badge
-          variant="outline"
-          className={LEVEL_COLORS[r.current_level] + " capitalize shrink-0"}
-        >
+        <Badge variant="outline" className={LEVEL_COLORS[r.current_level] + " capitalize shrink-0"}>
           {r.current_level}
         </Badge>
       </div>

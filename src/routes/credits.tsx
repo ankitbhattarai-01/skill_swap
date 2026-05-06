@@ -326,7 +326,7 @@ function CreditsPage() {
           </div>
         </section>
 
-<section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+        <section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">

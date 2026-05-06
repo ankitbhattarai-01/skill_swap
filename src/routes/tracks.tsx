@@ -267,7 +267,8 @@ function TrackCard({
   onReject: () => void;
   onEnd: () => Promise<unknown>;
 }) {
-  const statusStyle = STATUS_STYLES[t.status] ?? "bg-white/5 text-muted-foreground ring-1 ring-white/10";
+  const statusStyle =
+    STATUS_STYLES[t.status] ?? "bg-white/5 text-muted-foreground ring-1 ring-white/10";
   const hoverAccent = STATUS_HOVER[t.status] ?? "hover:border-white/20";
   const isActive = t.status === "active";
   const progressPct = isActive
@@ -290,7 +291,10 @@ function TrackCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge
-              className={cn("rounded-full border-0 px-2.5 py-0.5 text-xs font-medium capitalize", statusStyle)}
+              className={cn(
+                "rounded-full border-0 px-2.5 py-0.5 text-xs font-medium capitalize",
+                statusStyle,
+              )}
             >
               {t.status}
             </Badge>

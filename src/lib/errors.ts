@@ -153,7 +153,8 @@ const KNOWN_PATTERNS: Array<{ test: RegExp; message: string }> = [
   },
   {
     test: /email rate limit exceeded/i,
-    message: "We've sent a lot of emails to this address recently. Please wait a few minutes and try again.",
+    message:
+      "We've sent a lot of emails to this address recently. Please wait a few minutes and try again.",
   },
   {
     test: /for security purposes.*request this (once )?(every|after) \d+ seconds?/i,
@@ -279,7 +280,7 @@ function humanizePasswordComplexity(raw: string): string | null {
   if (/0123456789/.test(raw)) needs.push("a number");
   // The symbol set is long and varies — detect any common punctuation grouping
   // after the digits, or the literal word "symbol".
-  if (/[!@#$%^&*()_+\-=\[\]{};:"\\|,.<>/?]{3,}/.test(raw) || /\bsymbol\b/i.test(raw)) {
+  if (/[!@#$%^&*()_+\-=[\]{};:"\\|,.<>/?]{3,}/.test(raw) || /\bsymbol\b/i.test(raw)) {
     needs.push("a symbol");
   }
 
