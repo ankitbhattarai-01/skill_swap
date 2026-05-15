@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tanstack-start-app",
+  "compatibility_date": "2025-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  // Custom entry that wraps TanStack Start's default handler and injects
+  // security headers (CSP, HSTS, X-Frame-Options, etc.). See server.ts.
+  "main": "./server.ts",
+}
