@@ -13,6 +13,7 @@ import { prepareGoogleOAuth } from "@/lib/oauth";
 import { humanizeError, toastError } from "@/lib/errors";
 import { isAuthCaptchaConfigured } from "@/lib/captcha";
 import { useAuth } from "@/lib/auth-context";
+import { allowedDomainsLabel, isAllowedSignupEmail } from "@/lib/email-domains";
 
 export const Route = createFileRoute("/signup")({
   validateSearch: (s: Record<string, unknown>) => ({
@@ -52,6 +53,11 @@ function SignupPage() {
     e.preventDefault();
     if (!requireCaptchaToken()) return;
 
+    if (!isAllowedSignupEmail(email)) {
+      toast.error(`Please use a ${allowedDomainsLabel()} email address.`);
+      return;
+    }
+
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -70,26 +76,24 @@ function SignupPage() {
       return toastError(error);
     }
 
-    // Supabase returns a session immediately only when "Confirm email" is
-    // disabled. When confirmation is required, data.session is null and the
-    // user must click the link in the verification email before they can log
-    // in. Detect both cases and route accordingly.
-    if (!data.session) {
-      // Some projects with confirmation disabled but identity already taken
-      // return a user with no identities array. Surface that case instead of
-      // silently asking the user to check an inbox that will never get mail.
-      if (data.user && data.user.identities && data.user.identities.length === 0) {
-        toast.error("This email is already registered. Try logging in instead.");
-        return;
-      }
-      setConfirmEmail(email);
-      setResendCooldown(45);
-      toast.success("Account created - check your email to verify.");
+    // Identity-already-taken on a project that doesn't require confirmation
+    // returns a user with an empty identities array. Catch that first --
+    // otherwise we'd silently ask them to check an inbox that gets no mail.
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      toast.error("This email is already registered. Try logging in instead.");
       return;
     }
 
-    toast.success("Account created! Let's set up your profile.");
-    navigate({ to: "/onboarding" });
+    // Hard guard: a verification link MUST be clicked before the account is
+    // usable. If Supabase returned a session (e.g. "Confirm email" is toggled
+    // off on the project), revoke it so the user can't proceed unverified.
+    if (data.session) {
+      await supabase.auth.signOut();
+    }
+
+    setConfirmEmail(email);
+    setResendCooldown(45);
+    toast.success("Verification email sent. Click the link to activate your account.");
   };
 
   const handleResend = async () => {
@@ -182,14 +186,9 @@ function SignupPage() {
                 <h1 className="text-2xl font-bold">Check your email</h1>
                 <p className="mt-2 text-sm text-muted-foreground">
                   We sent a verification link to{" "}
-                  <span className="font-medium text-foreground">{confirmEmail}</span>. Click it to
-                  finish setting up your account.
+                  <span className="font-medium text-foreground">{confirmEmail}</span>. Your account
+                  isn't active until you click the link.
                 </p>
-              </div>
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-left text-xs text-amber-500">
-                Didn't get it? Check spam, or your Supabase admin may need to enable email
-                confirmation and configure an SMTP sender (the built-in sender is rate-limited and
-                may drop messages).
               </div>
               <Button
                 type="button"
