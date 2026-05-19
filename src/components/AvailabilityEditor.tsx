@@ -40,14 +40,15 @@ const MODE_CONTENT = {
   teach: {
     label: "Teach",
     title: "Teaching hours",
-    subtitle: "The times you are happy to teach others.",
+    subtitle: "When you're free to teach. Learners can only book sessions inside these windows.",
     copyLabel: "Copy from learning",
     icon: BookOpen,
   },
   learn: {
     label: "Learn",
     title: "Learning hours",
-    subtitle: "The times you are available to learn from others.",
+    subtitle:
+      "Optional — when you're free to learn. Shown on your profile so teachers know when to reach out.",
     copyLabel: "Copy from teaching",
     icon: GraduationCap,
   },
