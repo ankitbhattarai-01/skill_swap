@@ -383,7 +383,8 @@ function DashboardPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [learning, setLearning] = useState<LearnRow[]>([]);
   const [teachers, setTeachers] = useState<TeachOffer[]>([]);
-  // teacher_id → next intersection slot ISO (or null = no overlap in 7d).
+  // teacher_id → next free slot the teacher offers (or null = no free
+  // `teach` time posted / fully booked in the 7-day horizon).
   const [teacherAvailability, setTeacherAvailability] = useState<Map<string, string | null>>(
     new Map(),
   );
@@ -609,14 +610,15 @@ function DashboardPage() {
           })
           .slice(0, 10);
 
-        // Bulk intersection lookup for the matched teachers, then sort so
-        // available teachers appear first. Doing this BEFORE setTeachers
-        // avoids the visible reshuffle from the previous two-step pattern
-        // (initial list paint, then re-sort once availability lands).
+        // Bulk teacher-free-time lookup for the matched teachers, then
+        // sort so teachers with posted free time appear first. Doing this
+        // BEFORE setTeachers avoids the visible reshuffle from the previous
+        // two-step pattern (initial list paint, then re-sort once
+        // availability lands).
         const intersectionTeacherIds = Array.from(new Set(teacherList.map((t) => t.user_id)));
         let finalTeacherList = teacherList;
         if (intersectionTeacherIds.length > 0) {
-          const { data: intRows } = await supabase.rpc("teachers_intersection_status", {
+          const { data: intRows } = await supabase.rpc("teachers_free_time_status", {
             p_teacher_ids: intersectionTeacherIds,
             p_duration_minutes: 30,
             p_horizon_days: 7,
@@ -1184,7 +1186,7 @@ function DashboardPage() {
                             label={
                               timeOk
                                 ? `Free ${new Date(teacherAvailability.get(t.user_id)!).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
-                                : "No time overlap"
+                                : "No free times posted"
                             }
                           />
                           <MatchChip

@@ -242,11 +242,11 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
           {hasTimeMatch ? (
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-300">
               <Sparkles className="h-3 w-3" />
-              Time matched
+              Free this week
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-400">
-              Time not matched
+            <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-muted-foreground">
+              No free times posted
             </span>
           )}
         </div>
@@ -349,9 +349,10 @@ function ExplorePage() {
   const navigate = useNavigate();
   const publicExploreEnabled = useFeatureEnabled("features.public_explore.enabled", true);
   const [rows, setRows] = useState<TeachingSkillRow[]>([]);
-  // teacher_id → next intersection slot (or null if no overlap in horizon).
-  // Loaded after teachers are fetched; sort/filter waits for this so the
-  // first render isn't disrupted by a reshuffle.
+  // teacher_id → next free slot the teacher offers (or null if they haven't
+  // posted any free `teach` time / are fully booked in the horizon). Loaded
+  // after teachers are fetched; sort/filter waits for this so the first
+  // render isn't disrupted by a reshuffle.
   const [intersections, setIntersections] = useState<Map<string, string | null>>(new Map());
   const [ratings, setRatings] = useState<Map<string, TeacherRating>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -515,9 +516,9 @@ function ExplorePage() {
         setRatings(ratingMap);
         setExploreCache(finalRows, ratingMap);
 
-        // Bulk intersection lookup against the viewer's availability. Only
-        // makes sense if the viewer is signed in — anonymous explorers
-        // see the page without availability data.
+        // Bulk teacher-availability lookup. Only makes sense if the viewer
+        // is signed in — anonymous explorers see the page without
+        // availability badges.
         if (user) {
           const uniqueTeacherIds = Array.from(new Set(userIds)).filter((id) => id !== user.id);
           if (uniqueTeacherIds.length > 0) {
@@ -525,7 +526,7 @@ function ExplorePage() {
             // than that anyway.
             const batch = uniqueTeacherIds.slice(0, 100);
             const { data: intRows } = await supabase
-              .rpc("teachers_intersection_status", {
+              .rpc("teachers_free_time_status", {
                 p_teacher_ids: batch,
                 p_duration_minutes: 30,
                 p_horizon_days: 7,
@@ -584,8 +585,8 @@ function ExplorePage() {
     })
     .sort((a, b) => {
       if (sortOption === "available_soon") {
-        // Teachers with a known intersection slot come first, ordered by
-        // soonest. Teachers without slots fall to the bottom.
+        // Teachers with a known next-free slot come first, ordered by
+        // soonest. Teachers without posted free times fall to the bottom.
         const aSlot = intersectionSlotMs(a.user_id);
         const bSlot = intersectionSlotMs(b.user_id);
         if (aSlot != null && bSlot != null) return aSlot - bSlot;
@@ -788,7 +789,7 @@ function ExplorePage() {
                   }
                 >
                   <Sparkles className="h-3 w-3" />
-                  Only matching my availability
+                  Only with free times
                 </button>
               )}
               <div className="flex items-center gap-2">
