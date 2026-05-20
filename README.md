@@ -61,13 +61,4 @@ docs/
   compliance/      # GDPR, audit, RBAC docs
 ```
 
-## Status
 
-Built as a Final Innovation Project. ~80 commits across April???May 2026.
-
----
-
-Built by 4 developers learning to build production-grade software together.
-## Status (2026-05-18)
-
-Project submitted for Final Innovation Project evaluation. All core features shipped. Two open PRs (#1, #2) tracked as known WIP items.

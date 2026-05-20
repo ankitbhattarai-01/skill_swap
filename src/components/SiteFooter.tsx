@@ -10,7 +10,7 @@ export function SiteFooter() {
           (c) {new Date().getFullYear()} SkillSwap. Teach. Learn. Grow Together.
         </p>
         <div className="flex gap-4 text-sm leading-none text-muted-foreground">
-          <Link to="/explore" className="transition-colors hover:text-foreground">
+          <Link to="/skills" className="transition-colors hover:text-foreground">
             Explore
           </Link>
           <Link to="/credits" className="transition-colors hover:text-foreground">

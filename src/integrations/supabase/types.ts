@@ -671,6 +671,13 @@ export type Database = {
         };
         Returns: { proposed_start: string }[];
       };
+      get_teacher_windows: {
+        Args: {
+          p_teacher_id: string;
+          p_horizon_days?: number;
+        };
+        Returns: { window_start: string; window_end: string }[];
+      };
       propose_track: {
         Args: {
           p_teacher_id: string;
@@ -724,6 +731,14 @@ export type Database = {
         }[];
       };
       teachers_intersection_status: {
+        Args: {
+          p_teacher_ids: string[];
+          p_duration_minutes?: number;
+          p_horizon_days?: number;
+        };
+        Returns: { teacher_id: string; next_slot: string | null }[];
+      };
+      teachers_free_time_status: {
         Args: {
           p_teacher_ids: string[];
           p_duration_minutes?: number;

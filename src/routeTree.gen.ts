@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TracksRouteImport } from './routes/tracks'
+import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -38,6 +39,11 @@ import { Route as AdminFinanceRouteImport } from './routes/admin.finance'
 const TracksRoute = TracksRouteImport.update({
   id: '/tracks',
   path: '/tracks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SkillsRoute = SkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -176,6 +182,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/skills': typeof SkillsRoute
   '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -202,6 +209,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/skills': typeof SkillsRoute
   '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -230,6 +238,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/skills': typeof SkillsRoute
   '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
@@ -259,6 +268,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/reset-password'
     | '/signup'
+    | '/skills'
     | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
@@ -285,6 +295,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/reset-password'
     | '/signup'
+    | '/skills'
     | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
@@ -312,6 +323,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/reset-password'
     | '/signup'
+    | '/skills'
     | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
@@ -340,6 +352,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
+  SkillsRoute: typeof SkillsRoute
   TracksRoute: typeof TracksRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
@@ -353,6 +366,13 @@ declare module '@tanstack/react-router' {
       path: '/tracks'
       fullPath: '/tracks'
       preLoaderRoute: typeof TracksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/skills': {
+      id: '/skills'
+      path: '/skills'
+      fullPath: '/skills'
+      preLoaderRoute: typeof SkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -573,6 +593,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
+  SkillsRoute: SkillsRoute,
   TracksRoute: TracksRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
