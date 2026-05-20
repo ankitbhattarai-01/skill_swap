@@ -15,6 +15,21 @@ import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 import { useAuth } from "@/lib/auth-context";
 import { isAuthCaptchaConfigured } from "@/lib/captcha";
 
+// `/onboarding` is a common `redirect` target (every "Sign Up" link carries it,
+// and the signup page forwards it to "Already have an account? Log in"). For a
+// user who has already finished onboarding, honoring it would flash the
+// onboarding form before /onboarding itself bounces them to /dashboard. Resolve
+// the destination against the profile first so the flash never happens.
+async function resolvePostLoginRoute(userId: string, redirect: string) {
+  if (redirect !== "/onboarding") return redirect;
+  const { data } = await supabase
+    .from("profiles")
+    .select("onboarded")
+    .eq("id", userId)
+    .maybeSingle();
+  return data?.onboarded ? "/dashboard" : "/onboarding";
+}
+
 export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>) => ({
     redirect: safeRedirectPath(s.redirect, "/dashboard"),
@@ -66,7 +81,13 @@ function LoginPage() {
     }
     // Already signed in — don't show the login form. Send them through to the
     // post-login destination (defaults to /dashboard via safeRedirectPath).
-    navigate({ to: search.redirect });
+    let cancelled = false;
+    void resolvePostLoginRoute(user.id, search.redirect).then((to) => {
+      if (!cancelled) navigate({ to });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, emailRedirectPending, navigate, user, search.redirect]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -74,7 +95,7 @@ function LoginPage() {
     if (!requireCaptchaToken()) return;
 
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
       options: captchaToken ? { captchaToken } : undefined,
@@ -95,7 +116,10 @@ function LoginPage() {
     }
 
     toast.success("Welcome back!");
-    navigate({ to: search.redirect });
+    const to = data.user
+      ? await resolvePostLoginRoute(data.user.id, search.redirect)
+      : search.redirect;
+    navigate({ to });
   };
 
   const handleResend = async () => {
