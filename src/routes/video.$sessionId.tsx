@@ -14,6 +14,7 @@ import {
 } from "@/lib/jitsi";
 import { fetchJitsiToken } from "@/lib/jitsi-token";
 import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
+import { useTheme } from "@/lib/theme-context";
 import { querySessionById } from "@/lib/session-queries";
 import { sendCallRinging } from "@/lib/call-signals";
 import { signSingleAvatarUrl } from "@/lib/avatars";
@@ -26,6 +27,15 @@ export const Route = createFileRoute("/video/$sessionId")({
   head: () => ({ meta: [{ title: "Video Call - SkillSwap" }] }),
   component: VideoCallPage,
 });
+
+// Jitsi exposes a single `DEFAULT_BACKGROUND` knob in interfaceConfigOverwrite.
+// We map the app theme onto two hex values picked to sit just below the
+// surrounding chrome (bg-card) on each palette, so the iframe's loading
+// flash and "no participant" tile blend in instead of punching a hole.
+const JITSI_BACKGROUND_BY_THEME = {
+  light: "#f5f6fa",
+  dark: "#0b0f17",
+} as const;
 
 type SessionStatus = Enums<"session_status">;
 
@@ -53,6 +63,12 @@ function VideoCallPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const videoCallsEnabled = useFeatureEnabled("features.video_calls.enabled", true);
+  const { theme } = useTheme();
+  // Snapshot the theme at mount via a ref so the Jitsi iframe doesn't
+  // reinitialize (and kick the user out of the call) every time they toggle
+  // the app theme. Theme changes mid-call take effect on the next rejoin.
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const [session, setSession] = useState<SessionRow | null>(null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -314,6 +330,7 @@ function VideoCallPage() {
           DEFAULT_REMOTE_DISPLAY_NAME: "SkillSwap participant",
           MOBILE_APP_PROMO: false,
           DISABLE_JOIN_LEAVE_NOTIFICATIONS: false,
+          DEFAULT_BACKGROUND: JITSI_BACKGROUND_BY_THEME[themeRef.current],
         },
       });
       if (jwt) options.jwt = jwt;
