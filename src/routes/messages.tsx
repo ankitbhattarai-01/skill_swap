@@ -262,6 +262,13 @@ function MessagesIndexPage() {
     selectedRef.current = selectedUserId;
   }, [selectedUserId]);
 
+  useEffect(() => {
+    document.body.classList.add("messages-page-open");
+    return () => {
+      document.body.classList.remove("messages-page-open");
+    };
+  }, []);
+
   // Mobile viewport adjustments — unchanged from earlier.
   useEffect(() => {
     document.body.classList.toggle("messages-chat-open", Boolean(selectedUserId));
@@ -337,6 +344,7 @@ function MessagesIndexPage() {
         const sessionsByOther = new Map<string, SessionRow[]>();
         for (const s of rawSessions) {
           const otherUserId = s.learner_id === user.id ? s.teacher_id : s.learner_id;
+          if (!otherUserId) continue;
           const row: SessionRow = {
             id: s.id,
             learner_id: s.learner_id,
@@ -377,9 +385,14 @@ function MessagesIndexPage() {
             [...sessions].reverse().find((s) => OPEN_STATUSES.has(s.status)) ?? null;
           const latestSession = sessions[sessions.length - 1];
           const profile = profileMap.get(otherUserId);
+          const trimmedName = profile?.full_name?.trim();
+          const idFragment =
+            typeof otherUserId === "string" && otherUserId.length > 0
+              ? otherUserId.slice(0, 4)
+              : "anon";
           return {
             otherUserId,
-            otherName: profile?.full_name ?? "Student",
+            otherName: trimmedName || `User ${idFragment}`,
             otherAvatar: null,
             sessions,
             activeSession,
@@ -862,12 +875,12 @@ function MessagesIndexPage() {
   const headerTeaching = headerSession?.teacher_id === user?.id;
 
   return (
-    <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh_-_6rem)] md:min-h-[34rem]">
+    <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh/1.1_-_6rem)] md:min-h-[30rem]">
       <main
         className={cn(
           "mx-auto flex min-h-0 w-full max-w-7xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6",
           selectedUserId &&
-            "mobile-chat-shell z-50 !m-0 !max-w-none overflow-hidden !p-0 bg-background md:static md:z-auto md:mx-auto md:h-auto md:max-w-7xl md:overflow-visible md:bg-transparent md:!px-[18px] md:!py-6",
+            "mobile-chat-shell max-md:z-50 max-md:!m-0 max-md:!max-w-none max-md:overflow-hidden max-md:!p-0 max-md:bg-background",
         )}
       >
         <div

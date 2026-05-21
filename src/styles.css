@@ -162,6 +162,10 @@ button, [role="button"], a {
   outline-offset: 2px;
 }
 
+body.messages-page-open {
+  overflow: hidden;
+}
+
 @media (max-width: 767px) {
   body.messages-chat-open {
     overflow: hidden;
