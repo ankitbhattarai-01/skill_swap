@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { Children, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
@@ -25,6 +25,10 @@ import {
   UserCircle2,
   Trophy,
   GitBranch,
+  ChevronDown,
+  Clock,
+  Compass,
+  Flame,
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
@@ -35,27 +39,17 @@ import {
   getOrCreateSession,
   canJoinSession,
   describeJoinWindow,
-  buildSessionIcsFile,
-  downloadSessionIcs,
   type SessionDuration,
 } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
 import { SessionRequestDialog } from "@/components/SessionRequestDialog";
-import { StrikeBanner } from "@/components/StrikeBanner";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signAvatarUrls } from "@/lib/avatars";
-import {
-  deriveMatchLabel,
-  formatLearningMode,
-  modeCompatibilityScore,
-  rankCandidate,
-  type LearningMode,
-  type SkillLevel,
-} from "@/lib/match";
+import { deriveMatchLabel, rankCandidate, type LearningMode, type SkillLevel } from "@/lib/match";
 import type { Enums } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
 import { useInvalidateMyCreditBalance, useMyCreditBalance } from "@/hooks/useMyCreditBalance";
@@ -63,22 +57,6 @@ import { queryUserSessions } from "@/lib/session-queries";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 
 const LEVEL_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3 };
-
-function MatchChip({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-        ok
-          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-          : "border-red-500/30 bg-red-500/10 text-red-400",
-      )}
-    >
-      {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-      {label}
-    </span>
-  );
-}
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — SkillSwap" }] }),
@@ -200,12 +178,6 @@ async function queryDashboardSessionRows(userId: string) {
   });
 }
 
-const LEVEL_COLORS: Record<string, string> = {
-  basic: "bg-brand-cyan/10 text-brand-cyan border-brand-cyan/20",
-  intermediate: "bg-brand-blue/15 text-brand-blue border-brand-blue/25",
-  advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
-};
-
 const DASHBOARD_CACHE_PREFIX = "skillswap-dashboard-cache";
 const DASHBOARD_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -224,6 +196,7 @@ type DashboardCache = {
   sessions: SessionRow[];
   recs: AiSuggestion[] | null;
   teacherRatings: [string, TeacherRating][];
+  completedLast30d: number;
 };
 
 function getDashboardCache(userId: string) {
@@ -398,9 +371,17 @@ function DashboardPage() {
     }[]
   >([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [completedLast30d, setCompletedLast30d] = useState(0);
   const [recs, setRecs] = useState<AiSuggestion[] | null>(null);
   const [recsRefreshing, setRecsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  // True once the live teacher/seeker query has resolved this mount. The
+  // dashboard cache deliberately does NOT pre-paint teachers/seekers because
+  // their ranking depends on availability data that arrives separately —
+  // hydrating from cache produced a visible flicker on refresh (Top Match
+  // tile A → tile B once live data landed). Keeping these lists unhydrated
+  // and showing a skeleton in NextMoveCard is the right trade.
+  const [matchesHydrated, setMatchesHydrated] = useState(false);
   // State value isn't read anywhere on this page — the setter exists only so
   // cache hydration can persist the rating map for next mount. Prefixed with
   // `_` to opt out of the unused-vars lint without breaking the cache wire-up.
@@ -442,12 +423,16 @@ function DashboardPage() {
 
     setProfile(cache.profile);
     setLearning(cache.learning ?? []);
-    setTeachers(cache.teachers ?? []);
-    setSeekers(cache.seekers ?? []);
+    // teachers/seekers intentionally NOT restored from cache. Their ranking
+    // depends on availability/credit data that arrives later in loadDashboard,
+    // so painting the cached order causes a visible "Top Match A → B" flicker
+    // on refresh. We render a skeleton (matchesHydrated=false) until the live
+    // query lands instead.
     setMyTeaching(cache.myTeaching ?? []);
     setSessions(cache.sessions ?? []);
     setRecs(cache.recs ?? null);
     setTeacherRatings(new Map(cache.teacherRatings ?? []));
+    setCompletedLast30d(cache.completedLast30d ?? 0);
     setLoading(false);
   }, [user]);
 
@@ -512,11 +497,25 @@ function DashboardPage() {
       }
       setProfile(p as Profile);
 
-      const [learn, myTeach, rawSessions] = await Promise.all([
+      // Streak count for the welcome hero. Fetched in parallel with the main
+      // queries so the chip is set before setLoading(false) and doesn't pop in
+      // after the welcome card has already painted.
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const streakPromise = supabase
+        .from("sessions")
+        .select("id", { count: "exact", head: true })
+        .or(`teacher_id.eq.${user.id},learner_id.eq.${user.id}`)
+        .eq("status", "completed")
+        .gte("updated_at", thirtyDaysAgo)
+        .then(({ count }) => (typeof count === "number" ? count : 0));
+
+      const [learn, myTeach, rawSessions, completedCount] = await Promise.all([
         loadMyLearningSkills(user.id),
         loadMyTeachingSkills(user.id),
         queryDashboardSessionRows(user.id),
+        streakPromise,
       ]);
+      setCompletedLast30d(completedCount);
 
       const learnRows = learn ?? [];
       setLearning(learnRows);
@@ -732,6 +731,7 @@ function DashboardPage() {
       } else {
         setSeekers([]);
       }
+      setMatchesHydrated(true);
 
       const participantIds = Array.from(
         new Set(rawSessions.flatMap((s) => [s.learner_id, s.teacher_id])),
@@ -773,6 +773,7 @@ function DashboardPage() {
         sessions: sessionList,
         recs,
         teacherRatings: Array.from(ratings.entries()),
+        completedLast30d: completedCount,
       });
 
       setLoading(false);
@@ -783,6 +784,7 @@ function DashboardPage() {
     } catch (error) {
       setLoading(false);
       setRecs([]);
+      setMatchesHydrated(true);
       toastError(error, "Could not load dashboard");
     }
   }, [user, navigate]);
@@ -984,17 +986,17 @@ function DashboardPage() {
   if (loading || !profile) {
     return (
       <div className="min-h-screen flex flex-col">
-        <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Skeleton className="h-40 rounded-3xl lg:col-span-2" />
-            <Skeleton className="h-40 rounded-3xl" />
-          </div>
-          <Skeleton className="h-44 rounded-3xl" />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Skeleton className="h-72 rounded-3xl" />
-            <Skeleton className="h-72 rounded-3xl" />
-            <Skeleton className="h-72 rounded-3xl" />
-            <Skeleton className="h-72 rounded-3xl" />
+        <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-5 md:space-y-6">
+          <Skeleton className="h-56 md:h-72 rounded-3xl" />
+          <Skeleton className="h-32 md:h-40 rounded-3xl" />
+          <Skeleton className="h-24 rounded-3xl" />
+          <div>
+            <Skeleton className="mb-3 h-5 w-48 rounded-md" />
+            <div className="grid gap-3 md:gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <Skeleton className="h-40 rounded-2xl" />
+              <Skeleton className="h-40 rounded-2xl hidden md:block" />
+              <Skeleton className="h-40 rounded-2xl hidden lg:block" />
+            </div>
           </div>
         </main>
       </div>
@@ -1002,515 +1004,237 @@ function DashboardPage() {
   }
 
   const firstName = profile.full_name?.split(" ")[0] ?? "Friend";
+  const nextMoves = pickNextMoves(user.id, sessions, teachers, learning);
+  const featuredTeacherIds = new Set(
+    nextMoves.flatMap((m) => (m.kind === "match" ? m.teachers.map((t) => t.id) : [])),
+  );
+  const teachersForRow =
+    featuredTeacherIds.size > 0
+      ? teachers.filter((t) => !featuredTeacherIds.has(t.id))
+      : teachers;
+  // The Next Move stack already surfaces pending requests and the soonest upcoming
+  // session. Drop them from the Active sessions strip so the same cards don't render twice.
+  const featuredSessionIds = new Set(
+    nextMoves.flatMap((m) =>
+      m.kind === "incoming" || m.kind === "upcoming" ? [m.session.id] : [],
+    ),
+  );
+  const sessionsForStrip =
+    featuredSessionIds.size > 0
+      ? sessions.filter((s) => !featuredSessionIds.has(s.id))
+      : sessions;
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
-        <StrikeBanner />
-        {/* Welcome + Credits */}
-        <div className="grid lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 glass rounded-3xl p-6 md:p-8">
-            <div className="text-sm text-muted-foreground">Welcome back,</div>
-            <h1 className="text-3xl md:text-4xl font-bold mt-1">{firstName}</h1>
-            <p className="text-muted-foreground mt-2 italic">
-              "Keep Learning. Keep Teaching. Keep Growing."
-            </p>
-          </div>
-          <div className="relative overflow-hidden rounded-3xl gradient-brand p-6 shadow-glow">
-            <div className="absolute inset-0 bg-[radial-gradient(at_80%_20%,rgba(255,255,255,0.18),transparent_60%)]" />
-            <div className="relative flex items-start justify-between">
-              <div>
-                <div className="text-white/80 text-sm font-medium">Your Credits</div>
-                <div className="text-5xl font-bold text-white mt-1 flex items-center gap-2">
-                  {liveCreditBalance ?? 0}
-                  <Coins className="h-7 w-7 text-yellow-300" />
-                </div>
-                <div className="mt-3 text-white/80 text-xs">
-                  Use credits to learn.
-                  <br />
-                  Earn credits by teaching.
-                </div>
+      <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-5 md:space-y-6">
+        {/* Hero — landing-inspired soft gradient that shifts with time of day. */}
+        <section
+          className={cn(
+            "animate-fade-up relative overflow-hidden rounded-3xl border border-border/40 bg-gradient-to-br p-6 md:p-10",
+            getHeroGradient(),
+          )}
+        >
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(124,77,255,0.18),transparent_55%)]" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_15%_85%,rgba(34,211,238,0.12),transparent_55%)]" />
+          <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:gap-8">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-muted-foreground">{getGreeting()},</div>
+              <h1 className="mt-1 text-3xl md:text-5xl font-bold tracking-tight">{firstName}</h1>
+              <p className="mt-3 max-w-xl text-base md:text-lg text-muted-foreground">
+                What do you want to learn today?
+              </p>
+              <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
+                <Button
+                  variant="hero"
+                  size="lg"
+                  className="w-[88%] mx-auto h-10 rounded-lg px-5 text-sm sm:mx-0 sm:w-auto sm:h-12 sm:rounded-xl sm:px-8 sm:text-base"
+                  asChild
+                >
+                  <Link to="/explore" preload="intent">
+                    <Compass className="h-4 w-4" />
+                    Find a teacher
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="w-[88%] mx-auto h-10 rounded-lg px-5 text-sm sm:mx-0 sm:w-auto sm:h-12 sm:rounded-xl sm:px-8 sm:text-base"
+                  asChild
+                >
+                  {myTeaching.length > 0 ? (
+                    <Link to="/explore" search={{ mode: "learners" }} preload="intent">
+                      Or find a learner
+                    </Link>
+                  ) : (
+                    <Link to="/profile" preload="intent">
+                      Or teach a skill
+                    </Link>
+                  )}
+                </Button>
               </div>
-              <Coins className="h-10 w-10 text-white/30" />
+              <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                <span className="inline-flex items-center gap-1.5">
+                  <Coins className="h-4 w-4 text-amber-500" />
+                  <span className="font-semibold">{liveCreditBalance ?? 0}</span>
+                  <span className="text-muted-foreground">credits</span>
+                </span>
+                <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
+                <span className="text-muted-foreground">
+                  <span className="font-semibold text-foreground/80">{teachers.length}</span> match
+                  {teachers.length === 1 ? "" : "es"}
+                </span>
+                {sessions.length > 0 && (
+                  <>
+                    <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
+                    <span className="text-muted-foreground">
+                      <span className="font-semibold text-foreground/80">{sessions.length}</span>{" "}
+                      active session{sessions.length === 1 ? "" : "s"}
+                    </span>
+                  </>
+                )}
+                {/* Mobile-only inline streak chip. Desktop gets the larger right-side card. */}
+                <span className="md:hidden inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                  <Flame className="h-3 w-3" />
+                  {completedLast30d === 0
+                    ? "Start your streak"
+                    : `${completedLast30d} session${completedLast30d === 1 ? "" : "s"} this month`}
+                </span>
+              </div>
             </div>
+
+            {/* Desktop streak card — gamified, simple. Fills the empty right side. */}
+            <StreakCard count={completedLast30d} />
+
           </div>
+        </section>
+
+        {/* Your Next Move — stacks pending requests + the next upcoming session. */}
+        <div className="animate-fade-up space-y-4 md:space-y-5" style={{ animationDelay: "60ms" }}>
+          {nextMoves.map((move, i) => (
+            <NextMoveCard
+              key={
+                move.kind === "incoming" || move.kind === "upcoming"
+                  ? `${move.kind}-${move.session.id}`
+                  : `${move.kind}-${i}`
+              }
+              next={move}
+              userId={user.id}
+              busyIds={busyIds}
+              matchesHydrated={matchesHydrated}
+              onAccept={acceptSession}
+              onReject={rejectSession}
+              onRequest={openRequestDialog}
+            />
+          ))}
         </div>
 
-        {/* AI Suggestions */}
+        {/* AI Insight — one headline, expand for more */}
         {aiSuggestionsEnabled && (
-          <section className="glass rounded-3xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-brand-cyan" /> AI Suggestions
-              </h2>
-              <div className="flex items-center">
-                <button
-                  type="button"
-                  onClick={() => void refreshSuggestions()}
-                  disabled={recsRefreshing}
-                  className="group inline-flex h-10 w-10 items-center justify-center rounded-full border border-brand-purple/20 bg-white/80 text-brand-purple shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-cyan/40 hover:bg-gradient-to-br hover:from-brand-purple/15 hover:via-brand-blue/15 hover:to-brand-cyan/15 hover:text-brand-cyan hover:shadow-glow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
-                  title="Refresh suggestions"
-                  aria-label="Refresh AI suggestions"
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 transition-transform group-hover:rotate-90 ${
-                      recsRefreshing ? "animate-spin" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {recs === null &&
-                Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="glass rounded-xl p-4">
-                    <Skeleton className="h-8 w-8 rounded-lg mb-2" />
-                    <Skeleton className="h-3 w-full mb-1.5" />
-                    <Skeleton className="h-3 w-2/3" />
-                  </div>
-                ))}
-              {(recs ?? []).slice(0, 4).map((r, i) => {
-                const meta = SUGGESTION_TYPE_META[r.type] ?? SUGGESTION_TYPE_META.general;
-                const Icon = meta.icon;
-                return (
-                  <div
-                    key={i}
-                    className="glass rounded-xl p-4 hover:bg-white/[0.06] transition-colors"
-                  >
-                    <div
-                      className={`h-8 w-8 rounded-lg ${meta.bg} flex items-center justify-center mb-2`}
-                    >
-                      <Icon className={`h-4 w-4 ${meta.fg}`} />
-                    </div>
-                    <p className="text-sm leading-snug">{r.message}</p>
-                  </div>
-                );
-              })}
-              {recs && recs.length === 0 && (
-                <div className="col-span-full text-sm text-muted-foreground text-center py-4">
-                  Add more skills to get personalized suggestions.
-                </div>
-              )}
-            </div>
-          </section>
+          <div className="animate-fade-up" style={{ animationDelay: "120ms" }}>
+            <AiInsightCard
+              recs={recs}
+              refreshing={recsRefreshing}
+              onRefresh={() => void refreshSuggestions()}
+            />
+          </div>
         )}
 
-        <div className="grid lg:grid-cols-2 gap-4">
-          {/* Skills I want to learn */}
-          <section className="glass rounded-3xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <GraduationCap className="h-4 w-4 text-brand-cyan" /> Skills I Want to Learn
-              </h2>
-              <Link
-                to="/profile"
-                preload="intent"
-                className="text-sm text-muted-foreground hover:text-foreground"
-              >
-                Edit →
-              </Link>
-            </div>
-            <div className="space-y-3">
-              {learning.length === 0 && (
-                <EmptyHint text="Add skills you want to learn from your profile." to="/profile" />
-              )}
-              {learning.map((l) => (
-                <div key={l.id} className="glass rounded-xl p-4 flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl gradient-brand-soft flex items-center justify-center">
-                    <GraduationCap className="h-4 w-4 text-brand-cyan" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="font-medium">{l.skills?.name}</div>
-                    <Badge
-                      variant="outline"
-                      className={LEVEL_COLORS[l.current_level] + " capitalize text-xs mt-0.5"}
-                    >
-                      {l.current_level}
-                    </Badge>
-                  </div>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link to="/explore" preload="intent">
-                      View
-                    </Link>
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* People who can teach me */}
-          <section className="glass rounded-3xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <Users className="h-4 w-4 text-brand-purple" /> People Who Can Teach Me
-              </h2>
-            </div>
-            <div className="space-y-3">
-              {teachers.length === 0 && (
-                <EmptyHint text="No matches yet. Add what you want to learn." to="/profile" />
-              )}
-              {teachers.map((t) => {
-                const learningRow = learning.find((learn) => learn.skill_id === t.skill_id);
-                const learningMode = learningRow?.learning_mode ?? profile.learning_mode;
+        {/* People who can teach you — same card pattern as AI Insights. Skip the one already shown in Next Move. */}
+        {teachersForRow.length > 0 && (
+          <div className="animate-fade-up" style={{ animationDelay: "180ms" }}>
+            <PeopleSection
+              title="People who can teach you"
+              icon={<Users className="h-4 w-4 text-brand-purple" />}
+              actionLabel="See all"
+              actionTo="/explore"
+            >
+              {teachersForRow.slice(0, 6).map((t) => {
+                const learningRow = learning.find((l) => l.skill_id === t.skill_id);
                 const myLevel = (learningRow?.current_level ?? "basic") as SkillLevel;
-                const teacherLevel = t.level as SkillLevel;
-                const timeOk = Boolean(teacherAvailability.get(t.user_id));
-                const modeOk = modeCompatibilityScore(learningMode, t.teaching_mode) >= 3;
-                const levelOk = (LEVEL_RANK[teacherLevel] ?? 0) >= (LEVEL_RANK[myLevel] ?? 0);
+                const nextSlot = teacherAvailability.get(t.user_id);
                 const creditsOk = (liveCreditBalance ?? 0) >= t.credits_per_hour;
+                const levelOk = (LEVEL_RANK[t.level] ?? 0) >= (LEVEL_RANK[myLevel] ?? 0);
                 return (
-                  <div
+                  <TeacherScrollCard
                     key={t.id}
-                    className="glass rounded-xl p-4 flex flex-col gap-3 sm:flex-row sm:items-center"
-                  >
-                    <UserAvatar
-                      name={t.profiles?.full_name}
-                      url={t.profiles?.avatar_url}
-                      className="h-10 w-10"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">
-                        {t.profiles?.full_name ?? "Student"}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {t.skills?.name} • <span className="capitalize">{t.level}</span> •{" "}
-                        {t.credits_per_hour} cr/hr
-                      </div>
-                      <div className="mt-2">
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                          Match:
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <MatchChip
-                            ok={timeOk}
-                            label={
-                              timeOk
-                                ? `Free ${new Date(teacherAvailability.get(t.user_id)!).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
-                                : "No free times posted"
-                            }
-                          />
-                          <MatchChip
-                            ok={modeOk}
-                            label={
-                              modeOk
-                                ? `${formatLearningMode(t.teaching_mode)} match`
-                                : `Wants ${formatLearningMode(t.teaching_mode)}`
-                            }
-                          />
-                          <MatchChip
-                            ok={levelOk}
-                            label={levelOk ? `${t.level} level fit` : `Above your ${myLevel} level`}
-                          />
-                          <MatchChip
-                            ok={creditsOk}
-                            label={
-                              creditsOk
-                                ? `${t.credits_per_hour} cr/hr affordable`
-                                : `Need ${t.credits_per_hour} cr/hr`
-                            }
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <Button
-                      variant="hero"
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      onClick={() => openRequestDialog(t)}
-                      disabled={busyIds.has(t.id)}
-                    >
-                      {busyIds.has(t.id) ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <MessageCircle className="h-4 w-4" />
-                      )}
-                      Request Session
-                    </Button>
-                  </div>
+                    teacher={t}
+                    nextSlot={nextSlot}
+                    creditsOk={creditsOk}
+                    levelOk={levelOk}
+                    busy={busyIds.has(t.id)}
+                    onRequest={() => openRequestDialog(t)}
+                  />
                 );
               })}
-            </div>
-          </section>
-        </div>
+            </PeopleSection>
+          </div>
+        )}
 
-        <div className="grid lg:grid-cols-2 gap-4">
-          {/* People looking for my skills */}
-          <section className="glass rounded-3xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <HandHeart className="h-4 w-4 text-brand-cyan" /> People Looking for My Skills
-              </h2>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              You can earn credits by teaching them.
-            </p>
-            <div className="space-y-3">
-              {seekers.length === 0 && (
-                <EmptyHint
-                  text={
-                    myTeaching.length === 0
-                      ? "Add skills you can teach to earn credits."
-                      : "Nobody is looking yet."
-                  }
-                  to="/profile"
-                />
-              )}
-              {seekers.map((s) => {
+        {/* People you can help — only renders if you teach something AND there are seekers */}
+        {seekers.length > 0 && (
+          <div className="animate-fade-up" style={{ animationDelay: "240ms" }}>
+            <PeopleSection
+              title="People you can help"
+              subtitle="Earn credits by teaching"
+              icon={<HandHeart className="h-4 w-4 text-brand-cyan" />}
+              actionLabel="See all"
+              actionTo="/explore"
+              actionSearch={{ mode: "learners" }}
+            >
+              {seekers.slice(0, 6).map((s) => {
                 const teachingMode =
-                  myTeaching.find((teach) => teach.skill_id === s.skill_id)?.teaching_mode ??
+                  myTeaching.find((t) => t.skill_id === s.skill_id)?.teaching_mode ??
                   profile.learning_mode;
                 return (
-                  <div
+                  <SeekerScrollCard
                     key={s.id}
-                    className="glass rounded-xl p-4 flex flex-col gap-3 sm:flex-row sm:items-center"
-                  >
-                    <UserAvatar
-                      name={s.profiles?.full_name}
-                      url={s.profiles?.avatar_url}
-                      className="h-10 w-10"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">
-                        {s.profiles?.full_name ?? "Student"}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        Wants to learn {s.skills?.name} •{" "}
-                        <span className="capitalize">{s.current_level}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        <Badge
-                          variant="outline"
-                          className="bg-brand-cyan/10 border-brand-cyan/20 text-xs"
-                        >
-                          {deriveMatchLabel(teachingMode, s.learning_mode, "Learner Match")}
-                        </Badge>
-                        <Badge variant="outline" className="bg-white/5 border-white/10 text-xs">
-                          Learns by {formatLearningMode(s.learning_mode)}
-                        </Badge>
-                      </div>
-                    </div>
-                    <Button
-                      variant="hero"
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      onClick={() => void openOfferDialog(s)}
-                      disabled={busyIds.has(s.id)}
-                    >
-                      {busyIds.has(s.id) && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Offer Help
-                    </Button>
-                  </div>
+                    seeker={s}
+                    matchLabel={deriveMatchLabel(teachingMode, s.learning_mode, "Learner Match")}
+                    busy={busyIds.has(s.id)}
+                    onOffer={() => void openOfferDialog(s)}
+                  />
                 );
               })}
-            </div>
-          </section>
+            </PeopleSection>
+          </div>
+        )}
 
-          {/* Active sessions */}
-          <section className="glass rounded-3xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-brand-purple" /> Active Sessions
-              </h2>
-            </div>
-            <div className="space-y-3">
-              {sessions.length === 0 && (
-                <EmptyHint
-                  text="No active sessions yet. Request one from your matches."
-                  to="/explore"
-                />
-              )}
-              {sessions.map((session) => {
-                const isTeacher = session.teacher_id === user?.id;
-                const sessionInitiatorId = session.initiator_id ?? session.learner_id;
-                const canRespondToPending =
-                  session.status === "pending" &&
-                  Boolean(user?.id && user.id !== sessionInitiatorId);
-                const otherName = isTeacher ? session.learnerName : session.teacherName;
-                const isAcceptedSession =
-                  session.status === "accepted" || session.status === "active";
-                // Early-release is learner-only and unlocks at the session's
-                // halfway point (scheduled_at + duration/2). Server
-                // (private.complete_session) re-checks the same time gate
-                // AND requires both parties to have attended ≥ 50% of the
-                // planned duration via Jitsi. The UI time gate gives the
-                // user a clear "appears after HH:MM" expectation; the
-                // attendance gate is what kills the Sybil farming path.
-                const earlyReleaseUnlockAt = session.scheduled_at
-                  ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
-                  : null;
-                const earlyReleaseAvailable =
-                  isAcceptedSession &&
-                  !isTeacher &&
-                  earlyReleaseUnlockAt !== null &&
-                  earlyReleaseUnlockAt <= Date.now();
-                const roomLink = isAcceptedSession
-                  ? getVideoRoomUrl({
-                      link: session.meet_link,
-                      sessionId: session.id,
-                      skillName: session.skills?.name,
-                    })
-                  : "";
-                const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
-                const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
-                const handleAddToCalendar = () => {
-                  if (!session.scheduled_at) {
-                    toast.error("This session is not scheduled yet.");
-                    return;
-                  }
-                  const ics = buildSessionIcsFile({
-                    sessionId: session.id,
-                    skillName: session.skills?.name ?? "Skill session",
-                    scheduledAt: session.scheduled_at,
-                    durationMinutes: session.duration_minutes,
-                    meetLink: roomLink || null,
-                    organizerName: session.teacherName,
-                    attendeeName: session.learnerName,
-                  });
-                  downloadSessionIcs(`skillswap-${session.id}.ics`, ics);
-                };
-                return (
-                  <div key={session.id} className="glass rounded-xl p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">
-                          {session.skills?.name ?? "Skill session"}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {isTeacher ? "Learner" : "Teacher"}: {otherName} •{" "}
-                          {session.duration_minutes} min • {session.credits} credits
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="capitalize bg-white/5 border-white/10">
-                        {session.status}
-                      </Badge>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {canRespondToPending && (
-                        <>
-                          <Button
-                            variant="hero"
-                            size="sm"
-                            onClick={() => acceptSession(session)}
-                            disabled={busyIds.has(session.id)}
-                          >
-                            {busyIds.has(session.id) ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="h-4 w-4" />
-                            )}
-                            Accept
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => rejectSession(session)}
-                            disabled={busyIds.has(session.id)}
-                          >
-                            <X className="h-4 w-4" />
-                            Reject
-                          </Button>
-                        </>
-                      )}
-                      {isAcceptedSession &&
-                        (roomLink ? (
-                          <>
-                            {joinAllowed ? (
-                              <Button variant="outline" size="sm" asChild>
-                                <Link
-                                  to="/video/$sessionId"
-                                  preload="intent"
-                                  params={{ sessionId: session.id }}
-                                >
-                                  <Video className="h-4 w-4" />
-                                  Join
-                                </Link>
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled
-                                title={joinHint ?? "Not in session window"}
-                              >
-                                <Video className="h-4 w-4" />
-                                {joinHint ?? "Join"}
-                              </Button>
-                            )}
-                            {session.scheduled_at && (
-                              <Button variant="outline" size="sm" onClick={handleAddToCalendar}>
-                                <Calendar className="h-4 w-4" />
-                                Add to Calendar
-                              </Button>
-                            )}
-                          </>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              toast.error(
-                                "Video room is unavailable. Open the session details and try again.",
-                              )
-                            }
-                          >
-                            <Video className="h-4 w-4" />
-                            Join
-                          </Button>
-                        ))}
-                      {session.status !== "rejected" && (
-                        <Button variant="outline" size="sm" asChild>
-                          <Link
-                            to="/sessions/$sessionId"
-                            preload="intent"
-                            params={{ sessionId: session.id }}
-                          >
-                            <Eye className="h-4 w-4" />
-                            Details
-                          </Link>
-                        </Button>
-                      )}
-                      {isAcceptedSession && (
-                        <Button variant="outline" size="sm" asChild>
-                          <Link to="/messages" preload="intent" search={{ s: session.id }}>
-                            <MessageCircle className="h-4 w-4" />
-                            Chat
-                          </Link>
-                        </Button>
-                      )}
-                      {earlyReleaseAvailable && (
-                        <ConfirmAction
-                          title="Release credits to your teacher now?"
-                          description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room — otherwise the release will be blocked.`}
-                          confirmLabel="Release now"
-                          onConfirm={() => completeSession(session)}
-                        >
-                          <Button variant="hero" size="sm" disabled={busyIds.has(session.id)}>
-                            {busyIds.has(session.id) && (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            )}
-                            Complete Session
-                          </Button>
-                        </ConfirmAction>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </div>
+        {/* Active sessions — only renders when there are sessions beyond the one already shown in Next Move. */}
+        {sessionsForStrip.length > 0 && (
+          <div className="animate-fade-up" style={{ animationDelay: "300ms" }}>
+            <ActiveSessionsStrip
+              sessions={sessionsForStrip}
+              userId={user.id}
+              busyIds={busyIds}
+              onAccept={acceptSession}
+              onReject={rejectSession}
+              onComplete={completeSession}
+            />
+          </div>
+        )}
 
-        {/* CTA */}
-        <section className="relative overflow-hidden rounded-3xl gradient-brand p-8 md:p-10 shadow-glow">
+        {/* Footer CTA — slim, supportive */}
+        <section
+          className="animate-fade-up relative overflow-hidden rounded-3xl gradient-brand p-6 md:p-8 shadow-glow"
+          style={{ animationDelay: "360ms" }}
+        >
           <div className="absolute inset-0 bg-[radial-gradient(at_30%_30%,rgba(255,255,255,0.18),transparent_60%)]" />
-          <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-white">Teach a skill. Earn credits.</h3>
-              <p className="text-white/85 mt-1">Help others. Grow together.</p>
+              <h3 className="text-xl md:text-2xl font-bold text-white">
+                Teach a skill. Earn credits.
+              </h3>
+              <p className="mt-1 text-sm md:text-base text-white/85">Help others. Grow together.</p>
             </div>
-            <Button variant="glass" size="lg" asChild>
+            <Button
+              variant="glass"
+              size="lg"
+              className="w-[88%] mx-auto h-10 rounded-lg px-5 text-sm md:mx-0 md:w-auto md:h-12 md:rounded-xl md:px-8 md:text-base"
+              asChild
+            >
               <Link to="/explore" preload="intent">
-                Explore Matches <ArrowRight className="h-4 w-4" />
+                Explore matches <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
           </div>
@@ -1548,13 +1272,957 @@ function DashboardPage() {
   );
 }
 
-function EmptyHint({ text, to }: { text: string; to: string }) {
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return "Good evening";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// Hero gradient shifts with time of day. All three variants are full literal
+// strings so Tailwind's JIT scanner detects them at build time.
+function getHeroGradient(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) {
+    return "from-amber-400/[0.10] via-brand-cyan/[0.06] to-brand-cyan/[0.10]";
+  }
+  if (h < 18) {
+    return "from-brand-purple/10 via-brand-blue/[0.06] to-brand-cyan/10";
+  }
+  return "from-brand-purple/[0.14] via-brand-purple/[0.06] to-indigo-500/[0.10]";
+}
+
+function formatTimeUntil(iso: string): string {
+  const diff = Date.parse(iso) - Date.now();
+  if (Number.isNaN(diff)) return "soon";
+  if (diff <= 0) return "now";
+  const mins = Math.round(diff / 60_000);
+  if (mins < 60) return `in ${mins} min`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.round(hours / 24);
+  return `in ${days}d`;
+}
+
+type NextMove =
+  | { kind: "incoming"; session: SessionRow }
+  | { kind: "upcoming"; session: SessionRow }
+  | { kind: "match"; teachers: TeachOffer[] }
+  | { kind: "empty"; hasLearning: boolean };
+
+// Returns every move worth surfacing in the Next Move area, in priority order:
+// each pending incoming request (so the user can accept/decline without scrolling),
+// then the next upcoming accepted session. Falls back to a single match/empty card
+// if there are no actionable sessions at all.
+function pickNextMoves(
+  userId: string,
+  sessions: SessionRow[],
+  teachers: TeachOffer[],
+  learning: LearnRow[],
+): NextMove[] {
+  const moves: NextMove[] = [];
+
+  for (const s of sessions) {
+    if (s.status === "pending" && (s.initiator_id ?? s.learner_id) !== userId) {
+      moves.push({ kind: "incoming", session: s });
+    }
+  }
+
+  const now = Date.now();
+  const upcoming = sessions
+    .filter((s) => (s.status === "accepted" || s.status === "active") && s.scheduled_at)
+    .map((s) => ({ s, t: Date.parse(s.scheduled_at!) }))
+    .filter(({ t }) => !Number.isNaN(t) && t + 60 * 60 * 1000 > now)
+    .sort((a, b) => a.t - b.t)[0];
+  if (upcoming) moves.push({ kind: "upcoming", session: upcoming.s });
+
+  if (moves.length > 0) return moves;
+
+  if (teachers.length > 0) return [{ kind: "match", teachers: teachers.slice(0, 2) }];
+  return [{ kind: "empty", hasLearning: learning.length > 0 }];
+}
+
+type NextMoveCardProps = {
+  next: NextMove;
+  userId: string;
+  busyIds: Set<string>;
+  matchesHydrated: boolean;
+  onAccept: (s: SessionRow) => void;
+  onReject: (s: SessionRow) => void;
+  onRequest: (t: TeachOffer) => void;
+};
+
+function NextMoveCard({
+  next,
+  userId,
+  busyIds,
+  matchesHydrated,
+  onAccept,
+  onReject,
+  onRequest,
+}: NextMoveCardProps) {
+  if (next.kind === "incoming") {
+    const s = next.session;
+    const isTeacher = s.teacher_id === userId;
+    const otherName = isTeacher ? s.learnerName : s.teacherName;
+    const action = isTeacher ? "teach" : "learn from";
+    return (
+      <section className="rounded-3xl border border-brand-purple/25 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
+          <Sparkles className="h-3.5 w-3.5" /> Action needed
+        </div>
+        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
+          {otherName} wants to {action} {s.skills?.name ?? "a skill"}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {s.duration_minutes} min · {s.credits} credit{s.credits === 1 ? "" : "s"}
+        </p>
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+          <Button
+            variant="hero"
+            size="lg"
+            className="w-full sm:w-auto"
+            onClick={() => onAccept(s)}
+            disabled={busyIds.has(s.id)}
+          >
+            {busyIds.has(s.id) ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            Accept
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full sm:w-auto"
+            onClick={() => onReject(s)}
+            disabled={busyIds.has(s.id)}
+          >
+            <X className="h-4 w-4" /> Decline
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  if (next.kind === "upcoming") {
+    const s = next.session;
+    const isTeacher = s.teacher_id === userId;
+    const otherName = isTeacher ? s.learnerName : s.teacherName;
+    const startsIn = formatTimeUntil(s.scheduled_at!);
+    const joinable = canJoinSession(s.scheduled_at, s.duration_minutes);
+    return (
+      <section className="rounded-3xl border border-brand-cyan/25 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-cyan font-semibold">
+          <Clock className="h-3.5 w-3.5" /> Up next
+        </div>
+        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
+          {s.skills?.name ?? "Session"} with {otherName}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Starts {startsIn} · {s.duration_minutes} min
+        </p>
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+          {joinable ? (
+            <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
+              <Link to="/video/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+                <Video className="h-4 w-4" /> Join now
+              </Link>
+            </Button>
+          ) : (
+            <Button variant="hero" size="lg" className="w-full sm:w-auto" disabled>
+              <Video className="h-4 w-4" /> Join {startsIn}
+            </Button>
+          )}
+          <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
+            <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+              <Eye className="h-4 w-4" /> Details
+            </Link>
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  // Skeleton while the live teacher/seeker query is still resolving. We don't
+  // restore these from cache (would flicker as ranking changes once availability
+  // lands), so a placeholder card holds the layout instead of paint-then-shift.
+  if (!matchesHydrated && (next.kind === "match" || next.kind === "empty")) {
+    return (
+      <section className="rounded-3xl border border-border/50 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
+          <Sparkles className="h-3.5 w-3.5" /> Top matches for you
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 md:gap-5">
+          {[0, 1].map((i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-border/40 bg-card/60 p-4"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-11 w-11 rounded-full" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+                <Skeleton className="h-8 w-20 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (next.kind === "match") {
+    const ts = next.teachers;
+    const plural = ts.length > 1;
+    return (
+      <section className="rounded-3xl border border-border/50 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
+          <Sparkles className="h-3.5 w-3.5" />{" "}
+          {plural ? "Top matches for you" : "Top match for you"}
+        </div>
+        <div className={cn("mt-4 grid gap-4", plural && "md:grid-cols-2 md:gap-5")}>
+          {ts.map((t) => (
+            <TopMatchTile
+              key={t.id}
+              teacher={t}
+              busy={busyIds.has(t.id)}
+              onRequest={() => onRequest(t)}
+            />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  // hasLearning=true → user added skills but has zero matches yet. Keep this lean.
+  if (next.hasLearning) {
+    return (
+      <section className="rounded-3xl border border-dashed border-border bg-card/30 p-6 md:p-7">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+          <GraduationCap className="h-3.5 w-3.5" /> Get started
+        </div>
+        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">No matches yet</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Check back soon, or browse Explore to find peers.
+        </p>
+        <div className="mt-5">
+          <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
+            <Link to="/explore" preload="intent">
+              Browse teachers
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  // Truly new user: no learning skills, no teaching skills. Show the 3-step path.
   return (
-    <div className="text-sm text-muted-foreground py-4 px-4 rounded-xl border border-dashed border-white/10 flex items-center justify-between gap-3">
-      <span>{text}</span>
-      <Button variant="ghost" size="sm" asChild>
-        <Link to={to}>Open</Link>
-      </Button>
+    <section className="relative overflow-hidden rounded-3xl border border-border/40 bg-gradient-to-br from-brand-purple/[0.08] via-card/60 to-brand-cyan/[0.08] backdrop-blur p-6 md:p-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_80%_20%,rgba(124,77,255,0.12),transparent_55%)]" />
+      <div className="relative">
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
+          <Sparkles className="h-3.5 w-3.5" /> Welcome to SkillSwap
+        </div>
+        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
+          Book your first session in 3 steps
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Tell us what you want to learn — we'll handle the matching.
+        </p>
+        <ol className="mt-6 grid gap-3 sm:grid-cols-3 sm:gap-4">
+          <WelcomeStep
+            n="1"
+            Icon={GraduationCap}
+            title="Add a skill"
+            body="Pick something you want to learn."
+          />
+          <WelcomeStep
+            n="2"
+            Icon={Users}
+            title="See your matches"
+            body="We pair you with peers who teach it."
+          />
+          <WelcomeStep
+            n="3"
+            Icon={Video}
+            title="Meet & learn"
+            body="Join a video session — credits transfer when you're done."
+          />
+        </ol>
+        <div className="mt-6">
+          <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
+            <Link to="/profile" preload="intent">
+              Add your first skill <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TopMatchTile({
+  teacher,
+  busy,
+  onRequest,
+}: {
+  teacher: TeachOffer;
+  busy: boolean;
+  onRequest: () => void;
+}) {
+  return (
+    <div className="group relative overflow-hidden rounded-xl border border-border/40 bg-card/60 p-4 transition-all hover:-translate-y-0.5 hover:border-brand-purple/40 hover:shadow-md hover:shadow-brand-purple/5">
+      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-gradient-to-br from-brand-purple/10 to-brand-cyan/10 opacity-0 transition-opacity group-hover:opacity-100" />
+      <div className="relative flex items-center gap-3">
+        <Link
+          to="/users/$userId"
+          params={{ userId: teacher.user_id }}
+          preload="intent"
+          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+        >
+          <UserAvatar
+            name={teacher.profiles?.full_name}
+            url={teacher.profiles?.avatar_url}
+            className="h-11 w-11 shrink-0 ring-2 ring-background"
+          />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm md:text-base font-semibold truncate leading-tight">
+              {teacher.profiles?.full_name ?? "Student"}
+            </h3>
+            <p className="text-xs text-muted-foreground truncate">
+              Teaches {teacher.skills?.name}
+              {teacher.credits_per_hour ? (
+                <>
+                  {" · "}
+                  <span className="font-medium text-foreground/70">
+                    {teacher.credits_per_hour} cr/hr
+                  </span>
+                </>
+              ) : null}
+            </p>
+          </div>
+        </Link>
+        <Button
+          variant="hero"
+          size="sm"
+          className="shrink-0 rounded-full px-4"
+          onClick={onRequest}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <MessageCircle className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">Request</span>
+        </Button>
+      </div>
     </div>
+  );
+}
+
+function StreakCard({ count }: { count: number }) {
+  // Tiny ladder for the "next milestone" hint. Keeps it goal-oriented but not
+  // pushy — once you're past 30, we stop suggesting a target.
+  const milestones = [3, 5, 10, 20, 30];
+  const nextMilestone = milestones.find((m) => m > count) ?? null;
+  const progress = nextMilestone ? Math.min(100, Math.round((count / nextMilestone) * 100)) : 100;
+  const isNew = count === 0;
+
+  return (
+    <div className="hidden md:flex md:w-44 lg:w-52 shrink-0 flex-col items-center justify-center rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/15 via-amber-500/10 to-orange-500/10 px-5 py-5 shadow-sm">
+      <Flame
+        className={cn(
+          "h-7 w-7 text-amber-500",
+          !isNew && "drop-shadow-[0_0_8px_rgba(245,158,11,0.45)]",
+        )}
+      />
+      <div className="mt-1 text-4xl font-bold tabular-nums text-amber-600 dark:text-amber-400">
+        {count}
+      </div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80">
+        {count === 1 ? "session" : "sessions"} this month
+      </div>
+      {isNew ? (
+        <div className="mt-3 text-center text-[10px] font-semibold uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80">
+          Book a session to start your streak
+        </div>
+      ) : nextMilestone ? (
+        <>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-amber-500/15">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width]"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="mt-1.5 text-[10px] text-muted-foreground">
+            {nextMilestone - count} to {nextMilestone}
+          </div>
+        </>
+      ) : (
+        <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+          On fire
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WelcomeStep({
+  n,
+  Icon,
+  title,
+  body,
+}: {
+  n: string;
+  Icon: typeof GraduationCap;
+  title: string;
+  body: string;
+}) {
+  return (
+    <li className="rounded-2xl border border-border/40 bg-card/40 p-4">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-purple/15 text-[11px] font-bold text-brand-purple">
+          {n}
+        </span>
+        <Icon className="h-4 w-4 text-brand-cyan" />
+      </div>
+      <div className="mt-2 text-sm font-semibold">{title}</div>
+      <p className="mt-1 text-xs text-muted-foreground leading-snug">{body}</p>
+    </li>
+  );
+}
+
+type AiInsightCardProps = {
+  recs: AiSuggestion[] | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+};
+
+function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (recs === null) {
+    return (
+      <section className="rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-11 w-11 rounded-xl" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3 w-1/3" />
+            <Skeleton className="h-4 w-4/5" />
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (recs.length === 0) return null;
+
+  const visible = recs.slice(0, 2);
+  const rest = recs.slice(2, 5);
+
+  return (
+    <section className="relative overflow-hidden rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
+      <div className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-gradient-to-br from-brand-purple/15 to-brand-cyan/15 blur-2xl" />
+      <div className="relative flex items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-2">
+          <div className="inline-flex h-7 w-7 items-center justify-center rounded-lg gradient-brand-soft">
+            <Sparkles className="h-3.5 w-3.5 text-brand-cyan" />
+          </div>
+          <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground font-semibold">
+            AI Insight
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          aria-label="Refresh insights"
+          title="Refresh insights"
+          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-full text-muted-foreground/70 hover:text-brand-purple hover:bg-brand-purple/10 active:scale-95 transition-all disabled:opacity-50 disabled:hover:bg-transparent"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+        </button>
+      </div>
+
+      <div className="relative mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
+        {visible.map((r, i) => (
+          <InsightTile key={`v-${i}`} suggestion={r} />
+        ))}
+      </div>
+
+      {rest.length > 0 && (
+        <>
+          {expanded && (
+            <div className="relative mt-3 grid gap-3 border-t border-border/40 pt-4 md:grid-cols-2 md:gap-4">
+              {rest.map((r, i) => (
+                <InsightTile key={`r-${i}`} suggestion={r} />
+              ))}
+            </div>
+          )}
+          <div className="relative mt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-label={expanded ? "Show fewer insights" : "Show more insights"}
+              title={expanded ? "Show fewer insights" : "Show more insights"}
+              className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
+            >
+              <ChevronDown
+                className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
+              />
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
+  const meta = SUGGESTION_TYPE_META[suggestion.type] ?? SUGGESTION_TYPE_META.general;
+  const Icon = meta.icon;
+
+  const tileClass =
+    "group relative overflow-hidden rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 text-left transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple/40 cursor-pointer block";
+
+  const inner = (
+    <>
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-0 w-1 rounded-l-xl opacity-70 group-hover:opacity-100 transition-opacity",
+          meta.bg,
+        )}
+      />
+      <div className="flex items-start gap-3 pl-1">
+        <div
+          className={cn(
+            "h-10 w-10 shrink-0 rounded-xl flex items-center justify-center",
+            meta.bg,
+          )}
+        >
+          <Icon className={cn("h-5 w-5", meta.fg)} />
+        </div>
+        <p className="text-sm leading-snug pt-1.5">{suggestion.message}</p>
+        <ArrowRight className="ml-auto h-4 w-4 shrink-0 mt-2 text-muted-foreground/40 transition-all group-hover:text-brand-purple group-hover:translate-x-0.5" />
+      </div>
+    </>
+  );
+
+  const action = suggestion.action;
+  if (!action) {
+    return <div className={cn(tileClass, "cursor-default")}>{inner}</div>;
+  }
+
+  // Each Link variant has different param/search typing, so switch on kind
+  // rather than building the props dynamically. Server always sends one of
+  // these four; an unknown kind would silently render a non-link tile.
+  if (action.kind === "user") {
+    return (
+      <Link
+        to="/users/$userId"
+        params={{ userId: action.userId }}
+        preload="intent"
+        className={tileClass}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  if (action.kind === "explore") {
+    const search: { q?: string; mode?: "learners" } = {};
+    if (action.q) search.q = action.q;
+    if (action.mode === "learners") search.mode = "learners";
+    return (
+      <Link to="/explore" search={search} preload="intent" className={tileClass}>
+        {inner}
+      </Link>
+    );
+  }
+  if (action.kind === "profile") {
+    return (
+      <Link to="/profile" preload="intent" className={tileClass}>
+        {inner}
+      </Link>
+    );
+  }
+  if (action.kind === "skills") {
+    return (
+      <Link to="/skills" preload="intent" className={tileClass}>
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={cn(tileClass, "cursor-default")}>{inner}</div>;
+}
+
+type PeopleSectionProps = {
+  title: string;
+  subtitle?: string;
+  icon: React.ReactNode;
+  actionLabel?: string;
+  actionTo?: string;
+  actionSearch?: Record<string, string>;
+  children: React.ReactNode;
+};
+
+// Wraps a list of people tiles in the same card shell as AI Insights:
+// rounded card with header, 2-column grid of the first two tiles, and a
+// centered chevron that expands to reveal the rest.
+function PeopleSection({
+  title,
+  subtitle,
+  icon,
+  actionLabel,
+  actionTo,
+  actionSearch,
+  children,
+}: PeopleSectionProps) {
+  const [expanded, setExpanded] = useState(false);
+  const items = Children.toArray(children).filter(Boolean);
+  if (items.length === 0) return null;
+  const visible = items.slice(0, 2);
+  const rest = items.slice(2);
+
+  return (
+    <section className="rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="inline-flex items-center gap-2 text-sm md:text-base font-semibold">
+            {icon} {title}
+          </h2>
+          {subtitle && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+          )}
+        </div>
+        {actionLabel && actionTo && (
+          <Link
+            to={actionTo}
+            search={actionSearch}
+            preload="intent"
+            className="group shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-background/40 px-3 py-1 text-xs font-medium text-muted-foreground hover:border-brand-purple/40 hover:bg-brand-purple/5 hover:text-brand-purple transition-all"
+          >
+            {actionLabel}
+            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        )}
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2 md:gap-4">{visible}</div>
+
+      {rest.length > 0 && (
+        <>
+          {expanded && (
+            <div className="mt-3 grid gap-3 border-t border-border/40 pt-4 md:grid-cols-2 md:gap-4">
+              {rest}
+            </div>
+          )}
+          <div className="mt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-label={expanded ? "Show fewer" : "Show more"}
+              title={expanded ? "Show fewer" : "Show more"}
+              className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
+            >
+              <ChevronDown
+                className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
+              />
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+type TeacherScrollCardProps = {
+  teacher: TeachOffer;
+  nextSlot: string | null | undefined;
+  creditsOk: boolean;
+  levelOk: boolean;
+  busy: boolean;
+  onRequest: () => void;
+};
+
+function TeacherScrollCard({
+  teacher,
+  nextSlot,
+  creditsOk,
+  levelOk,
+  busy,
+  onRequest,
+}: TeacherScrollCardProps) {
+  const chip = !creditsOk
+    ? { label: `Need ${teacher.credits_per_hour} cr/hr`, tone: "warn" as const }
+    : nextSlot
+      ? {
+          label: `Free ${new Date(nextSlot).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`,
+          tone: "ok" as const,
+        }
+      : !levelOk
+        ? { label: `Above your level`, tone: "neutral" as const }
+        : { label: `${teacher.credits_per_hour} cr/hr`, tone: "neutral" as const };
+
+  return (
+    <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm">
+      <div className="flex items-start gap-3">
+        <Link
+          to="/users/$userId"
+          params={{ userId: teacher.user_id }}
+          preload="intent"
+          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+        >
+          <UserAvatar
+            name={teacher.profiles?.full_name}
+            url={teacher.profiles?.avatar_url}
+            className="h-11 w-11 shrink-0 ring-2 ring-background"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold truncate leading-tight">
+              {teacher.profiles?.full_name ?? "Student"}
+            </div>
+            <div className="text-xs text-muted-foreground truncate mt-0.5">
+              {teacher.skills?.name} · <span className="capitalize">{teacher.level}</span>
+            </div>
+            <span
+              className={cn(
+                "mt-1.5 inline-flex w-fit items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                chip.tone === "ok"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : chip.tone === "warn"
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    : "border-border bg-secondary text-muted-foreground",
+              )}
+            >
+              {chip.tone === "ok" && <Check className="h-2.5 w-2.5" />}
+              {chip.label}
+            </span>
+          </div>
+        </Link>
+        <Button
+          variant="hero"
+          size="sm"
+          className="shrink-0 rounded-full px-3"
+          onClick={onRequest}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <MessageCircle className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">Request</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type SeekerScrollCardProps = {
+  seeker: Seeker;
+  matchLabel: string;
+  busy: boolean;
+  onOffer: () => void;
+};
+
+function SeekerScrollCard({ seeker, matchLabel, busy, onOffer }: SeekerScrollCardProps) {
+  return (
+    <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-cyan/40 hover:bg-background/70 hover:shadow-sm">
+      <div className="flex items-start gap-3">
+        <Link
+          to="/users/$userId"
+          params={{ userId: seeker.user_id }}
+          preload="intent"
+          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+        >
+          <UserAvatar
+            name={seeker.profiles?.full_name}
+            url={seeker.profiles?.avatar_url}
+            className="h-11 w-11 shrink-0 ring-2 ring-background"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold truncate leading-tight">
+              {seeker.profiles?.full_name ?? "Student"}
+            </div>
+            <div className="text-xs text-muted-foreground truncate mt-0.5">
+              Wants {seeker.skills?.name} ·{" "}
+              <span className="capitalize">{seeker.current_level}</span>
+            </div>
+            <span className="mt-1.5 inline-flex w-fit items-center gap-1 rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-2 py-0.5 text-[10px] font-medium text-brand-cyan">
+              <HandHeart className="h-2.5 w-2.5" /> {matchLabel}
+            </span>
+          </div>
+        </Link>
+        <Button
+          variant="hero"
+          size="sm"
+          className="shrink-0 rounded-full px-3"
+          onClick={onOffer}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <HandHeart className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">Offer</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type ActiveSessionsStripProps = {
+  sessions: SessionRow[];
+  userId: string;
+  busyIds: Set<string>;
+  onAccept: (s: SessionRow) => void;
+  onReject: (s: SessionRow) => void;
+  onComplete: (s: SessionRow) => void;
+};
+
+function ActiveSessionsStrip({
+  sessions,
+  userId,
+  busyIds,
+  onAccept,
+  onReject,
+  onComplete,
+}: ActiveSessionsStripProps) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between px-1">
+        <h2 className="inline-flex items-center gap-2 text-base md:text-lg font-semibold">
+          <Calendar className="h-4 w-4 text-brand-purple" /> Active sessions
+        </h2>
+        <Link
+          to="/history"
+          preload="intent"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          See all <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="rounded-2xl border border-border/40 bg-card/60 backdrop-blur divide-y divide-border/40">
+        {sessions.slice(0, 4).map((session) => {
+          const isTeacher = session.teacher_id === userId;
+          const sessionInitiatorId = session.initiator_id ?? session.learner_id;
+          const canRespondToPending = session.status === "pending" && userId !== sessionInitiatorId;
+          const otherName = isTeacher ? session.learnerName : session.teacherName;
+          const isAcceptedSession = session.status === "accepted" || session.status === "active";
+          const earlyReleaseUnlockAt = session.scheduled_at
+            ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
+            : null;
+          const earlyReleaseAvailable =
+            isAcceptedSession &&
+            !isTeacher &&
+            earlyReleaseUnlockAt !== null &&
+            earlyReleaseUnlockAt <= Date.now();
+          const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
+          const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
+
+          return (
+            <div key={session.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="font-medium truncate">{session.skills?.name ?? "Session"}</div>
+                  <Badge
+                    variant="outline"
+                    className="capitalize bg-secondary/40 border-border/60 text-[10px]"
+                  >
+                    {session.status}
+                  </Badge>
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                  {isTeacher ? "Learner" : "Teacher"}: {otherName} · {session.duration_minutes} min
+                  · {session.credits} cr
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {canRespondToPending && (
+                  <>
+                    <Button
+                      variant="hero"
+                      size="sm"
+                      onClick={() => onAccept(session)}
+                      disabled={busyIds.has(session.id)}
+                    >
+                      {busyIds.has(session.id) ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4" />
+                      )}
+                      Accept
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onReject(session)}
+                      disabled={busyIds.has(session.id)}
+                      aria-label="Decline"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+                {isAcceptedSession &&
+                  (joinAllowed ? (
+                    <Button variant="hero" size="sm" asChild>
+                      <Link
+                        to="/video/$sessionId"
+                        preload="intent"
+                        params={{ sessionId: session.id }}
+                      >
+                        <Video className="h-4 w-4" /> Join
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title={joinHint ?? "Not in session window"}
+                    >
+                      <Video className="h-4 w-4" /> {joinHint ?? "Join"}
+                    </Button>
+                  ))}
+                {session.status !== "rejected" && (
+                  <Button variant="outline" size="sm" asChild aria-label="Details">
+                    <Link
+                      to="/sessions/$sessionId"
+                      preload="intent"
+                      params={{ sessionId: session.id }}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                )}
+                {earlyReleaseAvailable && (
+                  <ConfirmAction
+                    title="Release credits to your teacher now?"
+                    description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room — otherwise the release will be blocked.`}
+                    confirmLabel="Release now"
+                    onConfirm={() => onComplete(session)}
+                  >
+                    <Button variant="hero" size="sm" disabled={busyIds.has(session.id)}>
+                      {busyIds.has(session.id) && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Complete
+                    </Button>
+                  </ConfirmAction>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

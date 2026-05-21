@@ -14,6 +14,7 @@ import { AvailabilityEditor } from "@/components/AvailabilityEditor";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { notifyProfileUpdated } from "@/lib/profile-events";
+import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
 import { GraduationCap, HandHeart, Loader2, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
 import {
@@ -506,6 +507,7 @@ function ProfilePage() {
     setTeachCategory("");
     setTeachMode("");
     setTeachLevel("");
+    void invalidateAiSuggestionsCache();
   };
 
   const addLearn = async () => {
@@ -567,17 +569,20 @@ function ProfilePage() {
     setLearnCategory("");
     setLearnMode("");
     setLearnLevel("");
+    void invalidateAiSuggestionsCache();
   };
 
   const removeTeach = async (id: string) => {
     const { error } = await supabase.from("user_teaching_skills").delete().eq("id", id);
     if (error) return toast.error(error.message);
     setTeaching(teaching.filter((t) => t.id !== id));
+    void invalidateAiSuggestionsCache();
   };
   const removeLearn = async (id: string) => {
     const { error } = await supabase.from("user_learning_skills").delete().eq("id", id);
     if (error) return toast.error(error.message);
     setLearning(learning.filter((t) => t.id !== id));
+    void invalidateAiSuggestionsCache();
   };
 
   const updateTeachLevel = async (id: string, level: string) => {
@@ -701,6 +706,7 @@ function ProfilePage() {
     nameBioRef.current?.reset({ full_name: nextFullName, bio: nextBio });
     setNameBioDirty(false);
     notifyProfileUpdated();
+    void invalidateAiSuggestionsCache();
     toast.success("Profile updated");
   };
 
