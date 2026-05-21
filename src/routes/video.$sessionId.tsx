@@ -14,6 +14,7 @@ import {
 } from "@/lib/jitsi";
 import { fetchJitsiToken } from "@/lib/jitsi-token";
 import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
+import { useTheme } from "@/lib/theme-context";
 import { querySessionById } from "@/lib/session-queries";
 import { sendCallRinging } from "@/lib/call-signals";
 import { signSingleAvatarUrl } from "@/lib/avatars";
@@ -26,6 +27,15 @@ export const Route = createFileRoute("/video/$sessionId")({
   head: () => ({ meta: [{ title: "Video Call - SkillSwap" }] }),
   component: VideoCallPage,
 });
+
+// Jitsi exposes a single `DEFAULT_BACKGROUND` knob in interfaceConfigOverwrite.
+// We map the app theme onto two hex values picked to sit just below the
+// surrounding chrome (bg-card) on each palette, so the iframe's loading
+// flash and "no participant" tile blend in instead of punching a hole.
+const JITSI_BACKGROUND_BY_THEME = {
+  light: "#f5f6fa",
+  dark: "#0b0f17",
+} as const;
 
 type SessionStatus = Enums<"session_status">;
 
@@ -53,6 +63,12 @@ function VideoCallPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const videoCallsEnabled = useFeatureEnabled("features.video_calls.enabled", true);
+  const { theme } = useTheme();
+  // Snapshot the theme at mount via a ref so the Jitsi iframe doesn't
+  // reinitialize (and kick the user out of the call) every time they toggle
+  // the app theme. Theme changes mid-call take effect on the next rejoin.
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const [session, setSession] = useState<SessionRow | null>(null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -314,6 +330,7 @@ function VideoCallPage() {
           DEFAULT_REMOTE_DISPLAY_NAME: "SkillSwap participant",
           MOBILE_APP_PROMO: false,
           DISABLE_JOIN_LEAVE_NOTIFICATIONS: false,
+          DEFAULT_BACKGROUND: JITSI_BACKGROUND_BY_THEME[themeRef.current],
         },
       });
       if (jwt) options.jwt = jwt;
@@ -362,7 +379,7 @@ function VideoCallPage() {
     return (
       <main className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-3xl flex-col items-center justify-center px-4 py-10">
         <div className="glass flex w-full flex-col items-center rounded-3xl p-8 text-center">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
             <VideoOff className="h-6 w-6" />
           </div>
           <h1 className="text-xl font-semibold">Video calls are temporarily disabled</h1>
@@ -437,9 +454,9 @@ function VideoCallPage() {
       </div>
 
       {showModHint && !callReady && (
-        <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+        <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
           <div className="font-medium">Waiting for the room to start</div>
-          <p className="mt-1 text-amber-100/85">
+          <p className="mt-1 text-amber-900/85 dark:text-amber-100/85">
             {isTeacher
               ? "As the teacher, click Log-in inside the call window and sign in with Google to start the room. You only need to do this once per browser."
               : "Waiting for the teacher to start the room. They'll sign in once with Google — you don't need to log in."}
@@ -447,10 +464,14 @@ function VideoCallPage() {
         </div>
       )}
 
-      <section className="relative min-h-0 flex-1 overflow-hidden rounded-3xl bg-card shadow-card">
+      <section className="relative min-h-0 flex-1 overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
         <div ref={containerRef} className="h-full w-full" />
         {!callReady && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+          // Scrim sits on top of whatever Jitsi has painted into the iframe
+          // (often a near-black backdrop), so we tint it with a theme-aware
+          // wash and lift the text to foreground/80 instead of muted —
+          // muted-foreground washed out against the dark iframe.
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-sm font-medium text-foreground/80 backdrop-blur-sm">
             Connecting to your secure SkillSwap room…
           </div>
         )}
