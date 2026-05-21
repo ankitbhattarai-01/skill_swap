@@ -512,21 +512,31 @@ function MessagesIndexPage() {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
 
+  // Stable key over the selected thread's session IDs. Depending on this
+  // (instead of the whole `selectedThread` object) keeps the chat-load effect
+  // from refiring when only `lastMessage` updates — otherwise every realtime
+  // INSERT would re-sort threads, hand us a new `selectedThread` reference,
+  // and trigger a skeleton-flicker + scroll-reset on every send.
+  const selectedSessionIdsKey = useMemo(() => {
+    if (!selectedThread) return "";
+    return selectedThread.sessions.map((s) => s.id).join(",");
+  }, [selectedThread]);
+
   // Load chat: most-recent page of messages across all sessions in the
   // selected thread. Older pages arrive via loadEarlierMessages below.
   useEffect(() => {
-    if (!selectedThread || !user) {
+    if (!selectedUserId || !user) {
       setChatMessages([]);
       setHasMoreMessages(false);
       return;
     }
-    markOpened(selectedThread.otherUserId);
-    const sessionIds = selectedThread.sessions.map((s) => s.id);
+    const sessionIds = selectedSessionIdsKey ? selectedSessionIdsKey.split(",") : [];
     if (sessionIds.length === 0) {
       setChatMessages([]);
       setHasMoreMessages(false);
       return;
     }
+    markOpened(selectedUserId);
     let alive = true;
     const controller = new AbortController();
 
@@ -559,7 +569,7 @@ function MessagesIndexPage() {
       alive = false;
       controller.abort();
     };
-  }, [selectedThread, user, markOpened]);
+  }, [selectedUserId, selectedSessionIdsKey, user, markOpened]);
 
   // Cursor-paginated fetch for older messages. Uses the oldest currently-
   // loaded created_at as the cursor and prepends the returned page. Dedup
@@ -898,11 +908,11 @@ function MessagesIndexPage() {
               selectedUserId ? "hidden md:flex" : "flex",
             )}
           >
-            <div className="relative overflow-hidden border-b border-border/60 px-5 pt-5 pb-4">
+            <div className="animate-fade-up relative overflow-hidden border-b border-border/60 px-5 pt-5 pb-4">
               <div className="absolute inset-0 gradient-hero pointer-events-none opacity-70" />
               <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
               <div className="relative flex items-start gap-3">
-                <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
+                <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25 transition-transform hover:scale-105">
                   <MessagesSquare className="h-5 w-5 text-brand-purple" />
                 </div>
                 <div className="min-w-0">
@@ -916,7 +926,10 @@ function MessagesIndexPage() {
               </div>
             </div>
 
-            <div className="px-4 pt-3 pb-2 grid grid-cols-2 gap-2">
+            <div
+              className="animate-fade-up px-4 pt-3 pb-2 grid grid-cols-2 gap-2"
+              style={{ animationDelay: "60ms" }}
+            >
               {(
                 [
                   { key: "teaching", label: "Teaching", unread: teachingUnread },
@@ -934,10 +947,10 @@ function MessagesIndexPage() {
                     type="button"
                     onClick={() => setRoleTab(t.key)}
                     className={cn(
-                      "relative inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-all",
+                      "relative inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-all duration-200 active:scale-95",
                       active
                         ? activeClass
-                        : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:bg-white/10 hover:text-foreground",
+                        : "border-white/10 bg-white/5 text-muted-foreground hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-foreground",
                     )}
                   >
                     <span>{t.label}</span>
@@ -958,29 +971,32 @@ function MessagesIndexPage() {
               })}
             </div>
 
-            <div className="px-4 pb-3">
+            <div className="animate-fade-up px-4 pb-3" style={{ animationDelay: "120ms" }}>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors" />
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search by name, skill, or message"
-                  className="glass h-10 rounded-full border-white/10 pl-9"
+                  className="glass h-10 rounded-full border-white/10 pl-9 transition-all focus-visible:border-brand-purple/40"
                 />
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+            <div
+              className="animate-fade-up flex flex-wrap gap-1.5 px-4 pb-3"
+              style={{ animationDelay: "180ms" }}
+            >
               {FILTERS.map((f) => (
                 <button
                   key={f.key}
                   type="button"
                   onClick={() => setFilter(f.key)}
                   className={cn(
-                    "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium transition-all",
+                    "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium transition-all duration-200 active:scale-95",
                     filter === f.key
                       ? "border-brand-purple/40 bg-brand-purple/15 text-brand-purple"
-                      : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:bg-white/10 hover:text-foreground",
+                      : "border-white/10 bg-white/5 text-muted-foreground hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-foreground",
                   )}
                 >
                   {f.label}
@@ -990,7 +1006,10 @@ function MessagesIndexPage() {
 
             <div className="flex-1 overflow-y-auto px-2 py-1">
               {filtered.length === 0 ? (
-                <div className="mx-2 mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-center text-sm text-muted-foreground">
+                <div
+                  className="animate-fade-up mx-2 mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-center text-sm text-muted-foreground"
+                  style={{ animationDelay: "240ms" }}
+                >
                   {query || filter !== "all" ? (
                     "No matches"
                   ) : (
@@ -1006,7 +1025,7 @@ function MessagesIndexPage() {
                   )}
                 </div>
               ) : (
-                filtered.map((t) => {
+                filtered.map((t, idx) => {
                   const isSelected = t.otherUserId === selectedUserId;
                   const unread = isUnread(t);
                   const subline = t.activeSession
@@ -1020,17 +1039,18 @@ function MessagesIndexPage() {
                     <button
                       key={t.otherUserId}
                       onClick={() => selectThread(t.otherUserId)}
+                      style={{ animationDelay: `${240 + Math.min(idx, 9) * 30}ms` }}
                       className={cn(
-                        "group my-1 flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 text-left transition-all",
+                        "animate-fade-up group my-1 flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 text-left transition-all duration-200 active:scale-[0.98]",
                         isSelected
                           ? "border-brand-purple/30 bg-brand-purple/10 shadow-glow"
-                          : "hover:border-white/10 hover:bg-white/[0.04]",
+                          : "hover:-translate-y-0.5 hover:border-white/10 hover:bg-white/[0.04]",
                       )}
                     >
                       <UserAvatar
                         name={t.otherName}
                         url={t.otherAvatar}
-                        className="h-11 w-11 shrink-0 ring-1 ring-white/10 transition-all group-hover:ring-white/20"
+                        className="h-11 w-11 shrink-0 ring-1 ring-white/10 transition-all group-hover:scale-105 group-hover:ring-white/20"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
@@ -1088,13 +1108,16 @@ function MessagesIndexPage() {
           >
             {selectedThread ? (
               <>
-                <div className="relative sticky top-0 z-10 flex shrink-0 items-center gap-3 overflow-hidden border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40">
+                <div
+                  key={selectedThread.otherUserId}
+                  className="animate-fade-up relative sticky top-0 z-10 flex shrink-0 items-center gap-3 overflow-hidden border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40"
+                >
                   <div className="absolute inset-0 gradient-hero pointer-events-none opacity-60" />
                   <div className="absolute inset-0 bg-[radial-gradient(at_90%_50%,rgba(167,139,250,0.14),transparent_60%)] pointer-events-none" />
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="relative -ml-1 h-10 w-10 rounded-full md:hidden"
+                    className="relative -ml-1 h-10 w-10 rounded-full transition-transform hover:-translate-x-0.5 active:scale-95 md:hidden"
                     onClick={() => selectThread(null)}
                   >
                     <ArrowLeft className="h-5 w-5" />
@@ -1102,7 +1125,7 @@ function MessagesIndexPage() {
                   <UserAvatar
                     name={selectedThread.otherName}
                     url={selectedThread.otherAvatar}
-                    className="relative h-11 w-11 shrink-0 ring-2 ring-white/10"
+                    className="relative h-11 w-11 shrink-0 ring-2 ring-white/10 transition-transform hover:scale-105"
                   />
                   <div className="relative min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
@@ -1143,12 +1166,12 @@ function MessagesIndexPage() {
                   ) : (
                     <>
                       {hasMoreMessages && (
-                        <div className="flex justify-center py-2">
+                        <div className="animate-fade-up flex justify-center py-2">
                           <button
                             type="button"
                             onClick={() => void loadEarlierMessages()}
                             disabled={loadingEarlier}
-                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-brand-purple disabled:opacity-60"
+                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-muted-foreground transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-brand-purple active:scale-95 disabled:opacity-60 disabled:hover:translate-y-0"
                           >
                             {loadingEarlier && <Loader2 className="h-3 w-3 animate-spin" />}
                             Load earlier messages
@@ -1197,7 +1220,8 @@ function MessagesIndexPage() {
                 {activeSession ? (
                   <form
                     data-mobile-message-composer
-                    className="sticky bottom-0 flex shrink-0 items-end gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
+                    className="animate-fade-up sticky bottom-0 flex shrink-0 items-end gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
+                    style={{ animationDelay: "80ms" }}
                     onSubmit={(e) => {
                       e.preventDefault();
                       void sendMessage();
@@ -1226,20 +1250,21 @@ function MessagesIndexPage() {
                       variant="hero"
                       type="submit"
                       size="icon"
-                      className="h-11 w-11 shrink-0 rounded-full"
+                      className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
                       disabled={sending || !text.trim()}
                     >
                       {sending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Send className="h-4 w-4" />
+                        <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                       )}
                     </Button>
                   </form>
                 ) : (
                   <div
                     data-mobile-message-composer
-                    className="sticky bottom-0 shrink-0 border-t border-white/10 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-muted-foreground backdrop-blur-xl md:bg-background/40"
+                    className="animate-fade-up sticky bottom-0 shrink-0 border-t border-white/10 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-muted-foreground backdrop-blur-xl md:bg-background/40"
+                    style={{ animationDelay: "80ms" }}
                   >
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-medium text-amber-400">
                       Read-only
@@ -1259,17 +1284,26 @@ function MessagesIndexPage() {
                 <div className="absolute inset-0 gradient-hero pointer-events-none" />
                 <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,rgba(167,139,250,0.18),transparent_60%)] pointer-events-none" />
                 <div className="relative">
-                  <div className="mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/15 ring-1 ring-brand-purple/25 shadow-glow">
+                  <div className="animate-fade-up mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/15 ring-1 ring-brand-purple/25 shadow-glow transition-transform hover:scale-105">
                     <MessageCircle className="h-9 w-9 text-brand-purple" />
                   </div>
-                  <h2 className="text-2xl font-bold tracking-tight">
+                  <h2
+                    className="animate-fade-up text-2xl font-bold tracking-tight"
+                    style={{ animationDelay: "80ms" }}
+                  >
                     Select a <span className="gradient-brand-text">conversation</span>
                   </h2>
-                  <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                  <p
+                    className="animate-fade-up mx-auto mt-2 max-w-sm text-sm text-muted-foreground"
+                    style={{ animationDelay: "160ms" }}
+                  >
                     Pick a chat from the inbox to keep your skill swaps moving. Conversations appear
                     here once a session request is accepted.
                   </p>
-                  <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground">
+                  <div
+                    className="animate-fade-up mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground"
+                    style={{ animationDelay: "240ms" }}
+                  >
                     <Sparkles className="h-3.5 w-3.5 text-brand-purple" />
                     Tip: switch between Teaching and Learning above
                   </div>
