@@ -1,8 +1,18 @@
 import { supabase } from "@/integrations/supabase/client";
 
+// `action` makes the dashboard tile clickable and deep-links into the rest of
+// the app. Resolved server-side from the LLM's `ref` field (with a type-based
+// fallback) so every tile is guaranteed to have a destination.
+export type AiSuggestionAction =
+  | { kind: "user"; userId: string; skillName?: string }
+  | { kind: "explore"; q?: string; mode?: "teachers" | "learners" }
+  | { kind: "profile" }
+  | { kind: "skills" };
+
 export type AiSuggestion = {
   message: string;
   type: "trending" | "match" | "progression" | "profile" | "swap" | "momentum" | "general";
+  action?: AiSuggestionAction | null;
 };
 
 type AiSuggestionsResponse = {
@@ -40,5 +50,48 @@ export async function fetchAiSuggestions(
     throw new Error(error.message);
   }
   if (!data?.suggestions) throw new Error("No suggestions returned");
-  return data;
+  // Belt-and-suspenders: also tidy on the client so the existing 6-hour cache
+  // displays cleanly without waiting for the server-side rewrite to refresh.
+  return { ...data, suggestions: data.suggestions.map(tidySuggestion) };
+}
+
+// Deletes the current user's cached AI suggestions row so the next
+// fetchAiSuggestions() call regenerates fresh. Call this after any mutation
+// that changes a grounding signal Gemini sees (teaching/learning skills,
+// bio, etc.) — otherwise users see stale advice ("1 learner wants Python")
+// for up to 6 hours after deleting the relevant skill.
+//
+// Best-effort: errors are swallowed because a stale cache is recoverable
+// (manual ↻ on the dashboard) and we never want to block a profile edit.
+export async function invalidateAiSuggestionsCache(): Promise<void> {
+  const { data } = await supabase.auth.getUser();
+  const userId = data?.user?.id;
+  if (!userId) return;
+  // `ai_suggestions` exists at runtime but isn't in the generated types
+  // (the Edge Function reads/writes it via the service-role admin client,
+  // not via PostgREST from the app). Cast through `unknown` to suppress the
+  // strict overload match without losing the RLS-protected DELETE behaviour.
+  await (supabase.from("ai_suggestions" as never) as unknown as {
+    delete: () => { eq: (col: string, val: string) => Promise<unknown> };
+  })
+    .delete()
+    .eq("user_id", userId);
+}
+
+function tidySuggestion(s: AiSuggestion): AiSuggestion {
+  return { ...s, message: tidyMessage(s.message) };
+}
+
+// Mirror of the same fn in supabase/functions/generate-suggestions/index.ts.
+// Converts em/en dashes used as sentence separators into periods, bare dashes
+// into commas, and collapses the leftover whitespace.
+function tidyMessage(message: string): string {
+  return message
+    .replace(/\s+[—–]\s+/g, ". ")
+    .replace(/[—–]/g, ", ")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+,/g, ",")
+    .replace(/\.\s*\./g, ".")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
