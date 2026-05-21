@@ -5,7 +5,15 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Enums } from "@/integrations/supabase/types";
-import { ArrowDownLeft, ArrowUpRight, Coins, Gift, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Coins,
+  Gift,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
@@ -263,46 +271,69 @@ function CreditsPage() {
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
-      <section className="space-y-7">
-        <div>
-          <h1 className="text-3xl font-bold tracking-normal text-foreground sm:text-4xl">
-            Your <span className="text-primary">Credits</span>
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-            Track your credits and transactions
-          </p>
-        </div>
+      <section className="space-y-6">
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="relative flex flex-col gap-6 p-6 md:p-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              <div className="flex items-start gap-4">
+                <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
+                  <Coins className="h-5 w-5 text-brand-purple" />
+                </div>
+                <div>
+                  <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+                    Your <span className="gradient-brand-text">Credits</span>
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
+                    Track your balance, earnings, and every transaction in one place.
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/explore"
+                preload="intent"
+                className="inline-flex items-center gap-2 self-start rounded-full border border-brand-purple/30 bg-brand-purple/10 px-4 py-2 text-sm font-medium text-brand-purple transition-all hover:bg-brand-purple/20 hover:shadow-glow md:self-auto"
+              >
+                <Sparkles className="h-4 w-4" />
+                Earn more
+              </Link>
+            </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <SummaryCard
-            label="Current Balance"
-            value={liveCreditBalance ?? profile.credits}
-            caption="Available to spend"
-            tone="balance"
-            icon={Coins}
-          />
-          <SummaryCard
-            label="Recent Earned"
-            value={totalEarned}
-            caption="From your last 20 entries"
-            tone="earned"
-            icon={TrendingUp}
-          />
-          <SummaryCard
-            label="Recent Spent"
-            value={totalSpent}
-            caption="From your last 20 entries"
-            tone="spent"
-            icon={TrendingDown}
-          />
-        </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <SummaryCard
+                label="Current Balance"
+                value={liveCreditBalance ?? profile.credits}
+                caption="Available to spend"
+                tone="balance"
+                icon={Coins}
+              />
+              <SummaryCard
+                label="Recent Earned"
+                value={totalEarned}
+                caption="From your last 20 entries"
+                tone="earned"
+                icon={TrendingUp}
+              />
+              <SummaryCard
+                label="Recent Spent"
+                value={totalSpent}
+                caption="From your last 20 entries"
+                tone="spent"
+                icon={TrendingDown}
+              />
+            </div>
+          </div>
+        </section>
 
-        <section className="rounded-3xl bg-card px-5 py-6 shadow-card sm:px-7">
-          <h2 className="flex items-center gap-2 text-xl font-bold">
-            <Gift className="h-5 w-5 text-primary" />
-            How Credits Work
-          </h2>
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+        <section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
+              <Gift className="h-4 w-4 text-brand-purple" />
+            </div>
+            <h2 className="text-lg font-semibold leading-tight">How Credits Work</h2>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-3">
             <HowItWorksCard
               title="Earn Credits"
               description="Teach your skills to others and earn credits for each completed session."
@@ -324,25 +355,29 @@ function CreditsPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl bg-card px-5 py-6 shadow-card sm:px-7">
+        <section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-xl font-bold">
-              <Coins className="h-5 w-5 text-primary" />
-              Transaction History
-            </h2>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">
+                <Coins className="h-4 w-4 text-brand-cyan" />
+              </div>
+              <h2 className="text-lg font-semibold leading-tight">Transaction History</h2>
+            </div>
             <Link
               to="/history"
               className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
-              View All
+              View all
             </Link>
           </div>
 
-          <div className="mt-6 space-y-4">
+          <div className="mt-5 space-y-3">
             {sortedTransactions.length === 0 ? (
-              <div className="rounded-3xl bg-secondary/60 px-5 py-10 text-center">
-                <Coins className="mx-auto h-8 w-8 text-muted-foreground" />
-                <h3 className="mt-3 text-lg font-bold">No credit activity yet</h3>
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-center">
+                <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-purple/15">
+                  <Coins className="h-5 w-5 text-brand-purple" />
+                </div>
+                <h3 className="mt-4 text-lg font-semibold">No credit activity yet</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Complete a session to see earned and spent credits here.
                 </p>
@@ -372,46 +407,52 @@ function SummaryCard({
   tone: "balance" | "earned" | "spent";
   icon: LucideIcon;
 }) {
-  const valueClass = {
-    balance: "text-primary",
-    earned: "text-emerald-500",
-    spent: "text-orange-500",
-  }[tone];
-  const iconClass = {
-    balance: "text-primary bg-primary/10 shadow-[0_20px_55px_-28px_rgb(124_58_237_/_0.8)]",
-    earned: "text-emerald-500 bg-emerald-500/10",
-    spent: "text-orange-500 bg-orange-500/10",
+  const toneStyles = {
+    balance: {
+      value: "text-brand-purple",
+      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+      hover: "hover:border-brand-purple/30 hover:shadow-glow",
+    },
+    earned: {
+      value: "text-emerald-400",
+      badge: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+      hover: "hover:border-brand-cyan/30 hover:shadow-glow-blue",
+    },
+    spent: {
+      value: "text-orange-400",
+      badge: "bg-orange-400/15 text-orange-400 ring-1 ring-orange-400/20",
+      hover: "hover:border-orange-400/30",
+    },
   }[tone];
 
   return (
-    <article className="rounded-3xl bg-card px-6 py-7 shadow-card">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+    <article
+      className={cn(
+        "group rounded-2xl border border-white/10 bg-white/5 px-5 py-5 transition-all hover:-translate-y-0.5 sm:rounded-3xl sm:px-6 sm:py-6",
+        toneStyles.hover,
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
           <div
             className={cn(
-              "mt-3 flex items-center gap-2 text-5xl font-bold leading-none",
-              valueClass,
+              "mt-3 flex items-baseline gap-1.5 text-4xl font-bold leading-none sm:text-5xl",
+              toneStyles.value,
             )}
           >
             {value}
-            {tone === "balance" ? (
-              <Coins className="h-8 w-8" />
-            ) : tone === "earned" ? (
-              <TrendingUp className="h-7 w-7" />
-            ) : (
-              <TrendingDown className="h-7 w-7" />
-            )}
+            <span className="text-base font-medium text-muted-foreground sm:text-lg">cr</span>
           </div>
-          <p className="mt-5 text-sm text-muted-foreground">{caption}</p>
+          <p className="mt-4 text-xs text-muted-foreground sm:text-sm">{caption}</p>
         </div>
         <div
           className={cn(
-            "flex h-14 w-14 shrink-0 items-center justify-center rounded-full",
-            iconClass,
+            "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
+            toneStyles.badge,
           )}
         >
-          <Icon className="h-6 w-6" />
+          <Icon className="h-5 w-5" />
         </div>
       </div>
     </article>
@@ -430,18 +471,37 @@ function HowItWorksCard({
   icon: LucideIcon;
 }) {
   const styles = {
-    earned: "bg-emerald-500/10 text-emerald-500",
-    spent: "bg-orange-500/10 text-orange-500",
-    bonus: "bg-primary/10 text-primary",
+    earned: {
+      badge: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+      hover: "hover:border-brand-cyan/30 hover:shadow-glow-blue",
+    },
+    spent: {
+      badge: "bg-orange-400/15 text-orange-400 ring-1 ring-orange-400/20",
+      hover: "hover:border-orange-400/30",
+    },
+    bonus: {
+      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+      hover: "hover:border-brand-purple/30 hover:shadow-glow",
+    },
   }[tone];
 
   return (
-    <article className="rounded-3xl bg-secondary/60 px-5 py-5">
-      <div className={cn("flex h-12 w-12 items-center justify-center rounded-full", styles)}>
+    <article
+      className={cn(
+        "group rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:-translate-y-0.5",
+        styles.hover,
+      )}
+    >
+      <div
+        className={cn(
+          "flex h-11 w-11 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
+          styles.badge,
+        )}
+      >
         <Icon className="h-5 w-5" />
       </div>
-      <h3 className="mt-5 text-lg font-bold">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+      <h3 className="mt-4 text-base font-semibold sm:text-lg">{title}</h3>
+      <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{description}</p>
     </article>
   );
 }
@@ -449,28 +509,53 @@ function HowItWorksCard({
 function TransactionRow({ transaction }: { transaction: TransactionItem }) {
   const isPositive = transaction.amount > 0;
   const styles = {
-    earned: "bg-emerald-500/10 text-emerald-500",
-    spent: "bg-orange-500/10 text-orange-500",
-    bonus: "bg-primary/10 text-primary",
+    earned: {
+      badge: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+      amount: "text-emerald-400",
+      hover: "hover:border-brand-cyan/30",
+    },
+    spent: {
+      badge: "bg-orange-400/15 text-orange-400 ring-1 ring-orange-400/20",
+      amount: "text-orange-400",
+      hover: "hover:border-orange-400/30",
+    },
+    bonus: {
+      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+      amount: "text-brand-purple",
+      hover: "hover:border-brand-purple/30",
+    },
   }[transaction.kind];
   const Icon = transaction.kind === "bonus" ? Gift : isPositive ? ArrowDownLeft : ArrowUpRight;
 
   return (
-    <article className="flex items-center gap-4 rounded-3xl bg-secondary/60 px-5 py-5">
+    <article
+      className={cn(
+        "group flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 transition-all hover:bg-white/[0.07] sm:px-5",
+        styles.hover,
+      )}
+    >
       <div
-        className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-full", styles)}
+        className={cn(
+          "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
+          styles.badge,
+        )}
       >
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-base font-bold sm:text-lg">{transaction.title}</h3>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+        <h3 className="truncate text-sm font-semibold sm:text-base">{transaction.title}</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
           {formatDate(transaction.date)}
-          {transaction.durationMinutes != null && ` · ${transaction.durationMinutes} min`}
+          {transaction.durationMinutes != null && (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              {transaction.durationMinutes} min
+            </>
+          )}
         </p>
       </div>
-      <div className={cn("text-xl font-bold", isPositive ? "text-emerald-500" : "text-orange-500")}>
-        {isPositive ? "+" : "-"}
+      <div className={cn("text-lg font-bold sm:text-xl", styles.amount)}>
+        {isPositive ? "+" : "−"}
         {Math.abs(transaction.amount)}
       </div>
     </article>
