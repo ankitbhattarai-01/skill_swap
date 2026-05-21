@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { signAvatarUrls } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Loader2, MessageCircle, Search, Send } from "lucide-react";
+import { ArrowLeft, Loader2, MessageCircle, MessagesSquare, Search, Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { describeViolations, detectViolations } from "@/lib/messageFilter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -885,12 +885,25 @@ function MessagesIndexPage() {
               selectedUserId ? "hidden md:flex" : "flex",
             )}
           >
-            <div className="px-5 pt-5 pb-3">
-              <h1 className="text-2xl font-bold gradient-brand-text">Messages</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">Your skill swap conversations</p>
+            <div className="relative overflow-hidden border-b border-border/60 px-5 pt-5 pb-4">
+              <div className="absolute inset-0 gradient-hero pointer-events-none opacity-70" />
+              <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+              <div className="relative flex items-start gap-3">
+                <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
+                  <MessagesSquare className="h-5 w-5 text-brand-purple" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-bold tracking-tight">
+                    <span className="gradient-brand-text">Messages</span>
+                  </h1>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Your skill swap conversations
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div className="px-4 pb-3 grid grid-cols-2 gap-2">
+            <div className="px-4 pt-3 pb-2 grid grid-cols-2 gap-2">
               {(
                 [
                   { key: "teaching", label: "Teaching", unread: teachingUnread },
@@ -900,26 +913,28 @@ function MessagesIndexPage() {
                 const active = roleTab === t.key;
                 const activeClass =
                   t.key === "teaching"
-                    ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
-                    : "bg-brand-purple/20 border-brand-purple/40 text-brand-purple";
+                    ? "border-brand-cyan/40 bg-brand-cyan/15 text-brand-cyan shadow-glow-blue"
+                    : "border-brand-purple/40 bg-brand-purple/15 text-brand-purple shadow-glow";
                 return (
                   <button
                     key={t.key}
                     type="button"
                     onClick={() => setRoleTab(t.key)}
                     className={cn(
-                      "relative rounded-xl border px-3 py-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2",
+                      "relative inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-all",
                       active
                         ? activeClass
-                        : "bg-foreground/5 border-border text-muted-foreground hover:text-foreground",
+                        : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:bg-white/10 hover:text-foreground",
                     )}
                   >
                     <span>{t.label}</span>
                     {t.unread > 0 && (
                       <span
                         className={cn(
-                          "min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
-                          active ? "bg-foreground/15" : "bg-brand-cyan/30 text-brand-cyan",
+                          "inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
+                          active
+                            ? "bg-white/15 text-current"
+                            : "bg-brand-purple/25 text-brand-purple",
                         )}
                       >
                         {t.unread > 99 ? "99+" : t.unread}
@@ -937,22 +952,22 @@ function MessagesIndexPage() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search by name, skill, or message"
-                  className="pl-9 h-10 bg-foreground/5 border-border rounded-full"
+                  className="glass h-10 rounded-full border-white/10 pl-9"
                 />
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 px-4 pb-3">
+            <div className="flex flex-wrap gap-1.5 px-4 pb-3">
               {FILTERS.map((f) => (
                 <button
                   key={f.key}
                   type="button"
                   onClick={() => setFilter(f.key)}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-xs transition-colors",
+                    "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium transition-all",
                     filter === f.key
-                      ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
-                      : "bg-foreground/5 border-border text-muted-foreground hover:text-foreground",
+                      ? "border-brand-purple/40 bg-brand-purple/15 text-brand-purple"
+                      : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:bg-white/10 hover:text-foreground",
                   )}
                 >
                   {f.label}
@@ -960,12 +975,22 @@ function MessagesIndexPage() {
               ))}
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto px-2 py-1">
               {filtered.length === 0 ? (
-                <div className="px-5 py-10 text-center text-sm text-muted-foreground">
-                  {query || filter !== "all"
-                    ? "No matches"
-                    : "No conversations yet. Accept a session request to start chatting."}
+                <div className="mx-2 mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-center text-sm text-muted-foreground">
+                  {query || filter !== "all" ? (
+                    "No matches"
+                  ) : (
+                    <>
+                      <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-purple/15">
+                        <MessageCircle className="h-5 w-5 text-brand-purple" />
+                      </div>
+                      <div>No conversations yet.</div>
+                      <div className="mt-1 text-xs">
+                        Accept a session request to start chatting.
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 filtered.map((t) => {
@@ -983,46 +1008,52 @@ function MessagesIndexPage() {
                       key={t.otherUserId}
                       onClick={() => selectThread(t.otherUserId)}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 hover:bg-foreground/5 transition-colors text-left border-b border-border/40",
-                        isSelected && "bg-brand-cyan/10",
+                        "group my-1 flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 text-left transition-all",
+                        isSelected
+                          ? "border-brand-purple/30 bg-brand-purple/10 shadow-glow"
+                          : "hover:border-white/10 hover:bg-white/[0.04]",
                       )}
                     >
                       <UserAvatar
                         name={t.otherName}
                         url={t.otherAvatar}
-                        className="h-12 w-12 shrink-0"
+                        className="h-11 w-11 shrink-0 ring-1 ring-white/10 transition-all group-hover:ring-white/20"
                       />
-                      <div className="flex-1 min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <span
                               className={cn(
-                                "truncate",
+                                "truncate text-sm",
                                 unread ? "font-bold text-foreground" : "font-semibold",
                               )}
                             >
                               {t.otherName}
                             </span>
                             {unread && (
-                              <span className="shrink-0 h-2 w-2 rounded-full bg-brand-cyan" />
+                              <span className="h-2 w-2 shrink-0 rounded-full bg-brand-purple shadow-glow" />
                             )}
                           </div>
                           {t.lastMessage && (
                             <span
                               className={cn(
-                                "text-[11px] shrink-0",
-                                unread ? "text-brand-cyan font-semibold" : "text-muted-foreground",
+                                "shrink-0 text-[11px]",
+                                unread
+                                  ? "font-semibold text-brand-purple"
+                                  : "text-muted-foreground",
                               )}
                             >
                               {formatPreviewTime(t.lastMessage.created_at)}
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-muted-foreground/80 truncate">{subline}</div>
+                        <div className="truncate text-[11px] text-muted-foreground/80">
+                          {subline}
+                        </div>
                         <div
                           className={cn(
-                            "text-sm truncate",
-                            unread ? "text-foreground font-medium" : "text-muted-foreground",
+                            "truncate text-xs",
+                            unread ? "font-medium text-foreground" : "text-muted-foreground",
                           )}
                         >
                           {messagePreview}
@@ -1044,11 +1075,13 @@ function MessagesIndexPage() {
           >
             {selectedThread ? (
               <>
-                <div className="sticky top-0 z-10 flex shrink-0 items-center gap-3 border-b border-border/60 bg-background/95 px-3 py-2.5 shadow-sm backdrop-blur-xl sm:px-5 md:bg-background/40 md:shadow-none">
+                <div className="relative sticky top-0 z-10 flex shrink-0 items-center gap-3 overflow-hidden border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40">
+                  <div className="absolute inset-0 gradient-hero pointer-events-none opacity-60" />
+                  <div className="absolute inset-0 bg-[radial-gradient(at_90%_50%,rgba(167,139,250,0.14),transparent_60%)] pointer-events-none" />
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="md:hidden -ml-1 h-10 w-10 rounded-full"
+                    className="relative -ml-1 h-10 w-10 rounded-full md:hidden"
                     onClick={() => selectThread(null)}
                   >
                     <ArrowLeft className="h-5 w-5" />
@@ -1056,25 +1089,25 @@ function MessagesIndexPage() {
                   <UserAvatar
                     name={selectedThread.otherName}
                     url={selectedThread.otherAvatar}
-                    className="h-10 w-10 shrink-0"
+                    className="relative h-11 w-11 shrink-0 ring-2 ring-white/10"
                   />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-semibold truncate">{selectedThread.otherName}</span>
+                  <div className="relative min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-semibold">{selectedThread.otherName}</span>
                       {headerSession && (
                         <span
                           className={cn(
-                            "shrink-0 text-[10px] uppercase tracking-wide font-semibold rounded-full px-1.5 py-0.5 border",
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1",
                             headerTeaching
-                              ? "bg-brand-cyan/15 text-brand-cyan border-brand-cyan/30"
-                              : "bg-brand-purple/15 text-brand-purple border-brand-purple/30",
+                              ? "bg-brand-cyan/15 text-brand-cyan ring-brand-cyan/30"
+                              : "bg-brand-purple/15 text-brand-purple ring-brand-purple/30",
                           )}
                         >
                           {headerTeaching ? "Teaching" : "Learning"}
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-muted-foreground truncate">
+                    <div className="truncate text-xs text-muted-foreground">
                       {activeSession
                         ? `${activeSession.skill_name ?? "Skill"} · ${activeSession.duration_minutes} min · ${statusLabel(activeSession.status)}`
                         : `${selectedThread.sessions.length} session${selectedThread.sessions.length === 1 ? "" : "s"} · no active session`}
@@ -1102,7 +1135,7 @@ function MessagesIndexPage() {
                             type="button"
                             onClick={() => void loadEarlierMessages()}
                             disabled={loadingEarlier}
-                            className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-60"
+                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-brand-purple disabled:opacity-60"
                           >
                             {loadingEarlier && <Loader2 className="h-3 w-3 animate-spin" />}
                             Load earlier messages
@@ -1119,14 +1152,14 @@ function MessagesIndexPage() {
                         return (
                           <Fragment key={msg.id}>
                             {showDivider && session && (
-                              <div className="flex items-center gap-3 py-2 select-none">
-                                <div className="h-px flex-1 bg-border/60" />
-                                <span className="shrink-0 text-[11px] uppercase tracking-wide font-semibold text-muted-foreground bg-background/60 border border-border/60 rounded-full px-3 py-1">
+                              <div className="flex select-none items-center gap-3 py-2">
+                                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+                                <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
                                   Session {sessionIdx ?? "?"} · {session.skill_name ?? "Skill"} ·{" "}
                                   {formatSessionDate(session.scheduled_at ?? session.created_at)} ·{" "}
                                   {statusLabel(session.status)}
                                 </span>
-                                <div className="h-px flex-1 bg-border/60" />
+                                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
                               </div>
                             )}
                             <MessageBubble
@@ -1174,7 +1207,7 @@ function MessagesIndexPage() {
                       }}
                       placeholder={`Message about ${activeSession.skill_name ?? "the session"}...`}
                       rows={1}
-                      className="min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-primary/40 bg-card px-4 py-2.5 text-sm leading-relaxed shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30"
                     />
                     <Button
                       variant="hero"
@@ -1193,24 +1226,40 @@ function MessagesIndexPage() {
                 ) : (
                   <div
                     data-mobile-message-composer
-                    className="sticky bottom-0 shrink-0 border-t border-border/60 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl text-center text-sm text-muted-foreground md:bg-background/40"
+                    className="sticky bottom-0 shrink-0 border-t border-white/10 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-muted-foreground backdrop-blur-xl md:bg-background/40"
                   >
-                    No active session — chat is read-only. Book another session with{" "}
-                    {selectedThread.otherName} to keep the conversation going.
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-medium text-amber-400">
+                      Read-only
+                    </span>
+                    <span className="ml-2">
+                      No active session. Book another session with{" "}
+                      <span className="font-medium text-foreground/80">
+                        {selectedThread.otherName}
+                      </span>{" "}
+                      to keep the conversation going.
+                    </span>
                   </div>
                 )}
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center p-10 text-center">
-                <div>
-                  <div className="mx-auto mb-4 h-20 w-20 rounded-3xl bg-brand-cyan/10 border border-brand-cyan/20 flex items-center justify-center">
-                    <MessageCircle className="h-10 w-10 text-brand-cyan" />
+              <div className="relative flex flex-1 items-center justify-center overflow-hidden p-10 text-center">
+                <div className="absolute inset-0 gradient-hero pointer-events-none" />
+                <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,rgba(167,139,250,0.18),transparent_60%)] pointer-events-none" />
+                <div className="relative">
+                  <div className="mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/15 ring-1 ring-brand-purple/25 shadow-glow">
+                    <MessageCircle className="h-9 w-9 text-brand-purple" />
                   </div>
-                  <h2 className="text-xl font-semibold">Select a conversation</h2>
-                  <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
+                  <h2 className="text-2xl font-bold tracking-tight">
+                    Select a <span className="gradient-brand-text">conversation</span>
+                  </h2>
+                  <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
                     Pick a chat from the inbox to keep your skill swaps moving. Conversations appear
                     here once a session request is accepted.
                   </p>
+                  <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground">
+                    <Sparkles className="h-3.5 w-3.5 text-brand-purple" />
+                    Tip: switch between Teaching and Learning above
+                  </div>
                 </div>
               </div>
             )}
