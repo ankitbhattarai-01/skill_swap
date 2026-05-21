@@ -492,7 +492,7 @@ function OnboardingPage() {
                 <div
                   key={i}
                   className={`h-1.5 flex-1 rounded-full transition-all ${
-                    i <= step ? "gradient-brand" : "bg-white/10"
+                    i <= step ? "gradient-brand" : "bg-foreground/10"
                   }`}
                 />
               ))}
@@ -512,7 +512,7 @@ function OnboardingPage() {
                     id="name"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    className="glass border-white/10 mt-1.5 h-11"
+                    className="glass border-border mt-1.5 h-11"
                   />
                 </div>
                 <div>
@@ -522,7 +522,7 @@ function OnboardingPage() {
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="What do you study? What are you passionate about?"
-                    className="glass border-white/10 mt-1.5 min-h-24"
+                    className="glass border-border mt-1.5 min-h-24"
                   />
                 </div>
               </div>
@@ -599,7 +599,7 @@ function OnboardingPage() {
               <div className="space-y-3">
                 <Label>Preferred learning mode</Label>
                 <Select value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
-                  <SelectTrigger className="glass border-white/10 h-11">
+                  <SelectTrigger className="glass border-border h-11">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -716,14 +716,14 @@ function SkillPicker({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-white/10 bg-background/45 p-3">
+      <div className="rounded-2xl border border-border bg-background/45 p-3">
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onAdd())}
             placeholder={placeholder}
-            className="glass h-11 border-white/10"
+            className="glass h-11 border-border"
           />
           <Button
             variant={input.trim() ? "hero" : "outline"}
@@ -736,23 +736,23 @@ function SkillPicker({
           </Button>
         </div>
 
-        <details className="mt-3 rounded-2xl border border-white/10 bg-background/35">
+        <details className="mt-3 rounded-2xl border border-border bg-background/35">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-foreground">
             Optional details
             <span className="text-xs font-normal text-muted-foreground">
               Focus, level, category, method
             </span>
           </summary>
-          <div className="grid gap-2 border-t border-white/10 p-3 sm:grid-cols-2">
+          <div className="grid gap-2 border-t border-border p-3 sm:grid-cols-2">
             <Input
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onAdd())}
               placeholder={focusPlaceholder}
-              className="glass h-11 border-white/10"
+              className="glass h-11 border-border"
             />
             <Select value={level} onValueChange={(v) => setLevel(v as SkillLevel)}>
-              <SelectTrigger className="glass h-11 border-white/10">
+              <SelectTrigger className="glass h-11 border-border">
                 <SelectValue
                   placeholder={kind === "teaching" ? "Level: Intermediate" : "Level: Basic"}
                 />
@@ -764,7 +764,7 @@ function SkillPicker({
               </SelectContent>
             </Select>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="glass h-11 border-white/10">
+              <SelectTrigger className="glass h-11 border-border">
                 <SelectValue placeholder="Category: Other" />
               </SelectTrigger>
               <SelectContent className="max-h-56 overflow-y-auto">
@@ -776,7 +776,7 @@ function SkillPicker({
               </SelectContent>
             </Select>
             <Select value={modeValue} onValueChange={(v) => setModeValue(v as LearningMode)}>
-              <SelectTrigger className="glass h-11 border-white/10">
+              <SelectTrigger className="glass h-11 border-border">
                 <SelectValue placeholder={modePlaceholder} />
               </SelectTrigger>
               <SelectContent className="max-h-56 overflow-y-auto">
@@ -798,7 +798,7 @@ function SkillPicker({
               key={s.id}
               type="button"
               onClick={() => setInput(s.name)}
-              className="rounded-full border border-white/10 bg-background/60 px-3 py-1 text-xs text-foreground hover:bg-white/10"
+              className="rounded-full border border-border bg-background/60 px-3 py-1 text-xs text-foreground hover:bg-foreground/10"
             >
               {s.name}
             </button>
@@ -833,7 +833,7 @@ function SkillPicker({
                   <Badge variant="outline" className={LEVEL_COLORS[e.level]}>
                     {formatSkillLevel(e.level)}
                   </Badge>
-                  <Badge variant="outline" className="bg-white/5">
+                  <Badge variant="outline" className="bg-foreground/5">
                     {formatLearningMode(e.mode)}
                   </Badge>
                 </div>
@@ -857,7 +857,7 @@ function SkillPicker({
                   setEntries(next);
                 }}
               >
-                <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
+                <SelectTrigger className="h-9 rounded-full border-border bg-background/70 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -874,7 +874,7 @@ function SkillPicker({
                   setEntries(next);
                 }}
               >
-                <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
+                <SelectTrigger className="h-9 rounded-full border-border bg-background/70 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="max-h-56 overflow-y-auto">
