@@ -881,7 +881,7 @@ function MessagesIndexPage() {
           {/* INBOX PANE */}
           <aside
             className={cn(
-              "w-full md:w-[360px] md:shrink-0 md:border-r border-white/10 flex-col bg-background/40",
+              "w-full md:w-[360px] md:shrink-0 md:border-r border-border/60 flex-col bg-muted/30 dark:bg-background/40",
               selectedUserId ? "hidden md:flex" : "flex",
             )}
           >
@@ -911,7 +911,7 @@ function MessagesIndexPage() {
                       "relative rounded-xl border px-3 py-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2",
                       active
                         ? activeClass
-                        : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground",
+                        : "bg-foreground/5 border-border text-muted-foreground hover:text-foreground",
                     )}
                   >
                     <span>{t.label}</span>
@@ -919,7 +919,7 @@ function MessagesIndexPage() {
                       <span
                         className={cn(
                           "min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
-                          active ? "bg-white/15" : "bg-brand-cyan/30 text-brand-cyan",
+                          active ? "bg-foreground/15" : "bg-brand-cyan/30 text-brand-cyan",
                         )}
                       >
                         {t.unread > 99 ? "99+" : t.unread}
@@ -937,7 +937,7 @@ function MessagesIndexPage() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search by name, skill, or message"
-                  className="pl-9 h-10 bg-white/5 border-white/10 rounded-full"
+                  className="pl-9 h-10 bg-foreground/5 border-border rounded-full"
                 />
               </div>
             </div>
@@ -952,7 +952,7 @@ function MessagesIndexPage() {
                     "rounded-full border px-3 py-1 text-xs transition-colors",
                     filter === f.key
                       ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
-                      : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground",
+                      : "bg-foreground/5 border-border text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {f.label}
@@ -983,7 +983,7 @@ function MessagesIndexPage() {
                       key={t.otherUserId}
                       onClick={() => selectThread(t.otherUserId)}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left border-b border-white/5",
+                        "w-full flex items-center gap-3 px-4 py-3 hover:bg-foreground/5 transition-colors text-left border-b border-border/40",
                         isSelected && "bg-brand-cyan/10",
                       )}
                     >
