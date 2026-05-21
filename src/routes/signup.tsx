@@ -128,12 +128,16 @@ function SignupPage() {
     navigate({ to: search.redirect });
   }, [authLoading, navigate, user, search.redirect]);
 
+  const callbackRedirectUrl = () => {
+    const callback = new URL("/auth/callback", window.location.origin);
+    callback.searchParams.set("next", "/onboarding");
+    return callback.toString();
+  };
+
   const handleGoogle = async () => {
     setGoogleLoading(true);
     try {
-      const { url, errorMessage } = await prepareGoogleOAuth(
-        `${window.location.origin}/onboarding`,
-      );
+      const { url, errorMessage } = await prepareGoogleOAuth(callbackRedirectUrl());
 
       if (errorMessage) {
         toast.error(
@@ -153,9 +157,7 @@ function SignupPage() {
   const handleGitHub = async () => {
     setGithubLoading(true);
     try {
-      const { url, errorMessage } = await prepareGitHubOAuth(
-        `${window.location.origin}/onboarding`,
-      );
+      const { url, errorMessage } = await prepareGitHubOAuth(callbackRedirectUrl());
 
       if (errorMessage) {
         toast.error(

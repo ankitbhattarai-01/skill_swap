@@ -121,12 +121,16 @@ function LoginPage() {
     setResendCooldown(45);
   };
 
+  const callbackRedirectUrl = () => {
+    const callback = new URL("/auth/callback", window.location.origin);
+    callback.searchParams.set("next", search.redirect);
+    return callback.toString();
+  };
+
   const handleGoogle = async () => {
     setGoogleLoading(true);
     try {
-      const { url, errorMessage } = await prepareGoogleOAuth(
-        `${window.location.origin}${search.redirect}`,
-      );
+      const { url, errorMessage } = await prepareGoogleOAuth(callbackRedirectUrl());
 
       if (errorMessage) {
         toast.error(
@@ -146,9 +150,7 @@ function LoginPage() {
   const handleGitHub = async () => {
     setGithubLoading(true);
     try {
-      const { url, errorMessage } = await prepareGitHubOAuth(
-        `${window.location.origin}${search.redirect}`,
-      );
+      const { url, errorMessage } = await prepareGitHubOAuth(callbackRedirectUrl());
 
       if (errorMessage) {
         toast.error(

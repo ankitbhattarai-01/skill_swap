@@ -29,6 +29,7 @@ import { Route as VideoSessionIdRouteImport } from './routes/video.$sessionId'
 import { Route as UsersUserIdRouteImport } from './routes/users.$userId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as MessagesSessionIdRouteImport } from './routes/messages.$sessionId'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminSkillsRouteImport } from './routes/admin.skills'
 import { Route as AdminSessionsRouteImport } from './routes/admin.sessions'
@@ -135,6 +136,11 @@ const MessagesSessionIdRoute = MessagesSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => MessagesRoute,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -182,6 +188,7 @@ export interface FileRoutesByFullPath {
   '/admin/sessions': typeof AdminSessionsRoute
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -208,6 +215,7 @@ export interface FileRoutesByTo {
   '/admin/sessions': typeof AdminSessionsRoute
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -236,6 +244,7 @@ export interface FileRoutesById {
   '/admin/sessions': typeof AdminSessionsRoute
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -265,6 +274,7 @@ export interface FileRouteTypes {
     | '/admin/sessions'
     | '/admin/skills'
     | '/admin/users'
+    | '/auth/callback'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -291,6 +301,7 @@ export interface FileRouteTypes {
     | '/admin/sessions'
     | '/admin/skills'
     | '/admin/users'
+    | '/auth/callback'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -318,6 +329,7 @@ export interface FileRouteTypes {
     | '/admin/sessions'
     | '/admin/skills'
     | '/admin/users'
+    | '/auth/callback'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -341,6 +353,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
   TracksRoute: typeof TracksRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
   VideoSessionIdRoute: typeof VideoSessionIdRoute
@@ -488,6 +501,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MessagesSessionIdRouteImport
       parentRoute: typeof MessagesRoute
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/users': {
       id: '/admin/users'
       path: '/users'
@@ -574,6 +594,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
   TracksRoute: TracksRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
   VideoSessionIdRoute: VideoSessionIdRoute,
