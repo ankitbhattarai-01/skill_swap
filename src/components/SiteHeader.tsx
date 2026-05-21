@@ -14,6 +14,7 @@ import { signSingleAvatarUrl } from "@/lib/avatars";
 import { PROFILE_UPDATED_EVENT } from "@/lib/profile-events";
 import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import { NotificationsMenu } from "./NotificationsMenu";
+import { StrikeIndicator } from "./StrikeIndicator";
 import { ThemeToggle } from "./ThemeToggle";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -261,6 +262,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
               )}
             </Link>
           )}
+          {user && <StrikeIndicator />}
           <ThemeToggle />
           {user && <NotificationsMenu />}
           {user ? (
@@ -331,6 +333,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
                 )}
               </Link>
             )}
+            {user && <StrikeIndicator />}
             <ThemeToggle />
             {user && <NotificationsMenu />}
             {user && (

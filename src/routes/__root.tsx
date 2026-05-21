@@ -160,7 +160,7 @@ function RootComponent() {
                 <Outlet />
               </div>
             ) : (
-              <div className="flex min-h-screen w-full flex-col">
+              <div className="flex min-h-screen w-full flex-col md:[zoom:1.1]">
                 <SiteHeader sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebar} />
                 <div
                   className="min-h-screen pt-[calc(118px+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 md:pt-16 md:[padding-left:var(--sidebar-width)]"

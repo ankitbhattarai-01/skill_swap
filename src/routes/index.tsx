@@ -218,26 +218,26 @@ function Hero({ stats, loading }: { stats: LandingStats | null; loading: boolean
       <ShaderBackground className="pointer-events-none absolute inset-0 -z-10 h-full w-full" />
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(124,58,237,0.07),rgba(20,184,166,0.05)_48%,rgba(255,255,255,0)_82%)]" />
 
-      <div className="mx-auto grid min-h-[640px] max-w-7xl items-center gap-x-16 gap-y-12 px-6 pb-14 pt-10 lg:grid-cols-[1.05fr_0.95fr] lg:pb-20 lg:pt-12">
+      <div className="mx-auto grid max-w-7xl items-center gap-x-10 gap-y-10 px-4 pb-12 pt-8 sm:gap-y-12 sm:px-6 sm:pb-14 sm:pt-10 lg:min-h-[640px] lg:grid-cols-[1.05fr_0.95fr] lg:gap-x-12 lg:pb-20 lg:pt-12 xl:gap-x-16">
         <div className="max-w-3xl">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1.5 text-sm font-medium text-muted-foreground shadow-sm">
-            <Sparkles className="h-4 w-4 text-brand-cyan" />
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm sm:mb-6 sm:text-sm">
+            <Sparkles className="h-3.5 w-3.5 text-brand-cyan sm:h-4 sm:w-4" />
             Student skill exchange powered by credits
           </div>
 
-          <h1 className="text-4xl font-black leading-[1.04] tracking-normal text-foreground sm:text-6xl lg:text-7xl">
+          <h1 className="text-[2.25rem] font-black leading-[1.05] tracking-normal text-foreground sm:text-5xl md:text-6xl lg:text-7xl">
             Learn what you need.
             <span className="block gradient-brand-text">Teach what you know.</span>
           </h1>
 
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground sm:text-xl">
+          <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:mt-6 sm:text-lg sm:leading-8 md:text-xl">
             Skills you need, taught by peers who just nailed them.{" "}
             <span className="font-semibold text-foreground">Two dollars a month.</span>{" "}
             Credits cover every session.
           </p>
 
-          <div className="mt-8">
-            <Button variant="hero" size="xl" asChild>
+          <div className="mt-7 sm:mt-8">
+            <Button variant="hero" size="xl" className="w-full sm:w-auto" asChild>
               <Link to="/signup" search={{ redirect: "/onboarding" }}>
                 Start swapping
                 <ArrowRight className="h-4 w-4" />
@@ -245,7 +245,7 @@ function Hero({ stats, loading }: { stats: LandingStats | null; loading: boolean
             </Button>
           </div>
 
-          <div className="mt-7 grid gap-3 text-sm text-muted-foreground sm:grid-cols-3 sm:max-w-md">
+          <div className="mt-6 grid gap-2.5 text-sm text-muted-foreground sm:mt-7 sm:max-w-md sm:grid-cols-3 sm:gap-3">
             <ProofPoint icon={Coins} label="Just $2 a month" />
             <ProofPoint icon={Sparkles} label="10 starter credits" />
             <ProofPoint icon={Video} label="Built-in video" />
@@ -350,7 +350,7 @@ function HeroCard({
             className={`pointer-events-none absolute -top-24 right-0 h-48 w-48 rounded-full bg-gradient-to-br ${accent.glow} to-transparent opacity-60 blur-3xl transition-colors duration-700`}
           />
 
-          <div className="relative flex items-center justify-between px-7 pt-6">
+          <div className="relative flex items-center justify-between px-5 pt-5 sm:px-7 sm:pt-6">
             <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               SkillSwap today
             </div>
@@ -380,10 +380,10 @@ function HeroCard({
 
           <div
             aria-hidden
-            className="relative mx-7 h-px bg-gradient-to-r from-border via-border to-transparent"
+            className="relative mx-5 h-px bg-gradient-to-r from-border via-border to-transparent sm:mx-7"
           />
 
-          <div className="relative grid grid-cols-2 gap-x-6 px-7 py-5">
+          <div className="relative grid grid-cols-2 gap-x-5 px-5 py-4 sm:gap-x-6 sm:px-7 sm:py-5">
             <Stat
               label={peerCount === 1 ? "Student" : "Students"}
               value={loading ? "—" : peerCount.toLocaleString()}
@@ -395,7 +395,7 @@ function HeroCard({
           </div>
 
           {trending.length > 0 && (
-            <div className="relative flex items-center gap-2 border-t border-border/70 bg-secondary/30 px-7 py-3">
+            <div className="relative flex flex-wrap items-center gap-2 border-t border-border/70 bg-secondary/30 px-5 py-3 sm:px-7">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                 Also live
               </span>
@@ -451,22 +451,22 @@ function FeaturedSkill({
 }) {
   const initial = name.trim().charAt(0).toUpperCase();
   return (
-    <div className="relative px-7 pb-7 pt-6">
+    <div className="relative px-5 pb-6 pt-5 sm:px-7 sm:pb-7 sm:pt-6">
       <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
         Featured skill
       </div>
 
       <div
         key={name}
-        className="mt-3 flex items-center gap-4 animate-[fadeUp_400ms_ease-out]"
+        className="mt-3 flex items-center gap-3 sm:gap-4 animate-[fadeUp_400ms_ease-out]"
       >
         <div
-          className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl font-black tracking-tight ${accent.chip}`}
+          className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl font-black tracking-tight sm:h-16 sm:w-16 sm:text-3xl ${accent.chip}`}
         >
           {initial}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-3xl font-black leading-tight tracking-tight">
+          <div className="truncate text-2xl font-black leading-tight tracking-tight sm:text-3xl">
             {name}
           </div>
           <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
@@ -498,16 +498,16 @@ function FeaturedSkill({
 
 function FeaturedEmpty() {
   return (
-    <div className="relative px-7 pb-7 pt-6">
+    <div className="relative px-5 pb-6 pt-5 sm:px-7 sm:pb-7 sm:pt-6">
       <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
         Featured skill
       </div>
-      <div className="mt-3 flex items-center gap-4">
-        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-dashed border-border bg-secondary/50 text-2xl font-black text-muted-foreground">
+      <div className="mt-3 flex items-center gap-3 sm:gap-4">
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-dashed border-border bg-secondary/50 text-2xl font-black text-muted-foreground sm:h-16 sm:w-16">
           +
         </div>
         <div className="min-w-0">
-          <div className="text-xl font-black leading-tight tracking-tight">
+          <div className="text-lg font-black leading-tight tracking-tight sm:text-xl">
             Yours could be first.
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
@@ -521,10 +521,10 @@ function FeaturedEmpty() {
 
 function FeaturedSkeleton() {
   return (
-    <div className="px-7 pb-7 pt-6">
+    <div className="px-5 pb-6 pt-5 sm:px-7 sm:pb-7 sm:pt-6">
       <div className="h-2.5 w-24 rounded-full bg-secondary/70" />
-      <div className="mt-4 flex items-center gap-4">
-        <div className="h-16 w-16 animate-pulse rounded-2xl bg-secondary/70" />
+      <div className="mt-4 flex items-center gap-3 sm:gap-4">
+        <div className="h-14 w-14 animate-pulse rounded-2xl bg-secondary/70 sm:h-16 sm:w-16" />
         <div className="flex-1 space-y-2">
           <div className="h-6 w-2/3 animate-pulse rounded-md bg-secondary/70" />
           <div className="h-3 w-24 animate-pulse rounded-full bg-secondary/60" />
@@ -540,7 +540,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-2xl font-black tracking-tight">{value}</div>
+      <div className="mt-1 text-xl font-black tracking-tight sm:text-2xl">{value}</div>
     </div>
   );
 }
@@ -550,22 +550,22 @@ function HowItWorks() {
     <section id="how" className="relative overflow-hidden border-t border-border/60">
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(50%_40%_at_50%_0%,rgba(124,58,237,0.06),transparent_70%)]" />
 
-      <div className="mx-auto max-w-7xl px-6 py-28 lg:py-36">
+      <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:py-32">
         <div className="mx-auto max-w-2xl text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan backdrop-blur">
             <Sparkles className="h-3.5 w-3.5" />
             How it works
           </div>
-          <h2 className="mt-6 text-4xl font-black tracking-tight sm:text-5xl">
+          <h2 className="mt-5 text-3xl font-black tracking-tight sm:mt-6 sm:text-4xl md:text-5xl">
             Three steps. <span className="gradient-brand-text">That's it.</span>
           </h2>
-          <p className="mx-auto mt-5 max-w-xl text-lg leading-8 text-muted-foreground">
+          <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted-foreground sm:mt-5 sm:text-lg sm:leading-8">
             One flat $2/month platform fee — after that, exchange skills with
             any peer, any time.
           </p>
         </div>
 
-        <div className="relative mt-20 grid gap-6 md:grid-cols-3 md:gap-5 lg:gap-6">
+        <div className="relative mt-12 grid gap-5 sm:mt-16 md:mt-20 md:grid-cols-3 md:gap-5 lg:gap-6">
           <div
             aria-hidden
             className="pointer-events-none absolute left-0 right-0 top-[88px] -z-10 hidden h-px md:block"
@@ -603,7 +603,7 @@ function StepCard({
         </div>
       )}
 
-      <div className="relative h-full overflow-hidden rounded-3xl border border-border bg-card/70 p-7 shadow-card backdrop-blur transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/40 group-hover:shadow-glow">
+      <div className="relative h-full overflow-hidden rounded-3xl border border-border bg-card/70 p-6 shadow-card backdrop-blur transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/40 group-hover:shadow-glow sm:p-7">
         <span
           aria-hidden
           className="pointer-events-none absolute -right-2 -top-2 select-none text-[7rem] font-black leading-none tracking-tighter gradient-brand-text opacity-10 transition-opacity duration-300 group-hover:opacity-20"
@@ -612,22 +612,22 @@ function StepCard({
         </span>
 
         <div className="relative flex items-center justify-between">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl gradient-brand text-white shadow-glow">
-            <Icon className="h-6 w-6" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl gradient-brand text-white shadow-glow sm:h-14 sm:w-14">
+            <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
           <span className="text-xs font-bold tracking-[0.18em] text-muted-foreground">
             STEP {step.n}
           </span>
         </div>
 
-        <h3 className="relative mt-7 text-2xl font-black tracking-tight">
+        <h3 className="relative mt-6 text-xl font-black tracking-tight sm:mt-7 sm:text-2xl">
           {step.title}
         </h3>
-        <p className="relative mt-3 text-base leading-7 text-muted-foreground">
+        <p className="relative mt-2 text-sm leading-6 text-muted-foreground sm:mt-3 sm:text-base sm:leading-7">
           {step.desc}
         </p>
 
-        <div className="relative mt-6 inline-flex items-center gap-2 rounded-full border border-border bg-background/70 px-3 py-1 text-xs font-semibold text-foreground/80">
+        <div className="relative mt-5 inline-flex items-center gap-2 rounded-full border border-border bg-background/70 px-3 py-1 text-xs font-semibold text-foreground/80 sm:mt-6">
           <span className="h-1.5 w-1.5 rounded-full bg-brand-cyan" />
           {step.hint}
         </div>
@@ -655,7 +655,7 @@ function Momentum({
 
   return (
     <section className="border-t border-border/60 bg-secondary/25">
-      <div className="mx-auto max-w-7xl px-6 py-24">
+      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:py-24">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
@@ -665,19 +665,19 @@ function Momentum({
               </span>
               Live on SkillSwap
             </div>
-            <h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">
+            <h2 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl md:text-4xl">
               {hasSkills
                 ? "What peers are teaching right now"
                 : "Be the first to teach"}
             </h2>
           </div>
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="outline" size="sm" className="self-start sm:self-auto" asChild>
             <Link to="/skills">See all skills</Link>
           </Button>
         </div>
 
         {loading ? (
-          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-8 grid gap-4 sm:mt-10 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
                 key={i}
@@ -686,7 +686,7 @@ function Momentum({
             ))}
           </div>
         ) : hasSkills ? (
-          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-8 grid gap-4 sm:mt-10 sm:grid-cols-2 lg:grid-cols-3">
             {top.map((item, i) => {
               const accent = skillAccents[i % skillAccents.length];
               const initial = item.name.trim().charAt(0).toUpperCase();
@@ -741,7 +741,7 @@ function Momentum({
             ))}
           </div>
         ) : (
-          <div className="mt-10 rounded-3xl border border-dashed border-border bg-card/40 px-8 py-12 text-center">
+          <div className="mt-8 rounded-3xl border border-dashed border-border bg-card/40 px-6 py-10 text-center sm:mt-10 sm:px-8 sm:py-12">
             <p className="text-base text-muted-foreground">
               No skills listed yet. Sign up and add the first one — every peer
               who joins makes the platform more useful.
@@ -778,21 +778,21 @@ function PrivacyBand() {
         }}
       />
 
-      <div className="relative mx-auto max-w-7xl px-6 py-20 lg:py-24">
-        <div className="grid gap-14 lg:grid-cols-[1.1fr_0.95fr] lg:gap-16">
+      <div className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:py-24">
+        <div className="grid gap-10 sm:gap-14 lg:grid-cols-[1.1fr_0.95fr] lg:gap-16">
           <div className="lg:sticky lg:top-28 lg:self-start">
             <div className="inline-flex items-center gap-2 rounded-full border border-foreground/15 bg-foreground/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-brand-cyan backdrop-blur">
               <LockKeyhole className="h-3.5 w-3.5" />
               Private by default
             </div>
 
-            <h2 className="mt-7 text-[2.75rem] font-black leading-[1.02] tracking-tight sm:text-[3.6rem]">
+            <h2 className="mt-6 text-[2rem] font-black leading-[1.04] tracking-tight sm:mt-7 sm:text-[2.75rem] sm:leading-[1.02] lg:text-[3.6rem]">
               Your learning.
               <span className="block">Your room.</span>
               <span className="block gradient-brand-text pb-1">Your data.</span>
             </h2>
 
-            <p className="mt-6 max-w-md text-lg leading-8 text-muted-foreground">
+            <p className="mt-5 max-w-md text-base leading-7 text-muted-foreground sm:mt-6 sm:text-lg sm:leading-8">
               Three promises we don't bend on.
             </p>
 
@@ -887,22 +887,22 @@ function PrivacyBand() {
 function FinalCTA() {
   return (
     <section className="border-t border-border/60">
-      <div className="mx-auto max-w-4xl px-6 py-24 text-center sm:py-28">
-        <h2 className="text-4xl font-black leading-[1.1] tracking-tight sm:text-6xl">
+      <div className="mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-24 lg:py-28">
+        <h2 className="text-3xl font-black leading-[1.1] tracking-tight sm:text-5xl md:text-6xl">
           Your next skill is one
           <span className="block gradient-brand-text pb-2">message away.</span>
         </h2>
-        <p className="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">
+        <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground sm:mt-5 sm:text-lg">
           Start with your student email. Get 10 starter credits.
         </p>
-        <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button variant="hero" size="xl" asChild>
+        <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:mt-10 sm:flex-row sm:items-center">
+          <Button variant="hero" size="xl" className="w-full sm:w-auto" asChild>
             <Link to="/signup" search={{ redirect: "/onboarding" }}>
               Start swapping
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <Button variant="outline" size="xl" asChild>
+          <Button variant="outline" size="xl" className="w-full sm:w-auto" asChild>
             <Link to="/skills">Browse skills first</Link>
           </Button>
         </div>
@@ -914,8 +914,8 @@ function FinalCTA() {
 function LandingNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
-        <Link to="/" className="flex items-center">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-4 sm:px-6">
+        <Link to="/" className="flex shrink-0 items-center">
           <Logo size="sm" />
         </Link>
 
@@ -934,16 +934,16 @@ function LandingNav() {
           </Link>
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <ThemeToggle />
-          <Button variant="ghost" size="sm" asChild>
+          <Button variant="ghost" size="sm" className="px-2 sm:px-3" asChild>
             <Link to="/login" search={{ redirect: "/dashboard" }}>
               Log in
             </Link>
           </Button>
           <Button variant="hero" size="sm" asChild>
             <Link to="/signup" search={{ redirect: "/onboarding" }}>
-              <MessageCircle className="h-4 w-4" />
+              <MessageCircle className="h-4 w-4 hidden sm:inline-block" />
               Sign up
             </Link>
           </Button>
