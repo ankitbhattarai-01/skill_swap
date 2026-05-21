@@ -1,5 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { memo, useCallback, useEffect, useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { signAvatarUrls } from "@/lib/avatars";
 import {
   Search,
@@ -30,6 +37,9 @@ import {
   UserRound,
   Compass,
   Sparkles,
+  SlidersHorizontal,
+  X,
+  MoreHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureEnabled } from "@/lib/feature-flags";
@@ -154,7 +164,6 @@ type ExploreSkillCardProps = {
   matchesUser: boolean;
   openSession: OpenSessionInfo | undefined;
   rating: TeacherRating | undefined;
-  hasTimeMatch: boolean;
   messageBusy: boolean;
   requestBusy: boolean;
   onOpenChat: (row: TeachingSkillRow) => void;
@@ -169,128 +178,126 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
   matchesUser,
   openSession,
   rating,
-  hasTimeMatch,
   messageBusy,
   requestBusy,
   onOpenChat,
   onRequestSession,
 }: ExploreSkillCardProps) {
+  const [reportOpen, setReportOpen] = useState(false);
   const hasOpenSession = Boolean(openSession);
-  const sessionStateLabel = openSession
-    ? openSession.status === "pending"
-      ? "Pending request"
-      : "Session active"
-    : null;
+  const isSessionActive = openSession && openSession.status !== "pending";
   return (
-    <article className="glass glow-border rounded-2xl p-6 group hover:translate-y-[-2px] transition-all">
+    <article className="group glass rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            to="/users/$userId"
-            params={{ userId: r.user_id }}
-            className="rounded-full shadow-glow-blue hover:scale-105 transition-transform"
-          >
-            <UserAvatar
-              name={r.profiles?.full_name}
-              url={r.profiles?.avatar_url}
-              className="h-11 w-11"
-            />
-          </Link>
-          <div>
-            <Link
-              to="/users/$userId"
-              params={{ userId: r.user_id }}
-              className="font-semibold hover:text-brand-cyan transition-colors"
-            >
-              {r.profiles?.full_name ?? "Student"}
-            </Link>
-            <div className="text-xs text-muted-foreground">{r.skills?.category ?? "Skill"}</div>
+        <Link
+          to="/users/$userId"
+          params={{ userId: r.user_id }}
+          preload="intent"
+          className="flex min-w-0 items-center gap-3 -m-1 rounded-xl p-1 transition-colors hover:bg-white/5"
+        >
+          <UserAvatar
+            name={r.profiles?.full_name}
+            url={r.profiles?.avatar_url}
+            className="h-11 w-11 ring-2 ring-white/10 transition-all group-hover:ring-brand-cyan/30"
+          />
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{r.profiles?.full_name ?? "Student"}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {r.skills?.category ?? "Skill"}
+            </div>
           </div>
+        </Link>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge variant="outline" className={LEVEL_COLORS[r.level] + " capitalize"}>
+            {r.level}
+          </Badge>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="More actions"
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="rounded-xl">
+              <DropdownMenuItem asChild>
+                <Link to="/users/$userId" params={{ userId: r.user_id }} preload="intent">
+                  <UserRound className="h-4 w-4" />
+                  View profile
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setReportOpen(true)}>
+                <X className="h-4 w-4" />
+                Report
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ReportDialog
+            reportedUserId={r.user_id}
+            open={reportOpen}
+            onOpenChange={setReportOpen}
+          />
         </div>
-        <Badge variant="outline" className={LEVEL_COLORS[r.level] + " capitalize"}>
-          {r.level}
-        </Badge>
       </div>
 
-      <h3 className="mt-4 text-lg font-semibold">
+      <h3 className="mt-4 text-lg font-semibold leading-tight">
         Teaches <span className="gradient-brand-text">{r.skills?.name}</span>
       </h3>
       {r.profiles?.bio && (
-        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{r.profiles.bio}</p>
+        <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{r.profiles.bio}</p>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {currentUserId &&
-          (matchesUser ? (
-            <Badge
-              variant="outline"
-              className="bg-brand-cyan/15 text-brand-cyan border-brand-cyan/30 text-[10px] uppercase tracking-wide"
-            >
-              Matches your interests
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="bg-red-500/10 text-red-400 border-red-500/30 text-[10px] uppercase tracking-wide"
-            >
-              Not in your interests
-            </Badge>
-          ))}
-        {sessionStateLabel && (
-          <Badge
-            variant="outline"
+      {/* Single status line — session state wins over match indicator. */}
+      {hasOpenSession ? (
+        <div className="mt-3">
+          <span
             className={
-              openSession?.status === "pending"
-                ? "bg-amber-500/15 text-amber-500 border-amber-500/30 text-[10px] uppercase tracking-wide"
-                : "bg-emerald-500/15 text-emerald-500 border-emerald-500/30 text-[10px] uppercase tracking-wide"
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium " +
+              (openSession?.status === "pending"
+                ? "bg-amber-500/15 text-amber-400"
+                : "bg-emerald-500/15 text-emerald-400")
             }
           >
-            {sessionStateLabel}
-          </Badge>
-        )}
-      </div>
+            <span
+              className={
+                "h-1.5 w-1.5 rounded-full " +
+                (openSession?.status === "pending" ? "bg-amber-400" : "bg-emerald-400")
+              }
+            />
+            {openSession?.status === "pending" ? "Pending request" : "Session active"}
+          </span>
+        </div>
+      ) : currentUserId && matchesUser ? (
+        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-cyan">
+          <Sparkles className="h-3 w-3" />
+          Matches your interests
+        </div>
+      ) : null}
 
-      <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{r.credits_per_hour} credits / hour</span>
+      <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground/80">
+          {r.credits_per_hour}{" "}
+          <span className="font-normal text-muted-foreground">credits / hr</span>
+        </span>
         <TeacherRatingBadge rating={rating} />
       </div>
 
-      {currentUserId && (
-        <div className="mt-2">
-          {hasTimeMatch ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-300">
-              <Sparkles className="h-3 w-3" />
-              Free this week
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-muted-foreground">
-              No free times posted
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/users/$userId" preload="intent" params={{ userId: r.user_id }}>
-            <UserRound className="h-4 w-4" />
-            Profile
-          </Link>
-        </Button>
-        <ReportDialog reportedUserId={r.user_id} label="Report" />
-        {openSession && openSession.status !== "pending" ? (
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/messages" preload="intent" search={{ s: openSession.sessionId }}>
+      <div className="mt-4 flex gap-2">
+        {isSessionActive ? (
+          <Button variant="outline" size="icon" aria-label="Open chat" asChild>
+            <Link to="/messages" preload="intent" search={{ s: openSession!.sessionId }}>
               <MessageCircle className="h-4 w-4" />
-              Open Chat
             </Link>
           </Button>
         ) : (
           <Button
             variant="outline"
-            size="sm"
+            size="icon"
+            aria-label="Message"
             disabled={messageBusy || hasOpenSession}
-            title={hasOpenSession ? "Chat opens after the teacher accepts" : undefined}
+            title={hasOpenSession ? "Chat opens after the teacher accepts" : "Message"}
             onClick={() => onOpenChat(r)}
           >
             {messageBusy ? (
@@ -298,24 +305,24 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             ) : (
               <MessageCircle className="h-4 w-4" />
             )}
-            Message
           </Button>
         )}
         {openSession ? (
-          <Button variant="hero" size="sm" asChild>
+          <Button variant="hero" size="sm" className="flex-1" asChild>
             <Link
               to="/sessions/$sessionId"
               preload="intent"
               params={{ sessionId: openSession.sessionId }}
             >
               <Calendar className="h-4 w-4" />
-              View Session
+              View session
             </Link>
           </Button>
         ) : (
           <Button
             variant="hero"
             size="sm"
+            className="flex-1"
             disabled={requestBusy}
             onClick={() => onRequestSession(r)}
           >
@@ -324,7 +331,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             ) : (
               <Calendar className="h-4 w-4" />
             )}
-            Request
+            Request session
           </Button>
         )}
       </div>
@@ -349,58 +356,64 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
 }: ExploreLearnerCardProps) {
   const isSelf = currentUserId === r.user_id;
   return (
-    <article className="glass rounded-2xl p-5 flex flex-col gap-4 transition-transform hover:-translate-y-0.5">
-      <Link
-        to="/users/$userId"
-        params={{ userId: r.user_id }}
-        preload="intent"
-        className="flex items-center gap-3 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
-      >
-        <UserAvatar
-          name={r.profiles?.full_name}
-          url={r.profiles?.avatar_url}
-          className="h-11 w-11"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="font-semibold truncate">{r.profiles?.full_name ?? "Student"}</div>
-          <div className="text-xs text-muted-foreground truncate">
-            Wants {r.skills?.name ?? "a skill"} ·{" "}
-            <span className="capitalize">{r.current_level}</span>
+    <article className="group glass flex flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
+      <div className="flex items-start justify-between gap-3">
+        <Link
+          to="/users/$userId"
+          params={{ userId: r.user_id }}
+          preload="intent"
+          className="flex min-w-0 items-center gap-3 -m-1 rounded-xl p-1 transition-colors hover:bg-white/5"
+        >
+          <UserAvatar
+            name={r.profiles?.full_name}
+            url={r.profiles?.avatar_url}
+            className="h-11 w-11 ring-2 ring-white/10 transition-all group-hover:ring-brand-cyan/30"
+          />
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{r.profiles?.full_name ?? "Student"}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {r.skills?.category ?? "Skill"}
+            </div>
           </div>
-        </div>
-      </Link>
-      {r.profiles?.bio && (
-        <p className="text-xs text-muted-foreground line-clamp-2">{r.profiles.bio}</p>
-      )}
-      <div className="flex flex-wrap gap-1.5">
-        {r.skills?.category && (
-          <Badge variant="outline" className="bg-white/5 border-white/10 text-[11px]">
-            {r.skills.category}
-          </Badge>
-        )}
-        {matchesUser && (
-          <Badge
-            variant="outline"
-            className="border-emerald-500/40 bg-emerald-500/15 text-emerald-400 text-[11px]"
-          >
-            <Sparkles className="h-3 w-3 mr-1" /> You teach this
-          </Badge>
-        )}
+        </Link>
+        <Badge
+          variant="outline"
+          className={LEVEL_COLORS[r.current_level] + " capitalize shrink-0"}
+        >
+          {r.current_level}
+        </Badge>
       </div>
-      <Button
-        variant="hero"
-        size="sm"
-        className="w-full mt-auto"
-        onClick={() => onOffer(r)}
-        disabled={busy || isSelf}
-      >
-        {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <MessageCircle className="h-4 w-4" />
-        )}
-        Offer help
-      </Button>
+
+      <h3 className="mt-4 text-lg font-semibold leading-tight">
+        Wants <span className="gradient-brand-text">{r.skills?.name ?? "a skill"}</span>
+      </h3>
+      {r.profiles?.bio && (
+        <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{r.profiles.bio}</p>
+      )}
+
+      {matchesUser && (
+        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400">
+          <Sparkles className="h-3 w-3" />
+          You teach this
+        </div>
+      )}
+
+      <div className="mt-auto pt-4">
+        <Button
+          variant="hero"
+          size="sm"
+          className="w-full"
+          onClick={() => onOffer(r)}
+          disabled={busy || isSelf}
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <MessageCircle className="h-4 w-4" />
+          )}
+          Offer help
+        </Button>
+      </div>
     </article>
   );
 });
@@ -956,151 +969,272 @@ function ExplorePage() {
     );
   }
 
+  const availabilityFilterAvailable = Boolean(user) && intersections.size > 0;
+  const activeFilterCount =
+    (categoryFilter !== "All" ? 1 : 0) +
+    (levelFilter !== "all" ? 1 : 0) +
+    (onlyAvailable && availabilityFilterAvailable ? 1 : 0);
+  const hasActiveFilters = activeFilterCount > 0;
+  const clearAllFilters = () => {
+    void navigate({
+      to: "/explore",
+      search: { q: search.q, mode: search.mode, sort: search.sort },
+      replace: true,
+    });
+  };
+  const activeLevelLabel = LEVELS.find((l) => l.key === levelFilter)?.label ?? "All levels";
+
   return (
     <div className="min-h-screen flex flex-col">
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 gradient-hero opacity-60 pointer-events-none" />
-        <div className="relative mx-auto max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <h1 className="text-4xl md:text-5xl font-bold">
-                Explore <span className="gradient-brand-text">Skills</span>
-              </h1>
-              <p className="text-muted-foreground mt-2 max-w-xl">
-                {mode === "teachers"
-                  ? "Browse what students are teaching. Message them and book a session."
-                  : "Browse students looking to learn. Offer help in a skill you teach."}
-              </p>
+      <section className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 md:pt-8">
+        <div className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong shadow-glow border border-white/10">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="relative flex flex-col gap-6 p-6 md:p-8">
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+              <div>
+                <h1 className="text-4xl md:text-5xl font-bold">
+                  Explore <span className="gradient-brand-text">Skills</span>
+                </h1>
+                <p className="text-muted-foreground mt-2 max-w-xl">
+                  {mode === "teachers"
+                    ? "Browse what students are teaching. Message them and book a session."
+                    : "Browse students looking to learn. Offer help in a skill you teach."}
+                </p>
+              </div>
+              <div className="relative w-full md:max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search skills, people, categories…"
+                  className="pl-9 h-11 glass border-white/10"
+                />
+              </div>
             </div>
-            <div className="relative w-full md:max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search skills, people, categories…"
-                className="pl-9 h-11 glass border-white/10"
-              />
-            </div>
-          </div>
 
-          {/* Mode toggle — Teachers vs Learners. URL-backed via ?mode=learners. */}
-          <div
-            role="tablist"
-            aria-label="Explore mode"
-            className="mt-5 inline-flex rounded-full border border-border/40 bg-card/60 p-1 backdrop-blur"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "teachers"}
-              onClick={() => setMode("teachers")}
-              className={
-                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
-                (mode === "teachers"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground")
-              }
-            >
-              Find a teacher
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "learners"}
-              onClick={() => setMode("learners")}
-              className={
-                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
-                (mode === "learners"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground")
-              }
-            >
-              Find a learner
-            </button>
+            {/* Mode toggle + control bar share one row on desktop. */}
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div
+                role="tablist"
+                aria-label="Explore mode"
+                className="inline-flex rounded-full border border-border/40 bg-card/60 p-1 backdrop-blur self-start"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "teachers"}
+                  onClick={() => setMode("teachers")}
+                  className={
+                    "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
+                    (mode === "teachers"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  Find a teacher
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "learners"}
+                  onClick={() => setMode("learners")}
+                  className={
+                    "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
+                    (mode === "learners"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  Find a learner
+                </button>
+              </div>
+
+              {!loading && (
+                <div className="flex items-center gap-2 self-start md:self-auto">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className={
+                          "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors " +
+                          (hasActiveFilters
+                            ? "border-brand-purple/40 bg-brand-purple/15 text-brand-purple hover:bg-brand-purple/20"
+                            : "border-white/10 bg-white/5 text-foreground hover:bg-white/10")
+                        }
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                        Filters
+                        {hasActiveFilters && (
+                          <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-purple/30 px-1.5 text-[11px] font-semibold text-brand-purple">
+                            {activeFilterCount}
+                          </span>
+                        )}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      sideOffset={8}
+                      className="w-80 rounded-2xl border-white/10 bg-popover/95 p-0 backdrop-blur-xl shadow-glow"
+                    >
+                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                        <p className="text-sm font-semibold">Filters</p>
+                        <button
+                          type="button"
+                          onClick={clearAllFilters}
+                          disabled={!hasActiveFilters}
+                          className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                      <div className="max-h-[60vh] overflow-y-auto p-4 space-y-5">
+                        {categories.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Category
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {["All", ...categories].map((cat) => (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  onClick={() => setCategoryFilter(cat)}
+                                  className={
+                                    "rounded-full border px-3 py-1 text-xs transition-colors " +
+                                    (categoryFilter === cat
+                                      ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
+                                      : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground")
+                                  }
+                                >
+                                  {cat}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            Skill level
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {LEVELS.map((option) => (
+                              <button
+                                key={option.key}
+                                type="button"
+                                onClick={() => setLevelFilter(option.key)}
+                                className={
+                                  "rounded-full border px-3 py-1 text-xs transition-colors " +
+                                  (levelFilter === option.key
+                                    ? "bg-brand-purple/20 border-brand-purple/40 text-brand-purple"
+                                    : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground")
+                                }
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {availabilityFilterAvailable && (
+                          <div>
+                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Availability
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setOnlyAvailable((v) => !v)}
+                              aria-pressed={onlyAvailable}
+                              className={
+                                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors " +
+                                (onlyAvailable
+                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                  : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground")
+                              }
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              Only with free times
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+
+                  <Select
+                    value={sortOption}
+                    onValueChange={(value) => setSortOption(value as SortOption)}
+                  >
+                    <SelectTrigger
+                      id="explore-sort"
+                      aria-label="Sort by"
+                      className="h-auto rounded-full border-white/10 bg-white/5 px-4 py-2 text-sm text-foreground shadow-none focus:ring-2 focus:ring-primary/40"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                      {SORTS.map((option) => (
+                        <SelectItem key={option.key} value={option.key} className="text-xs">
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+
+            {/* Active filter chips — only render when something is set so the
+                row collapses entirely otherwise. */}
+            {hasActiveFilters && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Active:</span>
+                {categoryFilter !== "All" && (
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter("All")}
+                    className="inline-flex items-center gap-1 rounded-full border border-brand-cyan/40 bg-brand-cyan/15 px-2.5 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25 transition-colors"
+                  >
+                    {categoryFilter}
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+                {levelFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setLevelFilter("all")}
+                    className="inline-flex items-center gap-1 rounded-full border border-brand-purple/40 bg-brand-purple/15 px-2.5 py-1 text-xs text-brand-purple hover:bg-brand-purple/25 transition-colors"
+                  >
+                    {activeLevelLabel}
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+                {onlyAvailable && availabilityFilterAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setOnlyAvailable(false)}
+                    className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25 transition-colors"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Free this week
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl w-full px-5 sm:px-6 pb-16">
-        {!loading && categories.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-3">
-            {["All", ...categories].map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setCategoryFilter(cat)}
-                className={
-                  "rounded-full border px-3 py-1 text-xs transition-colors " +
-                  (categoryFilter === cat
-                    ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
-                    : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground")
-                }
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        )}
-        {!loading && (
-          <div className="flex flex-wrap items-center gap-3 mb-6">
-            <div className="flex flex-wrap gap-2">
-              {LEVELS.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setLevelFilter(option.key)}
-                  className={
-                    "rounded-full border px-3 py-1 text-xs transition-colors " +
-                    (levelFilter === option.key
-                      ? "bg-brand-purple/20 border-brand-purple/40 text-brand-purple"
-                      : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div className="ml-auto flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              {user && intersections.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setOnlyAvailable((v) => !v)}
-                  aria-pressed={onlyAvailable}
-                  className={
-                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors " +
-                    (onlyAvailable
-                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  <Sparkles className="h-3 w-3" />
-                  Only with free times
-                </button>
-              )}
-              <div className="flex items-center gap-2">
-                <label htmlFor="explore-sort">Sort by</label>
-                <Select
-                  value={sortOption}
-                  onValueChange={(value) => setSortOption(value as SortOption)}
-                >
-                  <SelectTrigger
-                    id="explore-sort"
-                    className="h-auto rounded-full border-white/10 bg-white/5 px-3 py-1 text-xs text-foreground shadow-none focus:ring-2 focus:ring-primary/40"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    {SORTS.map((option) => (
-                      <SelectItem key={option.key} value={option.key} className="text-xs">
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        )}
+      <section className="mx-auto max-w-7xl w-full px-4 sm:px-6 pt-6 pb-16">
         {loading ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -1109,7 +1243,10 @@ function ExplorePage() {
           </div>
         ) : mode === "teachers" ? (
           filtered.length === 0 ? (
-            <div className="glass rounded-3xl p-12 text-center">
+            <div
+              className="animate-fade-up glass rounded-3xl p-12 text-center"
+              style={{ animationDelay: "120ms" }}
+            >
               <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
               <p className="text-lg font-semibold">No skills yet</p>
               <p className="text-muted-foreground mt-1 max-w-md mx-auto">
@@ -1125,27 +1262,34 @@ function ExplorePage() {
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filtered.map((r) => (
-                <ExploreSkillCard
+              {filtered.map((r, i) => (
+                <div
                   key={r.id}
-                  row={r}
-                  currentUserId={user?.id}
-                  matchesUser={isMatchForUser(r)}
-                  openSession={
-                    r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
-                  }
-                  rating={ratings.get(r.user_id)}
-                  hasTimeMatch={Boolean(intersections.get(r.user_id))}
-                  messageBusy={busyAction === `message-${r.id}`}
-                  requestBusy={busyAction === `request-${r.id}`}
-                  onOpenChat={openChat}
-                  onRequestSession={requestSession}
-                />
+                  className="animate-fade-up"
+                  style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+                >
+                  <ExploreSkillCard
+                    row={r}
+                    currentUserId={user?.id}
+                    matchesUser={isMatchForUser(r)}
+                    openSession={
+                      r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
+                    }
+                    rating={ratings.get(r.user_id)}
+                    messageBusy={busyAction === `message-${r.id}`}
+                    requestBusy={busyAction === `request-${r.id}`}
+                    onOpenChat={openChat}
+                    onRequestSession={requestSession}
+                  />
+                </div>
               ))}
             </div>
           )
         ) : filteredLearners.length === 0 ? (
-          <div className="glass rounded-3xl p-12 text-center">
+          <div
+            className="animate-fade-up glass rounded-3xl p-12 text-center"
+            style={{ animationDelay: "120ms" }}
+          >
             <UserRound className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
             <p className="text-lg font-semibold">No learners yet</p>
             <p className="text-muted-foreground mt-1 max-w-md mx-auto">
@@ -1155,15 +1299,20 @@ function ExplorePage() {
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredLearners.map((r) => (
-              <ExploreLearnerCard
+            {filteredLearners.map((r, i) => (
+              <div
                 key={r.id}
-                row={r}
-                currentUserId={user?.id}
-                matchesUser={learnerMatchesMe(r)}
-                busy={busyAction === `offer-${r.id}`}
-                onOffer={offerHelp}
-              />
+                className="animate-fade-up"
+                style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+              >
+                <ExploreLearnerCard
+                  row={r}
+                  currentUserId={user?.id}
+                  matchesUser={learnerMatchesMe(r)}
+                  busy={busyAction === `offer-${r.id}`}
+                  onOffer={offerHelp}
+                />
+              </div>
             ))}
           </div>
         )}

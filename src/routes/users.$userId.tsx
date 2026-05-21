@@ -2,7 +2,6 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { PageLoading } from "@/components/PageLoading";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ReportDialog } from "@/components/ReportDialog";
 import { TrackProposalDialog } from "@/components/TrackProposalDialog";
@@ -11,7 +10,18 @@ import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
 import { findAcceptedSession } from "@/lib/sessions";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, BookOpen, GraduationCap, Loader2, MessageCircle, Star } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  GraduationCap,
+  Loader2,
+  MessageCircle,
+  Star,
+  Sparkles,
+  MessageSquareQuote,
+  GitBranch,
+  ArrowRight,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/users/$userId")({
@@ -209,95 +219,138 @@ function PublicUserPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
-        <section className="glass rounded-3xl p-6 md:p-8">
-          <Button variant="ghost" size="sm" asChild className="-ml-2 mb-4">
-            <Link to="/explore">
-              <ArrowLeft className="h-4 w-4" />
-              Explore
-            </Link>
-          </Button>
-          <div className="flex flex-col md:flex-row md:items-start gap-5">
-            <UserAvatar
-              name={profile.full_name}
-              url={profile.avatar_url}
-              className="h-20 w-20 rounded-3xl shadow-glow"
-              fallbackClassName="text-2xl rounded-3xl"
-            />
-            <div className="flex-1 min-w-0">
-              <h1 className="text-3xl font-bold">{profile.full_name ?? "Student"}</h1>
-              {profile.bio && <p className="mt-2 max-w-2xl text-muted-foreground">{profile.bio}</p>}
-              <div className="mt-4 flex flex-wrap gap-2">
-                {averageRating && (
-                  <Badge
-                    variant="outline"
-                    className="bg-yellow-300/10 text-yellow-300 border-yellow-300/20"
-                  >
-                    <Star className="h-3.5 w-3.5 fill-yellow-300" />
-                    {averageRating.toFixed(1)}
-                  </Badge>
-                )}
-              </div>
-            </div>
-            {user?.id !== userId && (
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                <Button variant="hero" onClick={openChat} disabled={openingChat}>
-                  {openingChat ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MessageCircle className="h-4 w-4" />
+      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 md:py-8 space-y-6">
+        {/* Hero — gradient glass shell matching Explore */}
+        <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="relative p-6 md:p-8">
+            <Button variant="ghost" size="sm" asChild className="-ml-2 mb-5 text-muted-foreground hover:text-foreground">
+              <Link to="/explore" preload="intent">
+                <ArrowLeft className="h-4 w-4" />
+                Back to Explore
+              </Link>
+            </Button>
+            <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center min-w-0">
+                <UserAvatar
+                  name={profile.full_name}
+                  url={profile.avatar_url}
+                  className="h-24 w-24 rounded-3xl ring-4 ring-white/10 shadow-glow"
+                  fallbackClassName="text-3xl rounded-3xl"
+                />
+                <div className="min-w-0 flex-1">
+                  <h1 className="text-3xl md:text-4xl font-bold leading-tight">
+                    {profile.full_name ?? "Student"}
+                  </h1>
+                  {profile.bio && (
+                    <p className="mt-2 max-w-2xl text-muted-foreground">{profile.bio}</p>
                   )}
-                  Message
-                </Button>
-                <ReportDialog reportedUserId={userId} label="Report" />
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                    {averageRating !== null ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-400">
+                        <Star className="h-3.5 w-3.5 fill-amber-400" />
+                        <span className="font-semibold">{averageRating.toFixed(1)}</span>
+                        <span className="text-muted-foreground">
+                          · {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                        <Sparkles className="h-3 w-3" />
+                        New on SkillSwap
+                      </span>
+                    )}
+                    {teaching.length > 0 && (
+                      <span>
+                        <span className="font-semibold text-foreground">{teaching.length}</span>{" "}
+                        {teaching.length === 1 ? "skill" : "skills"} taught
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-            )}
+              {user?.id !== userId && (
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-end">
+                  <Button variant="hero" size="lg" onClick={openChat} disabled={openingChat}>
+                    {openingChat ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="h-4 w-4" />
+                    )}
+                    Message
+                  </Button>
+                  <ReportDialog reportedUserId={userId} label="Report" />
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
-        <div className="grid lg:grid-cols-2 gap-4">
-          <SkillSection title="Teaches" icon={<BookOpen className="h-4 w-4 text-brand-cyan" />}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <SkillSection
+            title="Teaches"
+            icon={<BookOpen className="h-4 w-4 text-brand-cyan" />}
+            tone="cyan"
+            count={teaching.length}
+          >
             {teaching.length === 0 && <EmptyState text="No teaching skills listed." />}
             {teaching.map((skill) => (
               <div
                 key={skill.id}
-                className="glass rounded-xl p-4 flex items-center justify-between gap-3"
+                className="group rounded-xl border border-white/10 bg-white/5 p-4 transition-colors hover:border-brand-cyan/30 hover:bg-white/10"
               >
-                <div className="min-w-0">
-                  <div className="font-medium">{skill.skills?.name ?? "Skill"}</div>
-                  <div className="text-xs text-muted-foreground capitalize">{skill.level}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold leading-tight">
+                      {skill.skills?.name ?? "Skill"}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground capitalize">
+                      {skill.level}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs font-semibold text-foreground/80">
+                    {skill.credits_per_hour}{" "}
+                    <span className="font-normal text-muted-foreground">cr / hr</span>
+                  </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="bg-white/5 border-white/10">
-                    {skill.credits_per_hour} cr/hr
-                  </Badge>
-                  {user && user.id !== userId && skill.skills?.id && (
-                    <Button
-                      size="sm"
-                      variant="outline"
+                {user && user.id !== userId && skill.skills?.id && (
+                  <div className="mt-3 border-t border-white/5 pt-3">
+                    <button
+                      type="button"
                       onClick={() =>
                         setTrackDialog({
                           skillId: skill.skills!.id,
                           skillName: skill.skills!.name,
                         })
                       }
+                      className="group/track inline-flex w-full items-center justify-between gap-2 rounded-xl border border-brand-cyan/25 bg-brand-cyan/[0.06] px-3 py-2 text-xs font-medium text-brand-cyan transition-all hover:border-brand-cyan/50 hover:bg-brand-cyan/[0.12] hover:shadow-glow-blue"
                     >
-                      Propose track
-                    </Button>
-                  )}
-                </div>
+                      <span className="inline-flex items-center gap-1.5">
+                        <GitBranch className="h-3.5 w-3.5" />
+                        Propose a learning track
+                      </span>
+                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover/track:translate-x-0.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </SkillSection>
           <SkillSection
             title="Learning"
             icon={<GraduationCap className="h-4 w-4 text-brand-purple" />}
+            tone="purple"
+            count={learning.length}
           >
             {learning.length === 0 && <EmptyState text="No learning skills listed." />}
             {learning.map((skill) => (
-              <div key={skill.id} className="glass rounded-xl p-4">
-                <div className="font-medium">{skill.skills?.name ?? "Skill"}</div>
-                <div className="text-xs text-muted-foreground capitalize">
+              <div
+                key={skill.id}
+                className="rounded-xl border border-white/10 bg-white/5 p-4 transition-colors hover:border-brand-purple/30 hover:bg-white/10"
+              >
+                <div className="font-semibold leading-tight">{skill.skills?.name ?? "Skill"}</div>
+                <div className="mt-1 text-xs text-muted-foreground capitalize">
                   {skill.current_level}
                 </div>
               </div>
@@ -305,34 +358,54 @@ function PublicUserPage() {
           </SkillSection>
         </div>
 
-        <section className="glass rounded-3xl p-6">
-          <h2 className="text-lg font-semibold mb-4">Reviews</h2>
-          <div className="grid md:grid-cols-2 gap-3">
-            {reviews.length === 0 && <EmptyState text="No reviews yet." />}
-            {reviews.map((review) => (
-              <div key={review.id} className="glass rounded-xl p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-medium">{review.reviewerName}</div>
-                  <div className="flex text-yellow-300">
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <Star
-                        key={index}
-                        className={`h-3.5 w-3.5 ${index < review.rating ? "fill-yellow-300" : "opacity-30"}`}
-                      />
-                    ))}
-                  </div>
-                </div>
-                {review.comment && (
-                  <p className="mt-2 text-sm text-muted-foreground">{review.comment}</p>
-                )}
-                {user && user.id !== review.reviewerId && (
-                  <div className="mt-2 flex justify-end">
-                    <ReportDialog reviewId={review.id} label="Report review" />
-                  </div>
-                )}
-              </div>
-            ))}
+        <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400/15">
+              <MessageSquareQuote className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold leading-tight">Reviews</h2>
+              <p className="text-xs text-muted-foreground">
+                {reviews.length === 0
+                  ? "Be the first to leave feedback after a session."
+                  : `${reviews.length} ${reviews.length === 1 ? "review" : "reviews"} from past sessions`}
+              </p>
+            </div>
           </div>
+          {reviews.length === 0 ? (
+            <EmptyState text="No reviews yet." />
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {reviews.map((review) => (
+                <div
+                  key={review.id}
+                  className="group rounded-xl border border-white/10 bg-white/5 p-4 transition-colors hover:border-amber-400/30 hover:bg-white/10"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium truncate">{review.reviewerName}</div>
+                    <div className="flex shrink-0 text-amber-400">
+                      {Array.from({ length: 5 }).map((_, index) => (
+                        <Star
+                          key={index}
+                          className={`h-3.5 w-3.5 ${index < review.rating ? "fill-amber-400" : "opacity-25"}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  {review.comment && (
+                    <p className="mt-2 text-sm text-muted-foreground line-clamp-4">
+                      {review.comment}
+                    </p>
+                  )}
+                  {user && user.id !== review.reviewerId && (
+                    <div className="mt-3 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+                      <ReportDialog reviewId={review.id} label="Report" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </main>
       {trackDialog && (
@@ -352,18 +425,32 @@ function PublicUserPage() {
 function SkillSection({
   title,
   icon,
+  tone,
+  count,
   children,
 }: {
   title: string;
   icon: ReactNode;
+  tone: "cyan" | "purple";
+  count?: number;
   children: ReactNode;
 }) {
+  const tonedBg = tone === "cyan" ? "bg-brand-cyan/15" : "bg-brand-purple/15";
   return (
-    <section className="glass rounded-3xl p-6">
-      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-        {icon}
-        {title}
-      </h2>
+    <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
+      <div className="mb-5 flex items-center gap-3">
+        <div
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${tonedBg}`}
+        >
+          {icon}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-lg font-semibold leading-tight">{title}</h2>
+          {typeof count === "number" && count > 0 && (
+            <span className="text-xs text-muted-foreground">{count}</span>
+          )}
+        </div>
+      </div>
       <div className="space-y-3">{children}</div>
     </section>
   );
@@ -371,7 +458,7 @@ function SkillSection({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-muted-foreground">
+    <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center text-sm text-muted-foreground">
       {text}
     </div>
   );
