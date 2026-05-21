@@ -34,12 +34,15 @@ import {
 import { toast } from "sonner";
 import { useFeatureEnabled } from "@/lib/feature-flags";
 
+type ExploreMode = "teachers" | "learners";
+
 type ExploreSearch = {
   q?: string;
   category?: string;
   level?: SkillLevelFilter;
   sort?: SortOption;
   available?: boolean;
+  mode?: ExploreMode;
 };
 
 export const Route = createFileRoute("/explore")({
@@ -55,6 +58,7 @@ export const Route = createFileRoute("/explore")({
         ? (s.sort as SortOption)
         : undefined,
     available: s.available === true || s.available === "1" || s.available === "true",
+    mode: s.mode === "learners" ? "learners" : undefined,
   }),
   head: () => ({
     meta: [
@@ -79,6 +83,20 @@ type TeachingSkillRow = {
   user_id: string;
   level: "basic" | "intermediate" | "advanced";
   credits_per_hour: number;
+  created_at: string;
+  skills: { id: string; name: string; category: string | null } | null;
+  profiles: {
+    id: string;
+    full_name: string | null;
+    bio: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
+type LearningSkillRow = {
+  id: string;
+  user_id: string;
+  current_level: "basic" | "intermediate" | "advanced";
   created_at: string;
   skills: { id: string; name: string; category: string | null } | null;
   profiles: {
@@ -314,6 +332,79 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
   );
 });
 
+type ExploreLearnerCardProps = {
+  row: LearningSkillRow;
+  currentUserId: string | undefined;
+  matchesUser: boolean;
+  busy: boolean;
+  onOffer: (row: LearningSkillRow) => void;
+};
+
+const ExploreLearnerCard = memo(function ExploreLearnerCard({
+  row: r,
+  currentUserId,
+  matchesUser,
+  busy,
+  onOffer,
+}: ExploreLearnerCardProps) {
+  const isSelf = currentUserId === r.user_id;
+  return (
+    <article className="glass rounded-2xl p-5 flex flex-col gap-4 transition-transform hover:-translate-y-0.5">
+      <Link
+        to="/users/$userId"
+        params={{ userId: r.user_id }}
+        preload="intent"
+        className="flex items-center gap-3 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+      >
+        <UserAvatar
+          name={r.profiles?.full_name}
+          url={r.profiles?.avatar_url}
+          className="h-11 w-11"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold truncate">{r.profiles?.full_name ?? "Student"}</div>
+          <div className="text-xs text-muted-foreground truncate">
+            Wants {r.skills?.name ?? "a skill"} ·{" "}
+            <span className="capitalize">{r.current_level}</span>
+          </div>
+        </div>
+      </Link>
+      {r.profiles?.bio && (
+        <p className="text-xs text-muted-foreground line-clamp-2">{r.profiles.bio}</p>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {r.skills?.category && (
+          <Badge variant="outline" className="bg-white/5 border-white/10 text-[11px]">
+            {r.skills.category}
+          </Badge>
+        )}
+        {matchesUser && (
+          <Badge
+            variant="outline"
+            className="border-emerald-500/40 bg-emerald-500/15 text-emerald-400 text-[11px]"
+          >
+            <Sparkles className="h-3 w-3 mr-1" /> You teach this
+          </Badge>
+        )}
+      </div>
+      <Button
+        variant="hero"
+        size="sm"
+        className="w-full mt-auto"
+        onClick={() => onOffer(r)}
+        disabled={busy || isSelf}
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <MessageCircle className="h-4 w-4" />
+        )}
+        Offer help
+      </Button>
+    </article>
+  );
+});
+
 const EXPLORE_CACHE_KEY = "skillswap-explore-cache";
 const EXPLORE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -358,8 +449,14 @@ function ExplorePage() {
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [requestRow, setRequestRow] = useState<TeachingSkillRow | null>(null);
+  // Learner mode: rows of people seeking skills + the seeker we're offering help to.
+  const [learnerRows, setLearnerRows] = useState<LearningSkillRow[]>([]);
+  const [offerRow, setOfferRow] = useState<LearningSkillRow | null>(null);
   const [myCredits, setMyCredits] = useState<number | null>(null);
   const [myLearningSkillIds, setMyLearningSkillIds] = useState<Set<string>>(new Set());
+  // Skills the viewer can teach — used in learner mode to highlight rows that
+  // match what they offer and to default the offer dialog's credits/hour.
+  const [myTeachingPrices, setMyTeachingPrices] = useState<Map<string, number>>(new Map());
   const [openSessions, setOpenSessions] = useState<Map<string, OpenSessionInfo>>(new Map());
   const { user } = useAuth();
   const { requireAuth } = useAuthGate();
@@ -371,9 +468,12 @@ function ExplorePage() {
   const levelFilter: SkillLevelFilter = search.level ?? "all";
   const sortOption: SortOption = search.sort ?? "default";
   const onlyAvailable = Boolean(search.available);
+  const mode: ExploreMode = search.mode === "learners" ? "learners" : "teachers";
   const updateSearch = (partial: Partial<ExploreSearch>) => {
     void navigate({ to: "/explore", search: { ...search, ...partial }, replace: true });
   };
+  const setMode = (next: ExploreMode) =>
+    updateSearch({ mode: next === "learners" ? "learners" : undefined });
   const setQuery = (next: string) => updateSearch({ q: next.length > 0 ? next : undefined });
   const setCategoryFilter = (next: string) =>
     updateSearch({ category: next === "All" ? undefined : next });
@@ -390,29 +490,41 @@ function ExplorePage() {
     if (!user) {
       setMyCredits(null);
       setMyLearningSkillIds(new Set());
+      setMyTeachingPrices(new Map());
       setOpenSessions(new Map());
       return;
     }
     let alive = true;
     const controller = new AbortController();
     (async () => {
-      const [{ data: creditBalance }, { data: learning }, { data: sessions }] = await Promise.all([
-        supabase.rpc("my_credit_balance").abortSignal(controller.signal),
-        supabase
-          .from("user_learning_skills")
-          .select("skill_id")
-          .eq("user_id", user.id)
-          .abortSignal(controller.signal),
-        supabase
-          .from("sessions")
-          .select("id, teacher_id, skill_id, status")
-          .eq("learner_id", user.id)
-          .in("status", ["pending", "accepted", "active"])
-          .abortSignal(controller.signal),
-      ]);
+      const [{ data: creditBalance }, { data: learning }, { data: teaching }, { data: sessions }] =
+        await Promise.all([
+          supabase.rpc("my_credit_balance").abortSignal(controller.signal),
+          supabase
+            .from("user_learning_skills")
+            .select("skill_id")
+            .eq("user_id", user.id)
+            .abortSignal(controller.signal),
+          supabase
+            .from("user_teaching_skills")
+            .select("skill_id, credits_per_hour")
+            .eq("user_id", user.id)
+            .abortSignal(controller.signal),
+          supabase
+            .from("sessions")
+            .select("id, teacher_id, skill_id, status")
+            .eq("learner_id", user.id)
+            .in("status", ["pending", "accepted", "active"])
+            .abortSignal(controller.signal),
+        ]);
       if (!alive) return;
       setMyCredits(creditBalance ?? null);
       setMyLearningSkillIds(new Set((learning ?? []).map((row) => row.skill_id)));
+      const priceMap = new Map<string, number>();
+      for (const row of teaching ?? []) {
+        if (row.skill_id) priceMap.set(row.skill_id, row.credits_per_hour ?? 4);
+      }
+      setMyTeachingPrices(priceMap);
       const map = new Map<string, OpenSessionInfo>();
       for (const session of sessions ?? []) {
         map.set(`${session.teacher_id}:${session.skill_id}`, {
@@ -427,6 +539,76 @@ function ExplorePage() {
       controller.abort();
     };
   }, [user]);
+
+  // Load learners (people seeking skills) lazily — only when the user toggles
+  // to learner mode. Stays empty until then to save a round trip on first
+  // landing.
+  useEffect(() => {
+    if (mode !== "learners") return;
+    let alive = true;
+    const controller = new AbortController();
+    (async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("user_learning_skills")
+          .select("id, user_id, current_level, created_at, skills:skill_id(id, name, category)")
+          .limit(60)
+          .abortSignal(controller.signal);
+        if (error) throw error;
+        if (!alive) return;
+        const learningRows = (data ?? []) as unknown as LearningSkillRow[];
+        const userIds = Array.from(new Set(learningRows.map((row) => row.user_id)));
+        const profileMap = new Map<string, ExploreProfile>();
+        if (userIds.length) {
+          const { data: profiles, error: profileError } = await supabase
+            .from("profiles")
+            .select("id, full_name, bio, avatar_url")
+            .in("id", userIds)
+            .abortSignal(controller.signal);
+          if (profileError) throw profileError;
+          for (const profile of profiles ?? []) profileMap.set(profile.id, profile);
+        }
+        const initial = learningRows.map((row) => ({
+          ...row,
+          profiles: profileMap.get(row.user_id)
+            ? { ...profileMap.get(row.user_id)!, avatar_url: null }
+            : null,
+        }));
+        setLearnerRows(initial);
+        setLoading(false);
+
+        const avatarPaths = Array.from(profileMap.values()).map((p) => p.avatar_url);
+        if (avatarPaths.length === 0) return;
+        const signed = await signAvatarUrls(avatarPaths);
+        if (!alive) return;
+        setLearnerRows(
+          learningRows.map((row) => {
+            const profile = profileMap.get(row.user_id);
+            return {
+              ...row,
+              profiles: profile
+                ? {
+                    ...profile,
+                    avatar_url: profile.avatar_url
+                      ? (signed.get(profile.avatar_url) ?? null)
+                      : null,
+                  }
+                : null,
+            };
+          }),
+        );
+      } catch (error) {
+        if (!alive) return;
+        toast.error(error instanceof Error ? error.message : "Could not load learners");
+        setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [mode]);
 
   useEffect(() => {
     let alive = true;
@@ -621,6 +803,71 @@ function ExplorePage() {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
+  const learnerMatchesMe = (row: LearningSkillRow) =>
+    Boolean(row.skills && myTeachingPrices.has(row.skills.id));
+
+  const filteredLearners = learnerRows
+    .filter((r) => {
+      if (user && r.user_id === user.id) return false;
+      if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
+      if (levelFilter !== "all" && r.current_level !== levelFilter) return false;
+      if (!query) return true;
+      const q = query.toLowerCase();
+      return (
+        r.skills?.name.toLowerCase().includes(q) ||
+        r.skills?.category?.toLowerCase().includes(q) ||
+        r.profiles?.full_name?.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      if (sortOption === "newest") {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      // default: skills the viewer can teach come first, then newest
+      const aMatch = learnerMatchesMe(a) ? 1 : 0;
+      const bMatch = learnerMatchesMe(b) ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+  const offerHelp = useCallback(
+    (row: LearningSkillRow) => {
+      requireAuth(() => {
+        if (!row.skills) return;
+        setOfferRow(row);
+      }, "Sign in to offer help.");
+    },
+    [requireAuth],
+  );
+
+  const confirmOffer = async (duration: SessionDuration, scheduledAt: string): Promise<void> => {
+    if (!user || !offerRow?.skills) return;
+    setBusyAction(`offer-${offerRow.id}`);
+    try {
+      const creditsPerHour = myTeachingPrices.get(offerRow.skills.id) ?? 4;
+      const { sessionId, error } = await getOrCreateSession({
+        learnerId: offerRow.user_id,
+        teacherId: user.id,
+        initiatorId: user.id,
+        skillId: offerRow.skills.id,
+        creditsPerHour,
+        durationMinutes: duration,
+        scheduledAt,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      if (sessionId) {
+        playRequestSentChime();
+        toast.success("Help offered. You can message after they accept.");
+        setOfferRow(null);
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const openChat = useCallback(
     (row: TeachingSkillRow) => {
       requireAuth(() => {
@@ -720,7 +967,9 @@ function ExplorePage() {
                 Explore <span className="gradient-brand-text">Skills</span>
               </h1>
               <p className="text-muted-foreground mt-2 max-w-xl">
-                Browse what students are teaching. Message them and book a session.
+                {mode === "teachers"
+                  ? "Browse what students are teaching. Message them and book a session."
+                  : "Browse students looking to learn. Offer help in a skill you teach."}
               </p>
             </div>
             <div className="relative w-full md:max-w-sm">
@@ -732,6 +981,42 @@ function ExplorePage() {
                 className="pl-9 h-11 glass border-white/10"
               />
             </div>
+          </div>
+
+          {/* Mode toggle — Teachers vs Learners. URL-backed via ?mode=learners. */}
+          <div
+            role="tablist"
+            aria-label="Explore mode"
+            className="mt-5 inline-flex rounded-full border border-border/40 bg-card/60 p-1 backdrop-blur"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "teachers"}
+              onClick={() => setMode("teachers")}
+              className={
+                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
+                (mode === "teachers"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              Find a teacher
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "learners"}
+              onClick={() => setMode("learners")}
+              className={
+                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors " +
+                (mode === "learners"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              Find a learner
+            </button>
           </div>
         </div>
       </section>
@@ -822,36 +1107,62 @@ function ExplorePage() {
               <div key={i} className="glass rounded-2xl p-6 h-48 animate-pulse" />
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : mode === "teachers" ? (
+          filtered.length === 0 ? (
+            <div className="glass rounded-3xl p-12 text-center">
+              <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+              <p className="text-lg font-semibold">No skills yet</p>
+              <p className="text-muted-foreground mt-1 max-w-md mx-auto">
+                {user
+                  ? "Add a teaching skill to become the first match in the community."
+                  : "Be the first to share a skill with the community."}
+              </p>
+              <Button variant="hero" className="mt-6" asChild>
+                <Link to={user ? "/profile" : "/signup"}>
+                  {user ? "Add Teaching Skill" : "Join SkillSwap"}
+                </Link>
+              </Button>
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map((r) => (
+                <ExploreSkillCard
+                  key={r.id}
+                  row={r}
+                  currentUserId={user?.id}
+                  matchesUser={isMatchForUser(r)}
+                  openSession={
+                    r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
+                  }
+                  rating={ratings.get(r.user_id)}
+                  hasTimeMatch={Boolean(intersections.get(r.user_id))}
+                  messageBusy={busyAction === `message-${r.id}`}
+                  requestBusy={busyAction === `request-${r.id}`}
+                  onOpenChat={openChat}
+                  onRequestSession={requestSession}
+                />
+              ))}
+            </div>
+          )
+        ) : filteredLearners.length === 0 ? (
           <div className="glass rounded-3xl p-12 text-center">
-            <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-            <p className="text-lg font-semibold">No skills yet</p>
+            <UserRound className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-lg font-semibold">No learners yet</p>
             <p className="text-muted-foreground mt-1 max-w-md mx-auto">
-              {user
-                ? "Add a teaching skill to become the first match in the community."
-                : "Be the first to share a skill with the community."}
+              Nobody is currently looking for a skill that matches your filters. Try a different
+              category, or check back soon.
             </p>
-            <Button variant="hero" className="mt-6" asChild>
-              <Link to={user ? "/profile" : "/signup"}>
-                {user ? "Add Teaching Skill" : "Join SkillSwap"}
-              </Link>
-            </Button>
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map((r) => (
-              <ExploreSkillCard
+            {filteredLearners.map((r) => (
+              <ExploreLearnerCard
                 key={r.id}
                 row={r}
                 currentUserId={user?.id}
-                matchesUser={isMatchForUser(r)}
-                openSession={r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined}
-                rating={ratings.get(r.user_id)}
-                hasTimeMatch={Boolean(intersections.get(r.user_id))}
-                messageBusy={busyAction === `message-${r.id}`}
-                requestBusy={busyAction === `request-${r.id}`}
-                onOpenChat={openChat}
-                onRequestSession={requestSession}
+                matchesUser={learnerMatchesMe(r)}
+                busy={busyAction === `offer-${r.id}`}
+                onOffer={offerHelp}
               />
             ))}
           </div>
@@ -872,6 +1183,24 @@ function ExplorePage() {
           learnerId={user?.id}
           teacherId={requestRow.user_id}
           onConfirm={confirmRequest}
+        />
+      )}
+
+      {offerRow && (
+        <SessionRequestDialog
+          open={offerRow !== null}
+          onOpenChange={(open) => {
+            if (!open) setOfferRow(null);
+          }}
+          title="Offer to help"
+          skillName={offerRow.skills?.name ?? "skill"}
+          creditsPerHour={offerRow.skills ? (myTeachingPrices.get(offerRow.skills.id) ?? 4) : 4}
+          availableCredits={null}
+          confirmLabel="Send offer"
+          busy={busyAction === `offer-${offerRow.id}`}
+          learnerId={offerRow.user_id}
+          teacherId={user?.id}
+          onConfirm={confirmOffer}
         />
       )}
     </div>
