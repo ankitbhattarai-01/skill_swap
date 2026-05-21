@@ -17,7 +17,24 @@ import {
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { RescheduleSection } from "@/components/RescheduleSection";
 import type { Enums } from "@/integrations/supabase/types";
-import { ArrowLeft, Calendar, Check, Loader2, MessageCircle, Video, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Calendar,
+  CalendarClock,
+  Check,
+  Clock,
+  Coins,
+  GraduationCap,
+  Loader2,
+  MessageCircle,
+  ShieldAlert,
+  Sparkles,
+  Users,
+  Video,
+  X,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
 import { playCancelChime } from "@/lib/sounds";
@@ -310,42 +327,133 @@ function SessionPage() {
     downloadSessionIcs(`skillswap-${session.id}.ics`, ics);
   };
 
+  const statusTone = sessionStatusTone(session.status);
+  const scheduledLabel = session.scheduled_at
+    ? new Date(session.scheduled_at).toLocaleString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
-        <section className="glass rounded-3xl p-6 md:p-8">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <Button variant="ghost" size="sm" asChild className="-ml-2 mb-4">
-                <Link to="/dashboard" preload="intent">
-                  <ArrowLeft className="h-4 w-4" />
-                  Dashboard
-                </Link>
-              </Button>
-              <h1 className="text-3xl font-bold">{session.skills?.name ?? "Skill session"}</h1>
-              <p className="mt-1 text-muted-foreground">
-                {session.learnerName} learns from {session.teacherName}
-              </p>
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="relative p-6 md:p-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  asChild
+                  className="-ml-2 mb-4 text-muted-foreground hover:text-foreground"
+                >
+                  <Link to="/history" preload="intent">
+                    <ArrowLeft className="h-4 w-4" />
+                    All sessions
+                  </Link>
+                </Button>
+                <h1 className="text-3xl md:text-4xl font-bold leading-tight">
+                  <span className="gradient-brand-text">
+                    {session.skills?.name ?? "Skill session"}
+                  </span>
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground sm:text-base">
+                  <span className="font-medium text-foreground/80">{session.learnerName}</span>{" "}
+                  learns from{" "}
+                  <span className="font-medium text-foreground/80">{session.teacherName}</span>
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  {scheduledLabel && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                      <CalendarClock className="h-3.5 w-3.5 text-brand-purple" />
+                      {scheduledLabel}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                    <Clock className="h-3.5 w-3.5 text-brand-cyan" />
+                    {session.duration_minutes} min
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                    <Coins className="h-3.5 w-3.5 text-amber-400" />
+                    {session.credits} credits
+                  </span>
+                </div>
+              </div>
+              <Badge
+                className={cn(
+                  "rounded-full border-0 px-3 py-1 text-xs font-medium capitalize",
+                  statusTone,
+                )}
+              >
+                {session.status === "active"
+                  ? "Accepted"
+                  : session.status === "pending_review"
+                    ? "Awaiting review"
+                    : session.status === "disputed"
+                      ? "Under review"
+                      : session.status}
+              </Badge>
             </div>
-            <Badge variant="outline" className="capitalize bg-white/5 border-white/10">
-              {session.status}
-            </Badge>
           </div>
         </section>
 
         <div className="grid lg:grid-cols-3 gap-4">
-          <section className="lg:col-span-2 glass rounded-3xl p-6 space-y-5">
-            <div className="grid sm:grid-cols-2 gap-3">
-              <InfoBlock label="Learner" value={session.learnerName} />
-              <InfoBlock label="Teacher" value={session.teacherName} />
-              <InfoBlock label="Skill" value={session.skills?.name ?? "Skill"} />
-              <InfoBlock label="Duration" value={`${session.duration_minutes} min`} />
-              <InfoBlock label="Credits" value={`${session.credits} credits`} />
+          <section className="lg:col-span-2 space-y-4">
+            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+              <div className="mb-5 flex items-center gap-3">
+                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
+                  <Sparkles className="h-4 w-4 text-brand-purple" />
+                </div>
+                <h2 className="text-lg font-semibold leading-tight">Session details</h2>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <InfoBlock
+                  label="Learner"
+                  value={session.learnerName}
+                  icon={<GraduationCap className="h-4 w-4 text-brand-cyan" />}
+                  tone="cyan"
+                />
+                <InfoBlock
+                  label="Teacher"
+                  value={session.teacherName}
+                  icon={<Users className="h-4 w-4 text-brand-purple" />}
+                  tone="purple"
+                />
+                <InfoBlock
+                  label="Skill"
+                  value={session.skills?.name ?? "Skill"}
+                  icon={<Sparkles className="h-4 w-4 text-brand-purple" />}
+                  tone="purple"
+                />
+                <InfoBlock
+                  label="Duration"
+                  value={`${session.duration_minutes} min`}
+                  icon={<Clock className="h-4 w-4 text-brand-cyan" />}
+                  tone="cyan"
+                />
+                <InfoBlock
+                  label="Credits"
+                  value={`${session.credits} credits`}
+                  icon={<Coins className="h-4 w-4 text-amber-400" />}
+                  tone="amber"
+                />
+              </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 p-4">
-              <div className="text-sm font-medium">Schedule</div>
-              <p className="mt-1 text-sm text-muted-foreground">
+            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
+                  <CalendarClock className="h-4 w-4 text-brand-purple" />
+                </div>
+                <h2 className="text-lg font-semibold leading-tight">Schedule</h2>
+              </div>
+              <p className="text-sm text-muted-foreground">
                 {session.scheduled_at
                   ? new Date(session.scheduled_at).toLocaleString(undefined, {
                       dateStyle: "full",
@@ -391,9 +499,17 @@ function SessionPage() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-white/10 p-4">
-              <div className="text-sm font-medium">Jitsi Video Room</div>
-              <p className="mt-1 text-sm text-muted-foreground">
+            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">
+                  <Video className="h-4 w-4 text-brand-cyan" />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-lg font-semibold leading-tight">Video Room</h2>
+                  <span className="text-xs text-muted-foreground">Jitsi</span>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
                 {session.meet_link
                   ? "Your secure video room is ready."
                   : session.status === "pending"
@@ -446,8 +562,13 @@ function SessionPage() {
             </div>
           </section>
 
-          <aside className="glass rounded-3xl p-6 space-y-3">
-            <h2 className="font-semibold">Actions</h2>
+          <aside className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7 space-y-3 lg:sticky lg:top-6 h-fit">
+            <div className="mb-2 flex items-center gap-3">
+              <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
+                <ShieldAlert className="h-4 w-4 text-brand-purple" />
+              </div>
+              <h2 className="text-lg font-semibold leading-tight">Actions</h2>
+            </div>
             {canRespondToPending && (
               <>
                 <Button
@@ -609,11 +730,63 @@ function SessionPage() {
   );
 }
 
-function InfoBlock({ label, value }: { label: string; value: string }) {
+function InfoBlock({
+  label,
+  value,
+  icon,
+  tone = "purple",
+}: {
+  label: string;
+  value: string;
+  icon?: ReactNode;
+  tone?: "purple" | "cyan" | "amber";
+}) {
+  const badge = {
+    purple: "bg-brand-purple/15",
+    cyan: "bg-brand-cyan/15",
+    amber: "bg-amber-400/15",
+  }[tone];
+  const hover = {
+    purple: "hover:border-brand-purple/30",
+    cyan: "hover:border-brand-cyan/30",
+    amber: "hover:border-amber-400/30",
+  }[tone];
+
   return (
-    <div className="glass rounded-2xl p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 font-medium">{value}</div>
+    <div
+      className={cn(
+        "group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 transition-colors hover:bg-white/[0.07]",
+        hover,
+      )}
+    >
+      {icon && (
+        <div
+          className={cn(
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+            badge,
+          )}
+        >
+          {icon}
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
+        <div className="mt-0.5 font-semibold leading-tight truncate">{value}</div>
+      </div>
     </div>
   );
+}
+
+function sessionStatusTone(status: SessionStatus): string {
+  const styles: Record<SessionStatus, string> = {
+    pending: "bg-amber-400/15 text-amber-400 ring-1 ring-amber-400/20",
+    accepted: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+    active: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+    completed: "bg-blue-400/15 text-blue-400 ring-1 ring-blue-400/20",
+    rejected: "bg-red-400/15 text-red-400 ring-1 ring-red-400/20",
+    cancelled: "bg-slate-400/15 text-slate-400 ring-1 ring-slate-400/20",
+    pending_review: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+    disputed: "bg-rose-400/15 text-rose-400 ring-1 ring-rose-400/20",
+  };
+  return styles[status];
 }

@@ -31,12 +31,14 @@ import type { Enums } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
 import {
   Calendar,
+  CalendarClock,
   Check,
   CheckCircle2,
   Clock,
   Eye,
   Loader2,
   MessageSquare,
+  Sparkles,
   Users,
   Video,
   X,
@@ -350,50 +352,87 @@ function SessionsPage() {
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
-      <section className="space-y-5">
-        <div>
-          <h1 className="text-3xl font-bold tracking-normal sm:text-4xl">
-            Your <span className="gradient-brand-text">Sessions</span>
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-            Manage your teaching and learning sessions
-          </p>
-        </div>
+      <section className="space-y-6">
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="relative flex flex-col gap-6 p-6 md:p-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+                  Your <span className="gradient-brand-text">Sessions</span>
+                </h1>
+                <p className="mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
+                  Track every booking in one place — accept, join, and review.
+                </p>
+              </div>
+              <Button variant="hero" asChild className="self-start md:self-auto">
+                <Link to="/explore" preload="intent">
+                  <Sparkles className="h-4 w-4" />
+                  Find more matches
+                </Link>
+              </Button>
+            </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-          {isInitialLoading ? (
-            <>
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-            </>
-          ) : (
-            <>
-              <StatCard label="Recent Sessions" value={stats.total} />
-              <StatCard label="Pending" value={stats.pending} tone="pending" />
-              <StatCard label="Accepted" value={stats.accepted} tone="accepted" />
-              <StatCard label="Completed" value={stats.completed} tone="completed" />
-            </>
-          )}
-        </div>
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+              {isInitialLoading ? (
+                <>
+                  <StatCardSkeleton />
+                  <StatCardSkeleton />
+                  <StatCardSkeleton />
+                  <StatCardSkeleton />
+                </>
+              ) : (
+                <>
+                  <StatCard label="Recent" value={stats.total} tone="default" icon={<Video className="h-4 w-4" />} />
+                  <StatCard label="Pending" value={stats.pending} tone="pending" icon={<Clock className="h-4 w-4" />} />
+                  <StatCard label="Accepted" value={stats.accepted} tone="accepted" icon={<Check className="h-4 w-4" />} />
+                  <StatCard label="Completed" value={stats.completed} tone="completed" icon={<CheckCircle2 className="h-4 w-4" />} />
+                </>
+              )}
+            </div>
+          </div>
+        </section>
 
         <div className="flex flex-wrap gap-2">
-          {FILTERS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => setFilter(item.value)}
-              className={cn(
-                "h-9 rounded-full px-4 text-sm font-semibold transition-all",
-                filter === item.value
-                  ? "bg-primary text-primary-foreground shadow-glow"
-                  : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
+          {FILTERS.map((item) => {
+            const count =
+              item.value === "all"
+                ? stats.total
+                : item.value === "pending"
+                  ? stats.pending
+                  : item.value === "accepted"
+                    ? stats.accepted
+                    : stats.completed;
+            const active = filter === item.value;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setFilter(item.value)}
+                className={cn(
+                  "inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-all",
+                  active
+                    ? "border-brand-purple/40 bg-brand-purple/15 text-brand-purple shadow-glow"
+                    : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:bg-white/10 hover:text-foreground",
+                )}
+              >
+                {item.label}
+                {!isInitialLoading && count > 0 && (
+                  <span
+                    className={cn(
+                      "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold",
+                      active
+                        ? "bg-brand-purple/30 text-brand-purple"
+                        : "bg-white/10 text-muted-foreground",
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         <div className="space-y-3">
@@ -406,14 +445,17 @@ function SessionsPage() {
               <SessionCardSkeleton />
             </>
           ) : visibleSessions.length === 0 ? (
-            <div className="rounded-3xl bg-card px-6 py-12 text-center shadow-card">
-              <Video className="mx-auto h-8 w-8 text-muted-foreground" />
-              <h2 className="mt-3 text-lg font-semibold">No sessions here yet</h2>
+            <div className="animate-fade-up glass rounded-3xl border border-white/10 px-6 py-14 text-center">
+              <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-purple/15">
+                <CalendarClock className="h-5 w-5 text-brand-purple" />
+              </div>
+              <h2 className="mt-4 text-lg font-semibold">No sessions here yet</h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 Explore matches to request a session, or switch filters to see more.
               </p>
               <Button variant="hero" className="mt-5" asChild>
                 <Link to="/explore" preload="intent">
+                  <Sparkles className="h-4 w-4" />
                   Explore Matches
                 </Link>
               </Button>
@@ -481,20 +523,28 @@ function SessionsPage() {
 
 function StatCardSkeleton() {
   return (
-    <div className="rounded-2xl bg-card px-3 py-3 text-center shadow-card sm:rounded-3xl sm:px-5 sm:py-5">
-      <Skeleton className="mx-auto h-8 w-12 sm:h-10 sm:w-16" />
-      <Skeleton className="mx-auto mt-2 h-3 w-20 sm:mt-2.5" />
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 sm:rounded-3xl sm:px-5 sm:py-5">
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-9 w-9 rounded-xl" />
+        <div className="flex-1 space-y-1.5">
+          <Skeleton className="h-6 w-10" />
+          <Skeleton className="h-3 w-16" />
+        </div>
+      </div>
     </div>
   );
 }
 
 function SessionCardSkeleton() {
   return (
-    <div className="h-[156px] rounded-3xl bg-card p-5 shadow-card">
+    <div className="h-[156px] rounded-3xl glass border border-white/10 p-5">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 space-y-2">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-3 w-64" />
+        <div className="flex flex-1 gap-4">
+          <Skeleton className="h-12 w-12 rounded-2xl" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-3 w-64" />
+          </div>
         </div>
         <Skeleton className="h-6 w-24 rounded-full" />
       </div>
@@ -511,22 +561,40 @@ function StatCard({
   label,
   value,
   tone = "default",
+  icon,
 }: {
   label: string;
   value: number;
   tone?: "default" | "pending" | "accepted" | "completed";
+  icon?: React.ReactNode;
 }) {
-  const toneClass = {
-    default: "text-foreground",
-    pending: "text-amber-500",
-    accepted: "text-emerald-500",
-    completed: "text-blue-500",
+  const tones = {
+    default: { value: "text-foreground", badge: "bg-brand-purple/15 text-brand-purple" },
+    pending: { value: "text-amber-500", badge: "bg-amber-400/15 text-amber-400" },
+    accepted: { value: "text-emerald-500", badge: "bg-brand-cyan/15 text-brand-cyan" },
+    completed: { value: "text-blue-500", badge: "bg-blue-400/15 text-blue-400" },
   }[tone];
 
   return (
-    <div className="rounded-2xl bg-card px-3 py-3 text-center shadow-card sm:rounded-3xl sm:px-5 sm:py-5">
-      <div className={cn("text-2xl font-bold sm:text-3xl", toneClass)}>{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground sm:mt-1 sm:text-sm">{label}</div>
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 transition-colors hover:bg-white/[0.07] sm:rounded-3xl sm:px-5 sm:py-5">
+      <div className="flex items-center gap-3">
+        {icon && (
+          <div
+            className={cn(
+              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+              tones.badge,
+            )}
+          >
+            {icon}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className={cn("text-2xl font-bold leading-none sm:text-3xl", tones.value)}>
+            {value}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground sm:text-sm">{label}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -592,8 +660,20 @@ function SessionCard({
     downloadSessionIcs(`skillswap-${session.id}.ics`, ics);
   };
 
+  const hoverAccent =
+    session.status === "completed"
+      ? "hover:border-blue-400/30 hover:shadow-glow-blue"
+      : session.status === "pending"
+        ? "hover:border-amber-400/30 hover:shadow-glow"
+        : "hover:border-brand-purple/30 hover:shadow-glow";
+
   return (
-    <article className="rounded-3xl bg-card px-5 py-5 shadow-card sm:px-6">
+    <article
+      className={cn(
+        "animate-fade-up group glass rounded-3xl border border-white/10 px-5 py-5 transition-all hover:-translate-y-0.5 sm:px-6",
+        hoverAccent,
+      )}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 gap-4">
           <AvatarInitial name={otherName} />
@@ -612,20 +692,22 @@ function SessionCard({
               <StatusBadge status={session.status} />
             </div>
             <div className="mt-1.5 text-sm text-muted-foreground">
-              {roleLabel}: {otherName} &bull; {session.duration_minutes} min &bull;{" "}
-              {session.credits} credits
+              <span className="text-foreground/80">{roleLabel}:</span> {otherName}{" "}
+              <span className="mx-1 opacity-40">&bull;</span> {session.duration_minutes} min{" "}
+              <span className="mx-1 opacity-40">&bull;</span>{" "}
+              <span className="text-foreground/80">{session.credits} credits</span>
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground sm:text-sm">
-              <span className="inline-flex items-center gap-1.5">
-                <Calendar className="h-4 w-4" />
+            <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1.5 text-xs text-muted-foreground sm:text-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                <Calendar className="h-3.5 w-3.5" />
                 {displayDate.toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
                   year: "numeric",
                 })}
               </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Clock className="h-4 w-4" />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+                <Clock className="h-3.5 w-3.5" />
                 {displayDate.toLocaleTimeString(undefined, {
                   hour: "numeric",
                   minute: "2-digit",
@@ -745,7 +827,7 @@ function AvatarInitial({ name }: { name: string }) {
   const initial = name.trim().charAt(0).toUpperCase() || "S";
 
   return (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/20 text-base font-bold text-primary">
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 text-base font-bold text-brand-purple ring-1 ring-white/10 transition-all group-hover:bg-brand-purple/25 group-hover:ring-brand-purple/30">
       {initial}
     </div>
   );
@@ -753,14 +835,14 @@ function AvatarInitial({ name }: { name: string }) {
 
 function StatusBadge({ status }: { status: SessionStatus }) {
   const styles: Record<SessionStatus, string> = {
-    pending: "bg-amber-100 text-amber-600",
-    accepted: "bg-emerald-100 text-emerald-600",
-    active: "bg-emerald-100 text-emerald-600",
-    completed: "bg-blue-100 text-blue-600",
-    rejected: "bg-red-100 text-red-600",
-    cancelled: "bg-slate-100 text-slate-600",
-    pending_review: "bg-violet-100 text-violet-600",
-    disputed: "bg-rose-100 text-rose-600",
+    pending: "bg-amber-400/15 text-amber-400 ring-1 ring-amber-400/20",
+    accepted: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+    active: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
+    completed: "bg-blue-400/15 text-blue-400 ring-1 ring-blue-400/20",
+    rejected: "bg-red-400/15 text-red-400 ring-1 ring-red-400/20",
+    cancelled: "bg-slate-400/15 text-slate-400 ring-1 ring-slate-400/20",
+    pending_review: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+    disputed: "bg-rose-400/15 text-rose-400 ring-1 ring-rose-400/20",
   };
   const labels: Partial<Record<SessionStatus, string>> = {
     active: "Accepted",
@@ -769,7 +851,12 @@ function StatusBadge({ status }: { status: SessionStatus }) {
   };
 
   return (
-    <Badge className={cn("rounded-full border-0 px-2.5 py-0.5 text-xs capitalize", styles[status])}>
+    <Badge
+      className={cn(
+        "rounded-full border-0 px-2.5 py-0.5 text-xs font-medium capitalize",
+        styles[status],
+      )}
+    >
       {labels[status] ?? status}
     </Badge>
   );
