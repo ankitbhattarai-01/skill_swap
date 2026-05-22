@@ -187,7 +187,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
   const hasOpenSession = Boolean(openSession);
   const isSessionActive = openSession && openSession.status !== "pending";
   return (
-    <article className="group glass rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
+    <article className="group glass flex h-full flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
       <div className="flex items-start justify-between gap-3">
         <Link
           to="/users/$userId"
@@ -245,9 +245,9 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
       <h3 className="mt-4 text-lg font-semibold leading-tight">
         Teaches <span className="gradient-brand-text">{r.skills?.name}</span>
       </h3>
-      {r.profiles?.bio && (
-        <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{r.profiles.bio}</p>
-      )}
+      <p className="mt-1.5 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
+        {r.profiles?.bio ?? ""}
+      </p>
 
       {/* Single status line — session state wins over match indicator. */}
       {hasOpenSession ? (
@@ -276,7 +276,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
         </div>
       ) : null}
 
-      <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3 text-xs text-muted-foreground">
+      <div className="mt-auto flex items-center justify-between border-t border-white/5 pt-3 text-xs text-muted-foreground">
         <span className="font-medium text-foreground/80">
           {r.credits_per_hour}{" "}
           <span className="font-normal text-muted-foreground">credits / hr</span>
@@ -356,7 +356,7 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
 }: ExploreLearnerCardProps) {
   const isSelf = currentUserId === r.user_id;
   return (
-    <article className="group glass flex flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
+    <article className="group glass flex h-full flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
       <div className="flex items-start justify-between gap-3">
         <Link
           to="/users/$userId"
@@ -387,9 +387,9 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
       <h3 className="mt-4 text-lg font-semibold leading-tight">
         Wants <span className="gradient-brand-text">{r.skills?.name ?? "a skill"}</span>
       </h3>
-      {r.profiles?.bio && (
-        <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{r.profiles.bio}</p>
-      )}
+      <p className="mt-1.5 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
+        {r.profiles?.bio ?? ""}
+      </p>
 
       {matchesUser && (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400">
@@ -1261,11 +1261,11 @@ function ExplorePage() {
               </Button>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((r, i) => (
                 <div
                   key={r.id}
-                  className="animate-fade-up"
+                  className="animate-fade-up h-full"
                   style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
                 >
                   <ExploreSkillCard
@@ -1298,11 +1298,11 @@ function ExplorePage() {
             </p>
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredLearners.map((r, i) => (
               <div
                 key={r.id}
-                className="animate-fade-up"
+                className="animate-fade-up h-full"
                 style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
               >
                 <ExploreLearnerCard
