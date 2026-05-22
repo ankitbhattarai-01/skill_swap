@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Logo } from "@/components/Logo";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
-import { GraduationCap, HandHeart, Loader2, Plus, X } from "lucide-react";
+import { ChevronDown, Loader2, Plus, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -80,12 +80,6 @@ const LEVEL_COLORS: Record<SkillLevel, string> = {
   intermediate: "bg-brand-blue/15 text-brand-blue border-brand-blue/25",
   advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
 };
-
-function formatSkillLevel(level: SkillLevel) {
-  if (level === "basic") return "Basic";
-  if (level === "intermediate") return "Intermediate";
-  return "Advanced";
-}
 
 const SKILL_METHOD_STORE_PREFIX = "skillswap-skill-methods";
 const SKILL_FOCUS_STORE_PREFIX = "skillswap-skill-focus";
@@ -173,7 +167,7 @@ function OnboardingPage() {
   }, [user, authLoading, emailRedirectPending, navigate]);
 
   useEffect(() => {
-    if (hydrated) return;
+    if (authLoading || hydrated) return;
     (async () => {
       const { data } = await supabase.from("skills").select("id, name, category").order("name");
       if (data) setAllSkills(data);
@@ -253,7 +247,7 @@ function OnboardingPage() {
       }
       setHydrated(true);
     })();
-  }, [user, navigate, hydrated]);
+  }, [user, authLoading, navigate, hydrated]);
 
   const findOrCreateSkill = async (name: string, category: string): Promise<Skill | null> => {
     const trimmed = name.trim();
@@ -458,7 +452,9 @@ function OnboardingPage() {
   const steps = ["About you", "Skills", "Mode", "Availability"];
   const isWideStep = step === 1 || step === 3;
 
-  if (authLoading || (emailRedirectPending && !user)) {
+  const isVerifyingEmail = emailRedirectPending && !user;
+  const isLoadingProfile = !!user && !hydrated;
+  if (authLoading || isVerifyingEmail || isLoadingProfile) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 py-10 relative overflow-hidden">
         <div className="absolute inset-0 gradient-hero opacity-60 pointer-events-none" />
@@ -468,9 +464,13 @@ function OnboardingPage() {
           </div>
           <div className="glass-strong rounded-3xl p-8 shadow-card text-center">
             <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
-            <h1 className="mt-4 text-2xl font-bold">Verifying email</h1>
+            <h1 className="mt-4 text-2xl font-bold">
+              {isVerifyingEmail ? "Verifying email" : "Just a moment"}
+            </h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Please wait while we finish signing you in.
+              {isVerifyingEmail
+                ? "Please wait while we finish signing you in."
+                : "Loading your profile…"}
             </p>
           </div>
         </div>
@@ -505,24 +505,29 @@ function OnboardingPage() {
 
           <div className={isWideStep ? "" : "mt-6"}>
             {step === 0 && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div>
-                  <Label htmlFor="name">Full name</Label>
+                  <Label htmlFor="name" className="text-xs font-medium text-muted-foreground">
+                    Full name
+                  </Label>
                   <Input
                     id="name"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    className="glass border-border mt-1.5 h-11"
+                    placeholder="Your name"
+                    className="glass mt-1 h-10 border-white/10"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="bio">Short bio</Label>
+                  <Label htmlFor="bio" className="text-xs font-medium text-muted-foreground">
+                    Short bio
+                  </Label>
                   <Textarea
                     id="bio"
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="What do you study? What are you passionate about?"
-                    className="glass border-border mt-1.5 min-h-24"
+                    className="glass mt-1 min-h-20 resize-none border-white/10"
                   />
                 </div>
               </div>
@@ -530,76 +535,83 @@ function OnboardingPage() {
 
             {step === 1 && (
               <div className="grid gap-4 lg:grid-cols-2">
-                <section className="glass rounded-3xl p-6">
-                  <h3 className="flex items-center gap-2 text-lg font-semibold">
-                    <HandHeart className="h-4 w-4 text-brand-cyan" /> Skills I Teach
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Start with the skill name. Add details only when they help explain your offer.
-                  </p>
-                  <div className="mt-4">
-                    <SkillPicker
-                      kind="teaching"
-                      placeholder="e.g. Python"
-                      focusPlaceholder="Focus, e.g. Python loops"
-                      modePlaceholder="Method: Teaching"
-                      input={teachInput}
-                      setInput={setTeachInput}
-                      focus={teachFocus}
-                      setFocus={setTeachFocus}
-                      level={teachLevel}
-                      setLevel={setTeachLevel}
-                      category={teachCategory}
-                      setCategory={setTeachCategory}
-                      modeValue={teachMode}
-                      setModeValue={setTeachMode}
-                      onAdd={addTeach}
-                      entries={teaching}
-                      setEntries={setTeaching}
-                      allSkills={allSkills}
-                    />
+                <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-brand-cyan" aria-hidden />
+                      <h3 className="text-sm font-semibold tracking-wide">Skills I teach</h3>
+                    </div>
+                    {teaching.length > 0 && (
+                      <span className="text-xs text-muted-foreground">{teaching.length}</span>
+                    )}
                   </div>
+                  <SkillPicker
+                    kind="teaching"
+                    placeholder="Add a skill you teach…"
+                    focusPlaceholder="Focus, e.g. Python loops"
+                    modePlaceholder="Method: Teaching"
+                    levelPlaceholder="Level: Intermediate"
+                    input={teachInput}
+                    setInput={setTeachInput}
+                    focus={teachFocus}
+                    setFocus={setTeachFocus}
+                    level={teachLevel}
+                    setLevel={setTeachLevel}
+                    category={teachCategory}
+                    setCategory={setTeachCategory}
+                    modeValue={teachMode}
+                    setModeValue={setTeachMode}
+                    onAdd={addTeach}
+                    entries={teaching}
+                    setEntries={setTeaching}
+                    allSkills={allSkills}
+                  />
                 </section>
 
-                <section className="glass rounded-3xl p-6">
-                  <h3 className="flex items-center gap-2 text-lg font-semibold">
-                    <GraduationCap className="h-4 w-4 text-brand-purple" /> Skills I Want to Learn
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Start with the skill name. Add details only when they help people match with
-                    you.
-                  </p>
-                  <div className="mt-4">
-                    <SkillPicker
-                      kind="learning"
-                      placeholder="e.g. UI Design"
-                      focusPlaceholder="Focus, e.g. mobile layouts"
-                      modePlaceholder="Method: Mentorship"
-                      input={learnInput}
-                      setInput={setLearnInput}
-                      focus={learnFocus}
-                      setFocus={setLearnFocus}
-                      level={learnLevel}
-                      setLevel={setLearnLevel}
-                      category={learnCategory}
-                      setCategory={setLearnCategory}
-                      modeValue={learnMode}
-                      setModeValue={setLearnMode}
-                      onAdd={addLearn}
-                      entries={learning}
-                      setEntries={setLearning}
-                      allSkills={allSkills}
-                    />
+                <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-brand-purple" aria-hidden />
+                      <h3 className="text-sm font-semibold tracking-wide">
+                        Skills I want to learn
+                      </h3>
+                    </div>
+                    {learning.length > 0 && (
+                      <span className="text-xs text-muted-foreground">{learning.length}</span>
+                    )}
                   </div>
+                  <SkillPicker
+                    kind="learning"
+                    placeholder="Add a skill you want to learn…"
+                    focusPlaceholder="Focus, e.g. mobile layouts"
+                    modePlaceholder="Method: Mentorship"
+                    levelPlaceholder="Level: Basic"
+                    input={learnInput}
+                    setInput={setLearnInput}
+                    focus={learnFocus}
+                    setFocus={setLearnFocus}
+                    level={learnLevel}
+                    setLevel={setLearnLevel}
+                    category={learnCategory}
+                    setCategory={setLearnCategory}
+                    modeValue={learnMode}
+                    setModeValue={setLearnMode}
+                    onAdd={addLearn}
+                    entries={learning}
+                    setEntries={setLearning}
+                    allSkills={allSkills}
+                  />
                 </section>
               </div>
             )}
 
             {step === 2 && (
               <div className="space-y-3">
-                <Label>Preferred learning mode</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Preferred learning mode
+                </Label>
                 <Select value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
-                  <SelectTrigger className="glass border-border h-11">
+                  <SelectTrigger className="glass h-10 border-white/10">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -671,6 +683,7 @@ function SkillPicker({
   placeholder,
   focusPlaceholder,
   modePlaceholder,
+  levelPlaceholder,
   input,
   setInput,
   focus,
@@ -690,6 +703,7 @@ function SkillPicker({
   placeholder: string;
   focusPlaceholder: string;
   modePlaceholder: string;
+  levelPlaceholder: string;
   input: string;
   setInput: (v: string) => void;
   focus: string;
@@ -707,55 +721,146 @@ function SkillPicker({
 }) {
   const emptyText =
     kind === "teaching"
-      ? "No teaching skills yet. Add one main skill to start."
-      : "No learning skills yet. Add one skill you want help with.";
+      ? "No skills yet. Add one you can teach."
+      : "No skills yet. Add one you want help with.";
   const suggestions = allSkills
     .filter((s) => input && s.name.toLowerCase().includes(input.toLowerCase()))
     .filter((s) => !entries.find((e) => e.skill.id === s.id))
     .slice(0, 5);
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-border bg-background/45 p-3">
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
+    <div className="space-y-3">
+      {entries.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {entries.map((e, i) => (
+            <li
+              key={e.skill.id}
+              className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/[0.07]"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <span className="truncate text-sm font-semibold text-foreground">
+                    {e.skill.name}
+                  </span>
+                  <Select
+                    value={e.level}
+                    onValueChange={(v) => {
+                      const next = [...entries];
+                      next[i] = { ...e, level: v as SkillLevel };
+                      setEntries(next);
+                    }}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        "h-6 w-auto gap-1 rounded-full border-0 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60",
+                        LEVEL_COLORS[e.level],
+                      )}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="basic">Basic</SelectItem>
+                      <SelectItem value="intermediate">Intermediate</SelectItem>
+                      <SelectItem value="advanced">Advanced</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={e.mode}
+                    onValueChange={(v) => {
+                      const next = [...entries];
+                      next[i] = { ...e, mode: v as LearningMode };
+                      setEntries(next);
+                    }}
+                  >
+                    <SelectTrigger className="h-6 w-auto gap-1 rounded-full border-0 bg-secondary/60 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-56 overflow-y-auto">
+                      {LEARNING_METHODS.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {formatLearningMode(m)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {(e.focus || e.skill.category) && (
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {e.focus ? e.focus : e.skill.category}
+                  </p>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 rounded-full text-muted-foreground opacity-60 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                onClick={() => setEntries(entries.filter((_, j) => j !== i))}
+                title="Remove skill"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-2 border-t border-white/[0.06] pt-3">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onAdd())}
             placeholder={placeholder}
-            className="glass h-11 border-border"
+            className="glass h-10 border-white/10"
           />
           <Button
             variant={input.trim() ? "hero" : "outline"}
             onClick={onAdd}
             type="button"
             disabled={!input.trim()}
-            className="h-11 w-full"
+            className="h-10 px-4"
           >
-            <Plus className="h-4 w-4" /> Add
+            <Plus className="h-4 w-4" />
+            Add
           </Button>
         </div>
 
-        <details className="mt-3 rounded-2xl border border-border bg-background/35">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-foreground">
-            Optional details
-            <span className="text-xs font-normal text-muted-foreground">
-              Focus, level, category, method
-            </span>
+        {suggestions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setInput(s.name)}
+                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+            <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+            More options
           </summary>
-          <div className="grid gap-2 border-t border-border p-3 sm:grid-cols-2">
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <Input
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onAdd())}
               placeholder={focusPlaceholder}
-              className="glass h-11 border-border"
+              className="glass h-10 border-white/10"
             />
             <Select value={level} onValueChange={(v) => setLevel(v as SkillLevel)}>
-              <SelectTrigger className="glass h-11 border-border">
-                <SelectValue
-                  placeholder={kind === "teaching" ? "Level: Intermediate" : "Level: Basic"}
-                />
+              <SelectTrigger className="glass h-10 border-white/10">
+                <SelectValue placeholder={levelPlaceholder} />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="basic">Basic</SelectItem>
@@ -764,7 +869,7 @@ function SkillPicker({
               </SelectContent>
             </Select>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="glass h-11 border-border">
+              <SelectTrigger className="glass h-10 border-white/10">
                 <SelectValue placeholder="Category: Other" />
               </SelectTrigger>
               <SelectContent className="max-h-56 overflow-y-auto">
@@ -776,7 +881,7 @@ function SkillPicker({
               </SelectContent>
             </Select>
             <Select value={modeValue} onValueChange={(v) => setModeValue(v as LearningMode)}>
-              <SelectTrigger className="glass h-11 border-border">
+              <SelectTrigger className="glass h-10 border-white/10">
                 <SelectValue placeholder={modePlaceholder} />
               </SelectTrigger>
               <SelectContent className="max-h-56 overflow-y-auto">
@@ -789,105 +894,6 @@ function SkillPicker({
             </Select>
           </div>
         </details>
-      </div>
-
-      {suggestions.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {suggestions.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setInput(s.name)}
-              className="rounded-full border border-border bg-background/60 px-3 py-1 text-xs text-foreground hover:bg-foreground/10"
-            >
-              {s.name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {entries.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-border/70 bg-background/35 px-4 py-3 text-sm text-muted-foreground">
-            {emptyText}
-          </p>
-        ) : (
-          <div className="flex items-center justify-between px-1">
-            <h4 className="text-sm font-semibold text-foreground">Added skills</h4>
-            <span className="text-xs text-muted-foreground">{entries.length} total</span>
-          </div>
-        )}
-        {entries.map((e, i) => (
-          <div key={e.skill.id} className="glass rounded-2xl px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-foreground">{e.skill.name}</div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {e.focus
-                    ? `Focus: ${e.focus}`
-                    : e.skill.category
-                      ? `Category: ${e.skill.category}`
-                      : "General skill"}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  <Badge variant="outline" className={LEVEL_COLORS[e.level]}>
-                    {formatSkillLevel(e.level)}
-                  </Badge>
-                  <Badge variant="outline" className="bg-foreground/5">
-                    {formatLearningMode(e.mode)}
-                  </Badge>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 rounded-full text-muted-foreground"
-                onClick={() => setEntries(entries.filter((_, j) => j !== i))}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <Select
-                value={e.level}
-                onValueChange={(v) => {
-                  const next = [...entries];
-                  next[i] = { ...e, level: v as SkillLevel };
-                  setEntries(next);
-                }}
-              >
-                <SelectTrigger className="h-9 rounded-full border-border bg-background/70 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="basic">Basic</SelectItem>
-                  <SelectItem value="intermediate">Intermediate</SelectItem>
-                  <SelectItem value="advanced">Advanced</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={e.mode}
-                onValueChange={(v) => {
-                  const next = [...entries];
-                  next[i] = { ...e, mode: v as LearningMode };
-                  setEntries(next);
-                }}
-              >
-                <SelectTrigger className="h-9 rounded-full border-border bg-background/70 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="max-h-56 overflow-y-auto">
-                  {LEARNING_METHODS.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {formatLearningMode(m)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
