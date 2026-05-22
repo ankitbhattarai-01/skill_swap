@@ -31,7 +31,9 @@ export function StrikeBanner() {
 
   if (!summary || summary.active_strike_weight === 0) return null;
 
-  if (summary.kind === "permanent") {
+  const effective = normalizeExpiredSuspension(summary);
+
+  if (effective.kind === "permanent") {
     return (
       <BannerShell tone="danger" icon={<ShieldX className="h-5 w-5" />}>
         <span className="font-medium">Account suspended.</span> Your account has reached the
@@ -40,33 +42,41 @@ export function StrikeBanner() {
     );
   }
 
-  if (summary.kind === "full") {
+  if (effective.kind === "full") {
     return (
       <BannerShell tone="danger" icon={<ShieldAlert className="h-5 w-5" />}>
         <span className="font-medium">You cannot accept new sessions.</span> Suspension ends{" "}
-        {formatDate(summary.suspension_expires_at)}. Existing sessions still work.
+        {formatDate(effective.suspension_expires_at)}. Existing sessions still work.
       </BannerShell>
     );
   }
 
-  if (summary.kind === "teaching_only") {
+  if (effective.kind === "teaching_only") {
     return (
       <BannerShell tone="warning" icon={<ShieldAlert className="h-5 w-5" />}>
         <span className="font-medium">Teaching paused.</span> You can&apos;t accept new teaching
-        requests until {formatDate(summary.suspension_expires_at)}. You can still learn.
+        requests until {formatDate(effective.suspension_expires_at)}. You can still learn.
       </BannerShell>
     );
   }
 
   return (
     <BannerShell tone="info" icon={<AlertTriangle className="h-5 w-5" />}>
-      You have <span className="font-medium">{summary.active_strike_weight} active strike(s)</span>.
+      You have <span className="font-medium">{effective.active_strike_weight} active strike(s)</span>.
       Avoid late cancellations and no-shows to keep your account in good standing.
-      {summary.next_strike_expires_at && (
-        <> Next strike expires {formatDate(summary.next_strike_expires_at)}.</>
+      {effective.next_strike_expires_at && (
+        <> Next strike expires {formatDate(effective.next_strike_expires_at)}.</>
       )}
     </BannerShell>
   );
+}
+
+function normalizeExpiredSuspension(s: StrikeSummary): StrikeSummary {
+  if (s.kind !== "teaching_only" && s.kind !== "full") return s;
+  if (!s.suspension_expires_at) return s;
+  const expiresMs = Date.parse(s.suspension_expires_at);
+  if (Number.isNaN(expiresMs) || expiresMs > Date.now()) return s;
+  return { ...s, kind: "none", suspension_expires_at: null };
 }
 
 function BannerShell({

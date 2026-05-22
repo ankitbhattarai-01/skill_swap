@@ -35,7 +35,8 @@ export function StrikeIndicator() {
 
   if (!summary || summary.active_strike_weight === 0) return null;
 
-  const { tone, Icon, title, body } = describeStrike(summary);
+  const effective = normalizeExpiredSuspension(summary);
+  const { tone, Icon, title, body } = describeStrike(effective);
 
   const toneRing =
     tone === "danger"
@@ -142,6 +143,14 @@ function describeStrike(s: StrikeSummary): {
       ? `Avoid late cancellations and no-shows to keep your account in good standing. Next strike expires ${formatDate(s.next_strike_expires_at)}.`
       : "Avoid late cancellations and no-shows to keep your account in good standing.",
   };
+}
+
+function normalizeExpiredSuspension(s: StrikeSummary): StrikeSummary {
+  if (s.kind !== "teaching_only" && s.kind !== "full") return s;
+  if (!s.suspension_expires_at) return s;
+  const expiresMs = Date.parse(s.suspension_expires_at);
+  if (Number.isNaN(expiresMs) || expiresMs > Date.now()) return s;
+  return { ...s, kind: "none", suspension_expires_at: null };
 }
 
 function formatDate(iso: string | null) {
