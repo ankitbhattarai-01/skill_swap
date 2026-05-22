@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -15,8 +14,9 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { notifyProfileUpdated } from "@/lib/profile-events";
 import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
-import { GraduationCap, HandHeart, Loader2, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { Camera, ChevronDown, Loader2, Plus, Trash2, X } from "lucide-react";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -76,13 +76,6 @@ const LEVEL_COLORS: Record<string, string> = {
   intermediate: "bg-brand-blue/15 text-brand-blue border-brand-blue/25",
   advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
 };
-
-function formatSkillLevel(level: string) {
-  if (level === "basic") return "Basic";
-  if (level === "intermediate") return "Intermediate";
-  if (level === "advanced") return "Advanced";
-  return level;
-}
 
 const LEARNING_METHODS: LearningMode[] = [
   "teaching",
@@ -267,23 +260,29 @@ const NameBioForm = memo(
     );
 
     return (
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="space-y-3">
         <div>
-          <Label htmlFor="name">Full name</Label>
+          <Label htmlFor="name" className="text-xs font-medium text-muted-foreground">
+            Full name
+          </Label>
           <Input
             id="name"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="glass border-white/10 mt-1.5 h-11"
+            placeholder="Your name"
+            className="glass mt-1 h-10 border-white/10"
           />
         </div>
         <div>
-          <Label htmlFor="bio">Bio</Label>
+          <Label htmlFor="bio" className="text-xs font-medium text-muted-foreground">
+            Bio
+          </Label>
           <Textarea
             id="bio"
             value={bio}
             onChange={(e) => setBio(e.target.value)}
-            className="glass mt-1.5 min-h-24 resize-none border-white/10 lg:min-h-[6.75rem]"
+            placeholder="A short line about you"
+            className="glass mt-1 min-h-20 resize-none border-white/10"
           />
         </div>
       </div>
@@ -737,15 +736,25 @@ function ProfilePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-          <section className="glass self-start rounded-3xl p-4 md:p-5">
-            <div className="grid gap-5 lg:grid-cols-[10rem_minmax(0,1fr)]">
-              <div className="self-start rounded-3xl border border-border/60 bg-secondary/35 p-3 text-center">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-4">
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.16),transparent_55%)] pointer-events-none" />
+
+          <div className="relative h-1 w-full bg-white/[0.06]" aria-hidden>
+            <div
+              className="h-full bg-gradient-to-r from-brand-purple via-brand-cyan to-brand-blue transition-[width] duration-500"
+              style={{ width: `${profileProgress}%` }}
+            />
+          </div>
+
+          <div className="relative p-5 md:p-6">
+            <div className="flex flex-col gap-5 md:flex-row md:items-start md:gap-6">
+              <div className="relative mx-auto shrink-0 md:mx-0">
                 <UserAvatar
                   name={profile.full_name}
                   url={profile.avatar_url}
-                  className="mx-auto h-24 w-24 rounded-3xl shadow-glow"
+                  className="h-24 w-24 rounded-3xl ring-2 ring-brand-purple/30 shadow-glow"
                   fallbackClassName="text-3xl rounded-3xl"
                 />
                 <input
@@ -759,49 +768,39 @@ function ProfilePage() {
                     event.target.value = "";
                   }}
                 />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3 h-9 w-full"
+                <button
+                  type="button"
                   onClick={() => avatarInputRef.current?.click()}
                   disabled={uploadingAvatar}
+                  className="absolute -bottom-1.5 -right-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-background/90 text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-background disabled:opacity-60"
+                  title={profile.avatar_url ? "Change photo" : "Upload photo"}
+                  aria-label={profile.avatar_url ? "Change photo" : "Upload photo"}
                 >
                   {uploadingAvatar ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Upload className="h-3 w-3" />
+                    <Camera className="h-3.5 w-3.5" />
                   )}
-                  {profile.avatar_url ? "Change photo" : "Upload photo"}
-                </Button>
+                </button>
               </div>
 
-              <div className="grid gap-4">
-                <div className="flex flex-col gap-3 border-b border-border/60 pb-4 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-primary">Profile Settings</p>
-                    <h1 className="mt-1 text-2xl font-bold sm:text-3xl">
-                      {profile.full_name || "Complete your profile"}
-                    </h1>
-                    <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-                      Keep your public details clear so learners know what to expect.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                    <div className="rounded-2xl bg-secondary/45 px-3 py-2 text-sm text-muted-foreground">
-                      {teaching.length} teach - {learning.length} learn
-                    </div>
-                    <Button
-                      variant="hero"
-                      className="h-10 px-5 disabled:opacity-55"
-                      onClick={saveProfile}
-                      disabled={saving || !hasProfileChanges}
-                    >
-                      {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Save changes
-                    </Button>
-                  </div>
+              <div className="min-w-0 flex-1">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Profile strength ·{" "}
+                    <span className="font-medium text-foreground/80">{profileProgress}%</span>
+                  </p>
+                  <Button
+                    variant="hero"
+                    size="sm"
+                    className="h-9 px-4 disabled:opacity-55"
+                    onClick={saveProfile}
+                    disabled={saving || !hasProfileChanges}
+                  >
+                    {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Save
+                  </Button>
                 </div>
-
                 <NameBioForm
                   ref={nameBioRef}
                   initialFullName={profile.full_name}
@@ -810,68 +809,115 @@ function ProfilePage() {
                 />
               </div>
             </div>
-          </section>
+          </div>
+        </section>
 
-          <aside className="grid self-start grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-1">
-            <section className="rounded-3xl border border-primary/15 bg-primary/10 p-3 shadow-card sm:p-4">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground sm:h-9 sm:w-9 sm:rounded-2xl">
-                  <Sparkles className="h-4 w-4 sm:h-5 sm:w-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[11px] text-muted-foreground sm:text-sm">
-                    Profile strength
-                  </div>
-                  <div className="text-lg font-bold sm:text-2xl">{profileProgress}%</div>
-                </div>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/70 sm:h-2">
-                <div
-                  className="h-full rounded-full gradient-brand"
-                  style={{ width: `${profileProgress}%` }}
-                />
-              </div>
-            </section>
-
-            <section className="glass rounded-3xl p-3 sm:p-4">
-              <div className="text-[11px] text-muted-foreground sm:text-sm">Skill balance</div>
-              <div className="mt-2 grid grid-cols-2 gap-1.5 sm:mt-3 sm:gap-2">
-                <div className="rounded-xl bg-secondary/50 p-2 sm:rounded-2xl sm:p-3">
-                  <div className="text-lg font-bold sm:text-2xl">{teaching.length}</div>
-                  <div className="text-[10px] text-muted-foreground sm:text-xs">Teach</div>
-                </div>
-                <div className="rounded-xl bg-secondary/50 p-2 sm:rounded-2xl sm:p-3">
-                  <div className="text-lg font-bold sm:text-2xl">{learning.length}</div>
-                  <div className="text-[10px] text-muted-foreground sm:text-xs">Learn</div>
-                </div>
-              </div>
-            </section>
-          </aside>
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-4">
+        <div className="grid gap-4 md:grid-cols-2">
           {/* Teaching */}
-          <section className="glass rounded-3xl p-6">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <HandHeart className="h-4 w-4 text-brand-cyan" /> Skills I Teach
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Start with the skill name. Add details only when they help explain your offer.
-            </p>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-background/45 p-3">
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
+          <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-brand-cyan" aria-hidden />
+                <h2 className="text-sm font-semibold tracking-wide">Skills I teach</h2>
+              </div>
+              {teaching.length > 0 && (
+                <span className="text-xs text-muted-foreground">{teaching.length}</span>
+              )}
+            </div>
+
+            {teaching.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No skills yet. Add one you can teach.
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {teaching.map((t) => (
+                  <li
+                    key={t.id}
+                    className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/[0.07]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                        <span className="truncate text-sm font-semibold text-foreground">
+                          {t.skill.name}
+                        </span>
+                        <Select
+                          value={t.level}
+                          onValueChange={(value) => updateTeachLevel(t.id, value)}
+                        >
+                          <SelectTrigger
+                            className={cn(
+                              "h-6 w-auto gap-1 rounded-full border-0 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60",
+                              LEVEL_COLORS[t.level] ?? "bg-secondary/60",
+                            )}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="basic">Basic</SelectItem>
+                            <SelectItem value="intermediate">Intermediate</SelectItem>
+                            <SelectItem value="advanced">Advanced</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={t.teaching_mode}
+                          onValueChange={(value) => updateTeachMode(t.id, value as LearningMode)}
+                        >
+                          <SelectTrigger className="h-6 w-auto gap-1 rounded-full border-0 bg-secondary/60 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-56 overflow-y-auto">
+                            {LEARNING_METHODS.map((mode) => (
+                              <SelectItem key={mode} value={mode}>
+                                {formatLearningMode(mode)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {(t.focus || t.skill.category) && (
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {t.focus ? t.focus : t.skill.category}
+                        </p>
+                      )}
+                    </div>
+                    <ConfirmAction
+                      title={`Remove ${t.skill.name}?`}
+                      description="Learners will no longer see you as a teacher for this skill. You can add it back anytime."
+                      confirmLabel="Remove"
+                      destructive
+                      onConfirm={() => removeTeach(t.id)}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 rounded-full text-muted-foreground opacity-60 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        title="Remove teaching skill"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </ConfirmAction>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
                   name="teach-skill"
                   autoComplete="off"
                   value={teachInput}
                   onChange={(e) => setTeachInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTeach())}
-                  placeholder="e.g. Python"
-                  className="glass h-11 border-white/10"
+                  placeholder="Add a skill you teach…"
+                  className="glass h-10 border-white/10"
                 />
                 <Button
                   variant={teachInput.trim() ? "hero" : "outline"}
-                  className="h-11 w-full"
+                  className="h-10 px-4"
                   onClick={addTeach}
                   disabled={!teachInput.trim()}
                   title="Add teaching skill"
@@ -881,14 +927,12 @@ function ProfilePage() {
                 </Button>
               </div>
 
-              <details className="group mt-3 rounded-2xl border border-white/10 bg-background/35">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-foreground">
-                  Optional details
-                  <span className="text-xs font-normal text-muted-foreground">
-                    Focus, level, category, method
-                  </span>
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                  More options
                 </summary>
-                <div className="grid gap-2 border-t border-white/10 p-3 sm:grid-cols-2">
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <Input
                     name="teach-skill-focus"
                     autoComplete="off"
@@ -896,13 +940,13 @@ function ProfilePage() {
                     onChange={(e) => setTeachFocusInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTeach())}
                     placeholder="Focus, e.g. Python loops"
-                    className="glass h-11 border-white/10"
+                    className="glass h-10 border-white/10"
                   />
                   <Select
                     value={teachLevel}
                     onValueChange={(v) => setTeachLevel(v as typeof teachLevel)}
                   >
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Level: Intermediate" />
                     </SelectTrigger>
                     <SelectContent>
@@ -912,7 +956,7 @@ function ProfilePage() {
                     </SelectContent>
                   </Select>
                   <Select value={teachCategory} onValueChange={setTeachCategory}>
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Category: Other" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
@@ -927,7 +971,7 @@ function ProfilePage() {
                     value={teachMode}
                     onValueChange={(value) => setTeachMode(value as LearningMode)}
                   >
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Method: Teaching" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
@@ -941,123 +985,113 @@ function ProfilePage() {
                 </div>
               </details>
             </div>
-            <div className="mt-4">
-              {teaching.length === 0 && (
-                <p className="rounded-2xl border border-dashed border-border/70 bg-background/35 px-4 py-3 text-sm text-muted-foreground">
-                  No teaching skills yet. Add one main skill to start.
-                </p>
-              )}
-              {teaching.length > 0 && (
-                <div className="mb-2 flex items-center justify-between px-1">
-                  <h3 className="text-sm font-semibold text-foreground">Added skills</h3>
-                  <span className="text-xs text-muted-foreground">{teaching.length} total</span>
-                </div>
-              )}
-              <div className="grid gap-2">
-                {teaching.map((t) => (
-                  <div
-                    key={t.id}
-                    className="rounded-2xl border border-white/10 bg-background/60 p-3 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-foreground">
-                          {t.skill.name}
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t.focus
-                            ? `Focus: ${t.focus}`
-                            : t.skill.category
-                              ? `Category: ${t.skill.category}`
-                              : "General teaching skill"}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <Badge
-                            variant="outline"
-                            className={LEVEL_COLORS[t.level] ?? "bg-secondary/60"}
-                          >
-                            {formatSkillLevel(t.level)}
-                          </Badge>
-                          <Badge variant="outline" className="bg-secondary/60">
-                            {formatLearningMode(t.teaching_mode)}
-                          </Badge>
-                        </div>
-                      </div>
-                      <ConfirmAction
-                        title={`Remove ${t.skill.name}?`}
-                        description="Learners will no longer see you as a teacher for this skill. You can add it back anytime."
-                        confirmLabel="Remove"
-                        destructive
-                        onConfirm={() => removeTeach(t.id)}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-full text-muted-foreground"
-                          title="Remove teaching skill"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </ConfirmAction>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <Select
-                        value={t.level}
-                        onValueChange={(value) => updateTeachLevel(t.id, value)}
-                      >
-                        <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="basic">Basic</SelectItem>
-                          <SelectItem value="intermediate">Intermediate</SelectItem>
-                          <SelectItem value="advanced">Advanced</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        value={t.teaching_mode}
-                        onValueChange={(value) => updateTeachMode(t.id, value as LearningMode)}
-                      >
-                        <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-56 overflow-y-auto">
-                          {LEARNING_METHODS.map((mode) => (
-                            <SelectItem key={mode} value={mode}>
-                              {formatLearningMode(mode)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </section>
 
           {/* Learning */}
-          <section className="glass rounded-3xl p-6">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <GraduationCap className="h-4 w-4 text-brand-purple" /> Skills I Want to Learn
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Start with the skill name. Add details only when they help people match with you.
-            </p>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-background/45 p-3">
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
+          <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-brand-purple" aria-hidden />
+                <h2 className="text-sm font-semibold tracking-wide">Skills I want to learn</h2>
+              </div>
+              {learning.length > 0 && (
+                <span className="text-xs text-muted-foreground">{learning.length}</span>
+              )}
+            </div>
+
+            {learning.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No skills yet. Add one you want help with.
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {learning.map((t) => (
+                  <li
+                    key={t.id}
+                    className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/[0.07]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                        <span className="truncate text-sm font-semibold text-foreground">
+                          {t.skill.name}
+                        </span>
+                        <Select
+                          value={t.current_level}
+                          onValueChange={(value) => updateLearnLevel(t.id, value)}
+                        >
+                          <SelectTrigger
+                            className={cn(
+                              "h-6 w-auto gap-1 rounded-full border-0 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60",
+                              LEVEL_COLORS[t.current_level] ?? "bg-secondary/60",
+                            )}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="basic">Basic</SelectItem>
+                            <SelectItem value="intermediate">Intermediate</SelectItem>
+                            <SelectItem value="advanced">Advanced</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={t.learning_mode}
+                          onValueChange={(value) => updateLearnMode(t.id, value as LearningMode)}
+                        >
+                          <SelectTrigger className="h-6 w-auto gap-1 rounded-full border-0 bg-secondary/60 px-2 text-[11px] font-medium shadow-none focus:ring-1 focus:ring-offset-0 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:opacity-60">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-56 overflow-y-auto">
+                            {LEARNING_METHODS.map((mode) => (
+                              <SelectItem key={mode} value={mode}>
+                                {formatLearningMode(mode)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {(t.focus || t.skill.category) && (
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {t.focus ? t.focus : t.skill.category}
+                        </p>
+                      )}
+                    </div>
+                    <ConfirmAction
+                      title={`Remove ${t.skill.name}?`}
+                      description="This skill will be removed from the things you want to learn. You can add it back anytime."
+                      confirmLabel="Remove"
+                      destructive
+                      onConfirm={() => removeLearn(t.id)}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 rounded-full text-muted-foreground opacity-60 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        title="Remove learning skill"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </ConfirmAction>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
                   name="learn-skill"
                   autoComplete="off"
                   value={learnInput}
                   onChange={(e) => setLearnInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addLearn())}
-                  placeholder="e.g. UI Design"
-                  className="glass h-11 border-white/10"
+                  placeholder="Add a skill you want to learn…"
+                  className="glass h-10 border-white/10"
                 />
                 <Button
                   variant={learnInput.trim() ? "hero" : "outline"}
-                  className="h-11 w-full"
+                  className="h-10 px-4"
                   onClick={addLearn}
                   disabled={!learnInput.trim()}
                   title="Add learning skill"
@@ -1067,14 +1101,12 @@ function ProfilePage() {
                 </Button>
               </div>
 
-              <details className="group mt-3 rounded-2xl border border-white/10 bg-background/35">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-foreground">
-                  Optional details
-                  <span className="text-xs font-normal text-muted-foreground">
-                    Focus, level, category, method
-                  </span>
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                  More options
                 </summary>
-                <div className="grid gap-2 border-t border-white/10 p-3 sm:grid-cols-2">
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <Input
                     name="learn-skill-focus"
                     autoComplete="off"
@@ -1082,13 +1114,13 @@ function ProfilePage() {
                     onChange={(e) => setLearnFocusInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addLearn())}
                     placeholder="Focus, e.g. mobile layouts"
-                    className="glass h-11 border-white/10"
+                    className="glass h-10 border-white/10"
                   />
                   <Select
                     value={learnLevel}
                     onValueChange={(v) => setLearnLevel(v as typeof learnLevel)}
                   >
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Level: Basic" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1098,7 +1130,7 @@ function ProfilePage() {
                     </SelectContent>
                   </Select>
                   <Select value={learnCategory} onValueChange={setLearnCategory}>
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Category: Other" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
@@ -1113,7 +1145,7 @@ function ProfilePage() {
                     value={learnMode}
                     onValueChange={(value) => setLearnMode(value as LearningMode)}
                   >
-                    <SelectTrigger className="glass h-11 border-white/10">
+                    <SelectTrigger className="glass h-10 border-white/10">
                       <SelectValue placeholder="Method: Mentorship" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
@@ -1127,109 +1159,17 @@ function ProfilePage() {
                 </div>
               </details>
             </div>
-            <div className="mt-4">
-              {learning.length === 0 && (
-                <p className="rounded-2xl border border-dashed border-border/70 bg-background/35 px-4 py-3 text-sm text-muted-foreground">
-                  No learning skills yet. Add one skill you want help with.
-                </p>
-              )}
-              {learning.length > 0 && (
-                <div className="mb-2 flex items-center justify-between px-1">
-                  <h3 className="text-sm font-semibold text-foreground">Added skills</h3>
-                  <span className="text-xs text-muted-foreground">{learning.length} total</span>
-                </div>
-              )}
-              <div className="grid gap-2">
-                {learning.map((t) => (
-                  <div
-                    key={t.id}
-                    className="rounded-2xl border border-white/10 bg-background/60 p-3 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-foreground">
-                          {t.skill.name}
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t.focus
-                            ? `Focus: ${t.focus}`
-                            : t.skill.category
-                              ? `Category: ${t.skill.category}`
-                              : "General learning skill"}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <Badge
-                            variant="outline"
-                            className={LEVEL_COLORS[t.current_level] ?? "bg-secondary/60"}
-                          >
-                            {formatSkillLevel(t.current_level)}
-                          </Badge>
-                          <Badge variant="outline" className="bg-secondary/60">
-                            {formatLearningMode(t.learning_mode)}
-                          </Badge>
-                        </div>
-                      </div>
-                      <ConfirmAction
-                        title={`Remove ${t.skill.name}?`}
-                        description="This skill will be removed from the things you want to learn. You can add it back anytime."
-                        confirmLabel="Remove"
-                        destructive
-                        onConfirm={() => removeLearn(t.id)}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-full text-muted-foreground"
-                          title="Remove learning skill"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </ConfirmAction>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <Select
-                        value={t.current_level}
-                        onValueChange={(value) => updateLearnLevel(t.id, value)}
-                      >
-                        <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="basic">Basic</SelectItem>
-                          <SelectItem value="intermediate">Intermediate</SelectItem>
-                          <SelectItem value="advanced">Advanced</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        value={t.learning_mode}
-                        onValueChange={(value) => updateLearnMode(t.id, value as LearningMode)}
-                      >
-                        <SelectTrigger className="h-9 rounded-full border-white/10 bg-background/70 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-56 overflow-y-auto">
-                          {LEARNING_METHODS.map((mode) => (
-                            <SelectItem key={mode} value={mode}>
-                              {formatLearningMode(mode)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </section>
         </div>
 
-        <section className="glass rounded-3xl p-6 sm:p-8">
-          <header className="mb-4">
-            <h2 className="text-xl font-semibold">Availability</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Set your regular teaching and learning windows. Times use your local clock.
-            </p>
-          </header>
+        <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-brand-blue" aria-hidden />
+              <h2 className="text-sm font-semibold tracking-wide">Availability</h2>
+            </div>
+            <span className="text-xs text-muted-foreground">Your local clock</span>
+          </div>
           <AvailabilityEditor defaultMode="teach" />
         </section>
 
