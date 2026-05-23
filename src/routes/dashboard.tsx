@@ -47,6 +47,7 @@ import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { UserAvatar } from "@/components/UserAvatar";
+import { PageLoading } from "@/components/PageLoading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signAvatarUrls } from "@/lib/avatars";
 import { deriveMatchLabel, rankCandidate, type LearningMode, type SkillLevel } from "@/lib/match";
@@ -429,6 +430,15 @@ function DashboardPage() {
     | { kind: "offer"; seeker: Seeker; creditsPerHour: number }
     | null
   >(null);
+  // Gate to prevent the dashboard skeleton from painting before we know the
+  // user finished onboarding. Without this, a brand-new OAuth user — e.g. a
+  // GitHub signup that lands here because Supabase's project redirect URLs
+  // point straight at /dashboard rather than /auth/callback — sees the
+  // dashboard layout flash for ~300ms while loadDashboard fetches the profile
+  // and detects onboarded=false, then bounces to /onboarding. Showing a
+  // neutral spinner until the onboarded flag is verified makes the transition
+  // visually continuous from the OAuth handoff into /onboarding.
+  const [onboardingGateReady, setOnboardingGateReady] = useState(false);
 
   const markBusy = useCallback((id: string) => {
     setBusyIds((prev) => {
@@ -453,11 +463,40 @@ function DashboardPage() {
     }
   }, [authLoading, user, navigate]);
 
+  // Fast onboarded pre-check that runs ahead of the full loadDashboard
+  // pipeline. If the user hasn't finished onboarding we bounce immediately
+  // before any dashboard chrome paints. Skipped once the gate is already open
+  // (e.g. cache hydration confirmed it) so we don't issue a redundant query.
+  useEffect(() => {
+    if (authLoading || !user || onboardingGateReady) return;
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("onboarded")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!data?.onboarded) {
+        navigate({ to: "/onboarding", replace: true });
+        return;
+      }
+      setOnboardingGateReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, onboardingGateReady, navigate]);
+
   useEffect(() => {
     if (!user) return;
     const cache = getDashboardCache(user.id);
     if (!cache) return;
 
+    // Cached profiles are only ever written after a successful dashboard load,
+    // which implies onboarded=true. Trust it to open the gate synchronously so
+    // returning users skip the spinner entirely.
+    if (cache.profile?.onboarded) setOnboardingGateReady(true);
     setProfile(cache.profile);
     setLearning(cache.learning ?? []);
     // teachers/seekers intentionally NOT restored from cache. Their ranking
@@ -1006,6 +1045,13 @@ function DashboardPage() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  // Render a neutral spinner — not the dashboard skeleton — until we've
+  // verified the user is onboarded. Same visual treatment as /auth/callback so
+  // the OAuth handoff into /onboarding is visually one continuous load.
+  if (!onboardingGateReady) {
+    return <PageLoading variant="simple" />;
   }
 
   if (loading || !profile) {
@@ -2143,13 +2189,13 @@ function ActiveSessionsStrip({
                     </Button>
                   ))}
                 {session.status !== "rejected" && (
-                  <Button variant="outline" size="sm" asChild aria-label="Details">
+                  <Button variant="outline" size="sm" asChild>
                     <Link
                       to="/sessions/$sessionId"
                       preload="intent"
                       params={{ sessionId: session.id }}
                     >
-                      <Eye className="h-4 w-4" />
+                      Details
                     </Link>
                   </Button>
                 )}
