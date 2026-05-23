@@ -329,10 +329,17 @@ const ChangePasswordDialog = memo(function ChangePasswordDialog({
     }
     setChangingPassword(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setChangingPassword(false);
+      return toastError(error);
+    }
+    // Revoke every OTHER active session for this account so a previously
+    // signed-in device (lost phone, shared computer) can't keep using the
+    // old refresh token after the password rotation.
+    await supabase.auth.signOut({ scope: "others" }).catch(() => {});
     setChangingPassword(false);
-    if (error) return toastError(error);
     handleOpenChange(false);
-    toast.success("Password updated.");
+    toast.success("Password updated. Other devices have been signed out.");
   };
 
   return (

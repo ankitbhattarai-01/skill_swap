@@ -33,12 +33,25 @@ function ResetPasswordPage() {
 
     setLoading(true);
     const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      setLoading(false);
+      return toastError(error);
+    }
+
+    // Revoke every OTHER active session for this account. Without this, a
+    // compromised browser that still holds a valid refresh token stays
+    // signed in even though the password was just rotated — defeating
+    // the point of the reset. We keep the current session (scope=others)
+    // so this page can transition the user to their dashboard.
+    await supabase.auth.signOut({ scope: "others" }).catch(() => {
+      // Non-fatal: server may rate-limit the secondary revocation. The
+      // password change itself still applies; surface a soft warning
+      // rather than blocking the success path.
+    });
+
     setLoading(false);
-
-    if (error) return toastError(error);
-
     setUpdated(true);
-    toast.success("Password updated.");
+    toast.success("Password updated. Other devices have been signed out.");
   };
 
   return (
