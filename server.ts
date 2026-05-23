@@ -48,59 +48,95 @@ let fileSinkPromise: Promise<FileSink | null> | null = null;
 let fileLoggingFallbackNotified = false;
 let loggerBootLogged = false;
 
-// Each line is one directive. Notes inline.
-const CONTENT_SECURITY_POLICY = [
-  // No iframing of this site at all (replaces X-Frame-Options: DENY).
-  "frame-ancestors 'none'",
+// CSP is per-request: every HTML response gets a fresh nonce and the
+// script-src directive only trusts scripts that carry it (plus anything
+// those scripts go on to load, via 'strict-dynamic'). The nonce is
+// stamped onto every <script> tag in the response body by Cloudflare's
+// HTMLRewriter just before we hand the response back to the client.
+//
+// 'unsafe-inline' is intentionally absent from script-src. In browsers
+// that honour 'strict-dynamic' it would be ignored anyway; in older
+// browsers the host whitelist remains as a fallback. Inline scripts
+// without a nonce — i.e. anything XSS injects into the rendered HTML —
+// will be blocked outright.
+function buildCsp(scriptNonce: string): string {
+  return [
+    // No iframing of this site at all (replaces X-Frame-Options: DENY).
+    "frame-ancestors 'none'",
 
-  // Default for everything not explicitly listed below.
-  "default-src 'self'",
+    // Default for everything not explicitly listed below.
+    "default-src 'self'",
 
-  // Scripts: self + Jitsi External API + CAPTCHA providers.
-  // 'unsafe-inline' is required by Vite's HMR shims, the themeInitScript in
-  // __root.tsx, and shadcn's <ChartStyle> CSS-in-JS. Tightening to nonces
-  // would require server-side nonce generation in the SSR shell, out of scope
-  // here. We accept 'unsafe-inline' as an explicit tradeoff.
-  "script-src 'self' 'unsafe-inline' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://js.hcaptcha.com https://hcaptcha.com https://*.hcaptcha.com",
+    // Scripts: self + the request-scoped nonce + strict-dynamic (so any
+    // script our nonced bootstrap loads — Jitsi External API, hCaptcha
+    // widget, Turnstile — inherits trust transitively). Host entries are
+    // kept for older browsers that ignore strict-dynamic.
+    `script-src 'self' 'nonce-${scriptNonce}' 'strict-dynamic' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://js.hcaptcha.com https://hcaptcha.com https://*.hcaptcha.com`,
 
-  // Styles: Tailwind injects many inline styles; chart.tsx writes a <style>
-  // block via dangerouslySetInnerHTML. CAPTCHA providers also inject styles.
-  "style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com",
+    // Styles: Tailwind injects many inline styles; chart.tsx writes a <style>
+    // block via dangerouslySetInnerHTML. CAPTCHA providers also inject styles.
+    // Tightening style-src to a nonce requires more refactoring (style attrs
+    // can't be nonced) and is out of scope for the auth-token-theft surface.
+    "style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com",
 
-  // Fonts: bundled or data: URI (Tailwind sometimes inlines).
-  "font-src 'self' data:",
+    // Fonts: bundled or data: URI (Tailwind sometimes inlines).
+    "font-src 'self' data:",
 
-  // Images: signed Supabase storage URLs + Google profile photos for OAuth +
-  // data:/blob: for inline placeholders and createObjectURL.
-  "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://*.googleusercontent.com https://hcaptcha.com https://*.hcaptcha.com",
+    // Images: signed Supabase storage URLs + Google profile photos for OAuth +
+    // data:/blob: for inline placeholders and createObjectURL.
+    "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://*.googleusercontent.com https://hcaptcha.com https://*.hcaptcha.com",
 
-  // XHR / fetch / WebSocket: Supabase REST + Realtime + Edge Functions, Gemini
-  // (called from Edge Function but shows up here when the function streams),
-  // Google OAuth handshake, CAPTCHA challenge verification assets, and the
-  // same-origin client log endpoint.
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://generativelanguage.googleapis.com https://accounts.google.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    // XHR / fetch / WebSocket: Supabase REST + Realtime + Edge Functions, Gemini
+    // (called from Edge Function but shows up here when the function streams),
+    // Google OAuth handshake, CAPTCHA challenge verification assets, and the
+    // same-origin client log endpoint.
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://generativelanguage.googleapis.com https://accounts.google.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
 
-  // Iframes the app embeds: Jitsi room iframe + CAPTCHA challenge iframes.
-  "frame-src 'self' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    // Iframes the app embeds: Jitsi room iframe + CAPTCHA challenge iframes.
+    "frame-src 'self' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
 
-  // Web workers / module workers from same origin or blob.
-  "worker-src 'self' blob:",
+    // Web workers / module workers from same origin or blob.
+    "worker-src 'self' blob:",
 
-  // Disallow legacy plugin embeds.
-  "object-src 'none'",
+    // Disallow legacy plugin embeds.
+    "object-src 'none'",
 
-  // Pin <base href> so an injected <base> can't redirect every relative URL.
-  "base-uri 'self'",
+    // Pin <base href> so an injected <base> can't redirect every relative URL.
+    "base-uri 'self'",
 
-  // Form posts only to self + Google OAuth.
-  "form-action 'self' https://accounts.google.com",
+    // Form posts only to self + Google OAuth.
+    "form-action 'self' https://accounts.google.com",
 
-  // Force HTTPS upgrades for any embedded http: URL we might miss.
-  "upgrade-insecure-requests",
-].join("; ");
+    // Force HTTPS upgrades for any embedded http: URL we might miss.
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
 
-const SECURITY_HEADERS: Array<[string, string]> = [
-  ["Content-Security-Policy", CONTENT_SECURITY_POLICY],
+// Legacy CSP fallback for non-HTML responses or runtimes without
+// HTMLRewriter. Keeps 'unsafe-inline' because we can't apply nonces here.
+// In practice this path is exercised by JSON/asset responses, which don't
+// execute scripts in the first place — but we still send a CSP for
+// defense in depth.
+function buildLegacyCsp(): string {
+  return [
+    "frame-ancestors 'none'",
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://js.hcaptcha.com https://hcaptcha.com https://*.hcaptcha.com",
+    "style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com",
+    "font-src 'self' data:",
+    "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://*.googleusercontent.com https://hcaptcha.com https://*.hcaptcha.com",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://generativelanguage.googleapis.com https://accounts.google.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "frame-src 'self' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://accounts.google.com",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
+// Headers that don't depend on the CSP — same on every response.
+const STATIC_SECURITY_HEADERS: Array<[string, string]> = [
   // X-Frame-Options is superseded by CSP frame-ancestors but still respected
   // by older browsers.
   ["X-Frame-Options", "DENY"],
@@ -123,10 +159,53 @@ const SECURITY_HEADERS: Array<[string, string]> = [
   ["Cross-Origin-Resource-Policy", "same-site"],
 ];
 
-function applySecurityHeaders(response: Response, requestId?: string): Response {
+function generateScriptNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let raw = "";
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  // btoa is available in CF Workers and modern Node — base64-encoded nonce
+  // is the canonical form expected by CSP.
+  return btoa(raw);
+}
+
+function isHtmlResponse(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "").toLowerCase().includes("text/html");
+}
+
+// Minimal HTMLRewriter shape — Cloudflare's full DTS isn't in scope here
+// and we only use setAttribute. Anything else is opaque.
+type RewriterElement = { setAttribute: (name: string, value: string) => void };
+type RewriterHandlers = { element?: (el: RewriterElement) => void };
+interface RewriterInstance {
+  on(selector: string, handlers: RewriterHandlers): RewriterInstance;
+  transform(response: Response): Response;
+}
+type RewriterCtor = new () => RewriterInstance;
+
+// Stamp nonce="..." on every <script> tag in the response stream so the
+// nonce-based script-src above can match. We add the attribute to BOTH
+// inline scripts (where it gates execution) and external <script src="...">
+// tags (so strict-dynamic propagates trust into anything they load).
+function injectScriptNonce(response: Response, nonce: string): Response {
+  const Rewriter = (globalThis as unknown as { HTMLRewriter?: RewriterCtor }).HTMLRewriter;
+  if (!Rewriter || !isHtmlResponse(response)) return response;
+  return new Rewriter()
+    .on("script", {
+      element(el: RewriterElement) {
+        el.setAttribute("nonce", nonce);
+      },
+    })
+    .transform(response);
+}
+
+function applySecurityHeaders(response: Response, csp: string, requestId?: string): Response {
   // Use a fresh Headers object so we don't mutate a possibly-shared one.
   const headers = new Headers(response.headers);
-  for (const [name, value] of SECURITY_HEADERS) {
+  if (!headers.has("Content-Security-Policy")) {
+    headers.set("Content-Security-Policy", csp);
+  }
+  for (const [name, value] of STATIC_SECURITY_HEADERS) {
     // Don't clobber a header an inner handler explicitly set (e.g. an edge
     // function might want a different CORP for an asset).
     if (!headers.has(name)) headers.set(name, value);
@@ -515,7 +594,20 @@ export default {
         url.pathname === LOG_ENDPOINT_PATH
           ? await handleClientLogRequest(request, requestId, context)
           : await baseFetch(...args);
-      const securedResponse = applySecurityHeaders(response, requestId);
+
+      // For HTML responses, mint a per-request nonce, stamp it onto every
+      // <script> tag in the body, and use a strict CSP that requires the
+      // nonce. Non-HTML responses (JSON, assets, redirects) get the legacy
+      // CSP — scripts in those payloads aren't executed anyway, but we
+      // keep the header for defense in depth.
+      let scopedResponse = response;
+      let csp = buildLegacyCsp();
+      if (isHtmlResponse(response)) {
+        const nonce = generateScriptNonce();
+        scopedResponse = injectScriptNonce(response, nonce);
+        csp = buildCsp(nonce);
+      }
+      const securedResponse = applySecurityHeaders(scopedResponse, csp, requestId);
 
       if (securedResponse.status >= 500) {
         scheduleLog(
@@ -554,6 +646,7 @@ export default {
           status: 500,
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         }),
+        buildLegacyCsp(),
         requestId,
       );
 
