@@ -113,8 +113,20 @@ Deno.serve(async (req) => {
     // is SECURITY DEFINER and validates session state, so a failure here
     // (session not joinable, etc.) should block token issuance rather than
     // silently let a user in without an attendance record.
-    const { error: attendanceErr } = await supabase.rpc("record_session_join", {
+    //
+    // We use the service-role key (not the caller's JWT) because the new
+    // record_session_join_for() signature is revoked from authenticated to
+    // close the "forge attendance via direct RPC call" hole. The caller's
+    // identity is the verified `user.id` above, derived from their JWT,
+    // and is passed in as p_user_id.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceRoleKey) {
+      return json(500, { error: "Server misconfigured: missing service role key" });
+    }
+    const adminSupabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey);
+    const { error: attendanceErr } = await adminSupabase.rpc("record_session_join_for", {
       p_session_id: session.id,
+      p_user_id: user.id,
     });
     if (attendanceErr) {
       return json(403, { error: attendanceErr.message || "Could not record attendance" });

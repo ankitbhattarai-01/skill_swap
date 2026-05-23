@@ -240,6 +240,13 @@ function VideoCallPage() {
         }, 10000);
 
     let leaveRecorded = false;
+    let heartbeatTimer: number | null = null;
+    const stopHeartbeat = () => {
+      if (heartbeatTimer != null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
     const recordLeave = () => {
       // Idempotent on both sides: server-side RPC closes the most-recent open
       // attendance row; the leaveRecorded flag stops us from firing twice in
@@ -247,6 +254,7 @@ function VideoCallPage() {
       // on a normal hangup).
       if (leaveRecorded) return;
       leaveRecorded = true;
+      stopHeartbeat();
       void supabase.rpc("record_session_leave", { p_session_id: session.id });
     };
     const handleLeft = () => {
@@ -268,6 +276,15 @@ function VideoCallPage() {
       if (viewer.avatarUrl && api) {
         api.executeCommand("avatarUrl", viewer.avatarUrl);
       }
+      // Heartbeat the attendance row every 30s. session_attended_seconds()
+      // decays open intervals 90s after the last heartbeat, so missing one
+      // is forgiving but a tab that stops heartbeating (closed, crashed,
+      // forged-from-console) stops accruing credited time within ~90s.
+      stopHeartbeat();
+      void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
+      heartbeatTimer = window.setInterval(() => {
+        void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
+      }, 30_000);
     };
 
     const start = async () => {
@@ -350,6 +367,7 @@ function VideoCallPage() {
     return () => {
       cancelled = true;
       if (modHintTimer != null) window.clearTimeout(modHintTimer);
+      stopHeartbeat();
       // Safety net for "user navigated away without Jitsi emitting a leave"
       // (browser back button, route change). The 30-min grace clamp in
       // session_attended_seconds() handles the worst case where this also
