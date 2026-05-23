@@ -103,15 +103,20 @@ Deno.serve(async (req) => {
     }
 
     // Server-side join-window enforcement. Mirrors JOIN_WINDOW_BEFORE_MS /
-    // JOIN_WINDOW_AFTER_MS in src/lib/sessions.ts: room is reachable 10 min
-    // before the scheduled start and up to 30 min after the scheduled end.
-    // Sessions with no scheduled_at fall through (unscheduled = open).
+    // JOIN_WINDOW_AFTER_MS in src/lib/sessions.ts (10 min before scheduled
+    // start, 30 min after scheduled end). Keep the constants here in sync
+    // with the client lib — they used to drift (10 min server vs 2 min
+    // client), which let direct API callers get a token 8 minutes earlier
+    // than the UI allowed. Sessions with no scheduled_at fall through
+    // (unscheduled = open).
+    const JOIN_WINDOW_BEFORE_MS = 10 * 60 * 1000;
+    const JOIN_WINDOW_AFTER_MS = 30 * 60 * 1000;
     if (session.scheduled_at) {
       const start = Date.parse(session.scheduled_at);
       if (!Number.isNaN(start)) {
         const durationMs = (session.duration_minutes ?? 60) * 60 * 1000;
-        const opensAt = start - 10 * 60 * 1000;
-        const closesAt = start + durationMs + 30 * 60 * 1000;
+        const opensAt = start - JOIN_WINDOW_BEFORE_MS;
+        const closesAt = start + durationMs + JOIN_WINDOW_AFTER_MS;
         const nowMs = Date.now();
         if (nowMs < opensAt || nowMs > closesAt) {
           return json(403, { error: "Session is not within its join window" });

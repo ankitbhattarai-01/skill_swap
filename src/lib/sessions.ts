@@ -11,7 +11,13 @@ export function computeSessionCredits(creditsPerHour: number, durationMinutes: S
   return Math.max(1, Math.ceil((creditsPerHour * durationMinutes) / 60));
 }
 
-export const JOIN_WINDOW_BEFORE_MS = 2 * 60 * 1000;
+// Join window must match the server-side check in
+// supabase/functions/mint-jitsi-token. Previously the client gated at
+// 2 minutes before scheduled_at while the edge function minted tokens
+// 10 minutes before — direct API callers got an 8-minute head start
+// past the UI restriction. Both sides are now 10 min before / 30 min
+// after, so the Join button appearing is the source of truth.
+export const JOIN_WINDOW_BEFORE_MS = 10 * 60 * 1000;
 export const JOIN_WINDOW_AFTER_MS = 30 * 60 * 1000;
 
 export function getJoinWindow(scheduledAt: string | null, durationMinutes: number) {
