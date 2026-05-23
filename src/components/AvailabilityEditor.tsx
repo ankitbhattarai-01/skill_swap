@@ -48,7 +48,7 @@ const MODE_CONTENT = {
     label: "Learn",
     title: "Learning hours",
     subtitle:
-      "Optional — when you're free to learn. Shown on your profile so teachers know when to reach out.",
+      "Optional. When you're free to learn. Shown on your profile so teachers know when to reach out.",
     copyLabel: "Copy from teaching",
     icon: GraduationCap,
   },

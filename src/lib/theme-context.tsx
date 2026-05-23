@@ -14,7 +14,7 @@ const THEME_STORAGE_KEY = "skillswap-theme";
 const SYSTEM_QUERY = "(prefers-color-scheme: dark)";
 
 const ThemeContext = createContext<ThemeContextValue>({
-  preference: "system",
+  preference: "light",
   theme: "light",
   setPreference: () => {},
   toggleTheme: () => {},
@@ -36,10 +36,10 @@ function applyTheme(theme: ResolvedTheme) {
 }
 
 function getStoredPreference(): ThemePreference {
-  if (typeof window === "undefined") return "system";
+  if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "dark" || stored === "light" || stored === "system") return stored;
-  return "system";
+  return "light";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -111,7 +111,7 @@ export const themeInitScript = `
 (function() {
   try {
     var stored = localStorage.getItem('${THEME_STORAGE_KEY}');
-    var preference = (stored === 'dark' || stored === 'light' || stored === 'system') ? stored : 'system';
+    var preference = (stored === 'dark' || stored === 'light' || stored === 'system') ? stored : 'light';
     var theme = preference;
     if (preference === 'system') {
       theme = window.matchMedia('${SYSTEM_QUERY}').matches ? 'dark' : 'light';

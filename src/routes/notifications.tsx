@@ -213,11 +213,11 @@ function NotificationsPage() {
     );
   };
 
-  if (authLoading) return <PageLoading variant="dashboard" />;
+  if (authLoading) return <PageLoading variant="list" />;
   if (!user) return null;
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-5 sm:px-6">
+    <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6">
       <section className="glass rounded-2xl p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">

@@ -275,7 +275,7 @@ export function SessionRequestDialog({
       <DialogContent className="w-[calc(100%-2rem)] max-w-md overflow-hidden rounded-3xl border-white/10 glass-strong p-0 gap-0">
         {/* Soft brand wash spans the whole dialog — matches Explore / Profile heroes. */}
         <div className="pointer-events-none absolute inset-0 gradient-hero opacity-80" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.22),transparent_55%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.22),transparent_55%)] dark:hidden" />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_15%_85%,rgba(16,185,129,0.10),transparent_55%)]" />
 
         <div className="relative space-y-5 p-6">

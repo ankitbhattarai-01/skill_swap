@@ -53,6 +53,7 @@ type ExploreSearch = {
   sort?: SortOption;
   available?: boolean;
   mode?: ExploreMode;
+  match?: boolean;
 };
 
 export const Route = createFileRoute("/explore")({
@@ -69,16 +70,17 @@ export const Route = createFileRoute("/explore")({
         : undefined,
     available: s.available === true || s.available === "1" || s.available === "true",
     mode: s.mode === "learners" ? "learners" : undefined,
+    match: s.match === true || s.match === "1" || s.match === "true" ? true : undefined,
   }),
   head: () => ({
     meta: [
-      { title: "Explore Skills — SkillSwap" },
+      { title: "Explore Skills | SkillSwap" },
       {
         name: "description",
         content:
           "Browse skills students can teach you on SkillSwap. Sign up to message and book sessions.",
       },
-      { property: "og:title", content: "Explore Skills — SkillSwap" },
+      { property: "og:title", content: "Explore Skills | SkillSwap" },
       {
         property: "og:description",
         content: "Browse and discover skills shared by students around the world.",
@@ -482,9 +484,11 @@ function ExplorePage() {
   const sortOption: SortOption = search.sort ?? "default";
   const onlyAvailable = Boolean(search.available);
   const mode: ExploreMode = search.mode === "learners" ? "learners" : "teachers";
+  const matchOnly = Boolean(search.match) && Boolean(user);
   const updateSearch = (partial: Partial<ExploreSearch>) => {
     void navigate({ to: "/explore", search: { ...search, ...partial }, replace: true });
   };
+  const setMatchOnly = (next: boolean) => updateSearch({ match: next ? true : undefined });
   const setMode = (next: ExploreMode) =>
     updateSearch({ mode: next === "learners" ? "learners" : undefined });
   const setQuery = (next: string) => updateSearch({ q: next.length > 0 ? next : undefined });
@@ -770,6 +774,7 @@ function ExplorePage() {
       if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
       if (levelFilter !== "all" && r.level !== levelFilter) return false;
       if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
+      if (matchOnly && !isMatchForUser(r)) return false;
       if (!query) return true;
       const q = query.toLowerCase();
       return (
@@ -824,6 +829,7 @@ function ExplorePage() {
       if (user && r.user_id === user.id) return false;
       if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
       if (levelFilter !== "all" && r.current_level !== levelFilter) return false;
+      if (matchOnly && !learnerMatchesMe(r)) return false;
       if (!query) return true;
       const q = query.toLowerCase();
       return (
@@ -973,7 +979,8 @@ function ExplorePage() {
   const activeFilterCount =
     (categoryFilter !== "All" ? 1 : 0) +
     (levelFilter !== "all" ? 1 : 0) +
-    (onlyAvailable && availabilityFilterAvailable ? 1 : 0);
+    (onlyAvailable && availabilityFilterAvailable ? 1 : 0) +
+    (matchOnly ? 1 : 0);
   const hasActiveFilters = activeFilterCount > 0;
   const clearAllFilters = () => {
     void navigate({
@@ -986,10 +993,10 @@ function ExplorePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <section className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 md:pt-8">
+      <section className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6 md:pt-8">
         <div className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong shadow-glow border border-white/10">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative flex flex-col gap-6 p-6 md:p-8">
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
               <div>
@@ -1221,6 +1228,16 @@ function ExplorePage() {
                     <X className="h-3 w-3" />
                   </button>
                 )}
+                {matchOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setMatchOnly(false)}
+                    className="inline-flex items-center gap-1 rounded-full border border-brand-cyan/40 bg-brand-cyan/15 px-2.5 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25 transition-colors"
+                  >
+                    {mode === "teachers" ? "Matches what I want to learn" : "Matches what I teach"}
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={clearAllFilters}
@@ -1234,7 +1251,7 @@ function ExplorePage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl w-full px-4 sm:px-6 pt-6 pb-16">
+      <section className="mx-auto max-w-6xl w-full px-4 sm:px-6 pt-6 pb-16">
         {loading ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({ length: 6 }).map((_, i) => (

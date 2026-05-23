@@ -28,7 +28,6 @@ import {
 import {
   BookOpen,
   ChevronLeft,
-  ChevronRight,
   Coins,
   History,
   LayoutDashboard,
@@ -84,17 +83,29 @@ function SidebarItem({
     <Link
       to={item.to}
       preload="intent"
+      title={collapsed ? item.name : undefined}
       className={cn(
-        "relative mx-auto flex h-12 items-center gap-3 rounded-2xl px-4 text-sm font-semibold transition-all duration-200",
+        "group relative mx-auto flex h-11 items-center overflow-hidden rounded-2xl text-sm font-semibold",
+        "transition-[background,color,transform,box-shadow,width,gap,padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-transform",
         active
-          ? "bg-primary text-primary-foreground glow-primary"
-          : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
-        collapsed ? "w-12 justify-center px-0" : "w-[168px]",
+          ? "gradient-brand text-white shadow-[0_4px_10px_-6px_rgb(124_58_237_/_0.35)] dark:shadow-[0_2px_8px_-4px_rgb(0_0_0_/_0.5)]"
+          : "text-muted-foreground hover:translate-x-0.5 hover:bg-secondary/70 hover:text-foreground",
+        collapsed ? "w-11 justify-center gap-0 px-0" : "w-full gap-3 px-3",
       )}
       aria-current={active ? "page" : undefined}
     >
       <item.icon className="h-5 w-5 shrink-0" />
-      {!collapsed && <span className="truncate">{item.name}</span>}
+      <span
+        aria-hidden={collapsed}
+        className={cn(
+          "truncate transition-[opacity,max-width] duration-200 ease-out",
+          collapsed
+            ? "pointer-events-none max-w-0 opacity-0"
+            : "max-w-[160px] opacity-100",
+        )}
+      >
+        {item.name}
+      </span>
     </Link>
   );
 }
@@ -191,20 +202,24 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
     <>
       <aside
         className={cn(
-          "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-border/50 glass-strong md:flex",
+          "fixed left-0 top-0 z-40 hidden h-screen flex-col overflow-hidden border-r border-border/50 glass-strong md:flex",
+          "transition-[width] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-[width]",
           sidebarCollapsed ? "w-[72px]" : "w-48",
         )}
       >
         <div className="flex h-16 items-center border-b border-border/50 px-4">
           <Link
             to={user ? "/dashboard" : "/"}
-            className={cn("flex min-w-0 items-center gap-3", sidebarCollapsed && "justify-center")}
+            className={cn(
+              "flex min-w-0 items-center gap-3 transition-[justify-content] duration-300",
+              sidebarCollapsed && "justify-center",
+            )}
           >
             <Logo size="sm" showText={!sidebarCollapsed} />
           </Link>
         </div>
 
-        <nav className="flex-1 space-y-2 px-3 py-6">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden px-3 py-6">
           {resolvedNav.map((item) => (
             <SidebarItem
               key={item.name}
@@ -215,19 +230,20 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
           ))}
         </nav>
 
-        <div className="border-t border-border/50 p-4">
+        <div className="border-t border-border/50 p-3">
           <Button
             variant="ghost"
-            size="icon"
+            size="sm"
             onClick={onToggleSidebar}
-            className={cn("h-10 rounded-xl", sidebarCollapsed ? "mx-auto w-10" : "w-full")}
+            className="h-10 w-full rounded-xl text-muted-foreground transition-colors duration-200 hover:bg-secondary/70 hover:text-foreground"
             aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {sidebarCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
+            <ChevronLeft
+              className={cn(
+                "h-4 w-4 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]",
+                sidebarCollapsed && "rotate-180",
+              )}
+            />
           </Button>
         </div>
       </aside>
@@ -235,6 +251,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
       <header
         className={cn(
           "fixed right-0 top-0 z-30 hidden h-16 items-center justify-between border-b border-border/50 px-5 glass md:flex md:[left:var(--sidebar-width)]",
+          "transition-[left] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]",
         )}
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >

@@ -498,11 +498,21 @@ Generate exactly 4 highly specific, actionable suggestions for this user. Each s
 
 PUNCTUATION RULE (strict): NEVER use em dashes (—) or en dashes (–) anywhere in any message. Use periods, commas, or colons instead. Use plain ASCII hyphens only inside compound words (e.g. "30-min", "1-on-1"), never as sentence separators. Violating this rule = bad output.
 
-Examples of the right tone (1 sentence, headline-style, no em dashes):
+LEADING-WORD RULE (strict): NEVER start a message with a digit or written-out number ("1", "3", "18", "One", "Three"). Numbers must appear mid-sentence only. Rewrite seeker counts, day counts, and session counts to lead with a noun, name, or verb. Examples:
+- BAD:  "1 learner wants JavaScript. Head to Explore."
+- GOOD: "Someone wants to learn JavaScript. Head to Explore."
+- BAD:  "3 learners want Python. Head to Explore to offer a session."
+- GOOD: "Python has 3 learners waiting. Head to Explore to offer a session."
+- BAD:  "18 days since your last session. A 30-min refresher would help."
+- GOOD: "It's been 18 days since your last session. A 30-min refresher would help."
+- BAD:  "4 sessions taught this month. Keep the streak alive."
+- GOOD: "You taught 4 sessions this month. Keep the streak alive."
+
+Examples of the right tone (1 sentence, headline-style, no em dashes, never lead with a number):
 - "Sulav teaches Python and wants JavaScript. Direct swap, no credits."
-- "3 learners want Python. Head to Explore to offer a session."
+- "Python has 3 learners waiting. Head to Explore to offer a session."
 - "Ram teaches JavaScript at 4 cr/hr, rated 4.8★. Book a session?"
-- "18 days since your last session. A 30-min refresher would help."
+- "It's been 18 days since your last session. A 30-min refresher would help."
 - "You taught 4 sessions this month. Keep the streak alive."
 
 Examples of WRONG tone (too long, paragraph-y, filler, or uses em dashes):
@@ -560,7 +570,7 @@ Pick the 4 most useful suggestions, in this priority:
 2. NEVER say "we'll notify you when a teacher becomes available" if the AVAILABLE TEACHERS list contains a teacher for that skill. Instead, name the actual teacher.
 3. If a RECIPROCAL MATCH exists, ONE suggestion MUST surface it specifically (e.g. "Swap idea: Ram teaches JavaScript and wants Python. You have both."). This is the platform's killer feature.
 4. When suggesting a teacher, include their name AND price AND (if available) rating: "Ram Karki teaches JavaScript at 4 credits/hour, rated 4.8★. Book a session?"
-5. When mentioning seeker count, use the exact number from DEMAND: "3 learners want Python. Head to Explore." Do NOT mention the user's credits here. In this scenario the user is the TEACHER, the LEARNER pays them — so the user's credit balance is irrelevant and saying "your X credits cover Y hours" is WRONG. Frame as earning instead if relevant ("you'd earn 4 cr/hr teaching them") or just point to Explore.
+5. When mentioning seeker count, use the exact number from DEMAND but never lead with the digit: "Python has 3 learners waiting. Head to Explore." Do NOT mention the user's credits here. In this scenario the user is the TEACHER, the LEARNER pays them — so the user's credit balance is irrelevant and saying "your X credits cover Y hours" is WRONG. Frame as earning instead if relevant ("you'd earn 4 cr/hr teaching them") or just point to Explore.
 6. Use credit-AFFORDABILITY context ONLY in suggestions about a teacher the user could book (match type, where user is the LEARNER): "Your 10 credits cover 2.5 hours with Ram." NEVER attach "your N credits cover X hours" to a seeker-count suggestion (where the user is the TEACHER) — credits flow from learner to teacher, so the learner's balance matters, not the user's.
 7. Use momentum context: dormant users like "18 days since your last session. Book a quick one?"; active users like "4 sessions this month, you're crushing it.".
 8. If user has no bio, AT MOST ONE suggestion encourages adding one (don't repeat).

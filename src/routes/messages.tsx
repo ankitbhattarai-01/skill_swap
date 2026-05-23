@@ -20,7 +20,7 @@ export const Route = createFileRoute("/messages")({
     u: typeof s.u === "string" && s.u.length > 0 ? s.u : undefined,
     s: typeof s.s === "string" && s.s.length > 0 ? s.s : undefined,
   }),
-  head: () => ({ meta: [{ title: "Messages — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Messages | SkillSwap" }] }),
   component: MessagesIndexPage,
 });
 
@@ -808,7 +808,7 @@ function MessagesIndexPage() {
     if (!user || !selectedThread || !text.trim()) return;
     const active = selectedThread.activeSession;
     if (!active) {
-      toast.error("No active session — book one to keep chatting.");
+      toast.error("No active session. Book one to keep chatting.");
       return;
     }
     const trimmed = text.trim();
@@ -885,10 +885,10 @@ function MessagesIndexPage() {
   const headerTeaching = headerSession?.teacher_id === user?.id;
 
   return (
-    <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh/1.1_-_6rem)] md:min-h-[30rem]">
+    <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh_-_6rem)] md:min-h-[36rem]">
       <main
         className={cn(
-          "mx-auto flex min-h-0 w-full max-w-7xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6",
+          "mx-auto flex min-h-0 w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6",
           selectedUserId &&
             "mobile-chat-shell max-md:z-50 max-md:!m-0 max-md:!max-w-none max-md:overflow-hidden max-md:!p-0 max-md:bg-background",
         )}
@@ -909,8 +909,8 @@ function MessagesIndexPage() {
             )}
           >
             <div className="animate-fade-up relative overflow-hidden border-b border-border/60 px-5 pt-5 pb-4">
-              <div className="absolute inset-0 gradient-hero pointer-events-none opacity-70" />
-              <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+              <div className="absolute inset-0 gradient-hero pointer-events-none opacity-70 dark:hidden" />
+              <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
               <div className="relative flex items-start gap-3">
                 <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25 transition-transform hover:scale-105">
                   <MessagesSquare className="h-5 w-5 text-brand-purple" />
@@ -1112,8 +1112,8 @@ function MessagesIndexPage() {
                   key={selectedThread.otherUserId}
                   className="animate-fade-up relative sticky top-0 z-10 flex shrink-0 items-center gap-3 overflow-hidden border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40"
                 >
-                  <div className="absolute inset-0 gradient-hero pointer-events-none opacity-60" />
-                  <div className="absolute inset-0 bg-[radial-gradient(at_90%_50%,rgba(167,139,250,0.14),transparent_60%)] pointer-events-none" />
+                  <div className="absolute inset-0 gradient-hero pointer-events-none opacity-60 dark:hidden" />
+                  <div className="absolute inset-0 bg-[radial-gradient(at_90%_50%,rgba(167,139,250,0.14),transparent_60%)] pointer-events-none dark:hidden" />
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1281,8 +1281,8 @@ function MessagesIndexPage() {
               </>
             ) : (
               <div className="relative flex flex-1 items-center justify-center overflow-hidden p-10 text-center">
-                <div className="absolute inset-0 gradient-hero pointer-events-none" />
-                <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,rgba(167,139,250,0.18),transparent_60%)] pointer-events-none" />
+                <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+                <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,rgba(167,139,250,0.18),transparent_60%)] pointer-events-none dark:hidden" />
                 <div className="relative">
                   <div className="animate-fade-up mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/15 ring-1 ring-brand-purple/25 shadow-glow transition-transform hover:scale-105">
                     <MessageCircle className="h-9 w-9 text-brand-purple" />

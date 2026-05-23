@@ -77,9 +77,18 @@ export function IncomingRequestBanner() {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const teardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load + subscribe.
+  // Holds the latest fetchPending so the focus/visibility effect (which
+  // runs on a different dep) can trigger a refetch without re-subscribing.
+  const refetchRef = useRef<(() => void) | null>(null);
+  const userId = user?.id;
+
+  // Load + subscribe. Keyed on user.id (not the whole user object), because
+  // Supabase emits a fresh User reference on every auth event (token refresh,
+  // user update, etc.) — tearing the channel down and re-subscribing on each
+  // refresh would drop any INSERTs that land in the gap.
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
+      refetchRef.current = null;
       setQueue([]);
       setActive(null);
       setVisible(false);
@@ -93,7 +102,7 @@ export function IncomingRequestBanner() {
       const { data, error } = await supabase
         .from("sessions")
         .select(SELECT)
-        .eq("teacher_id", user.id)
+        .eq("teacher_id", userId)
         .eq("status", "pending")
         .order("created_at", { ascending: false })
         .limit(50)
@@ -101,20 +110,31 @@ export function IncomingRequestBanner() {
       if (!alive || error) return;
       const hydrated = await hydrateRequests((data ?? []) as unknown as RawRow[]);
       if (!alive) return;
-      setQueue(hydrated);
+      // Merge with existing queue: keep any in-flight `active` request and
+      // preserve queue order for items already shown, while picking up any
+      // new pending sessions the DB now knows about. This protects against
+      // a refetch wiping a request the user was mid-interaction with.
+      setQueue((prev) => {
+        const byId = new Map(hydrated.map((r) => [r.id, r] as const));
+        const kept = prev.filter((r) => byId.has(r.id));
+        const keptIds = new Set(kept.map((r) => r.id));
+        const added = hydrated.filter((r) => !keptIds.has(r.id));
+        return [...kept, ...added];
+      });
     };
 
+    refetchRef.current = () => void fetchPending();
     void fetchPending();
 
     const channel = supabase
-      .channel(`incoming-requests-${user.id}`)
+      .channel(`incoming-requests-${userId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "sessions",
-          filter: `teacher_id=eq.${user.id}`,
+          filter: `teacher_id=eq.${userId}`,
         },
         (payload) => {
           if ((payload.new as { status?: string }).status === "pending") {
@@ -128,7 +148,7 @@ export function IncomingRequestBanner() {
           event: "UPDATE",
           schema: "public",
           table: "sessions",
-          filter: `teacher_id=eq.${user.id}`,
+          filter: `teacher_id=eq.${userId}`,
         },
         (payload) => {
           const next = payload.new as { id: string; status: string };
@@ -136,17 +156,53 @@ export function IncomingRequestBanner() {
             setQueue((rs) => rs.filter((r) => r.id !== next.id));
             // If the currently-shown one was acted on elsewhere, dismiss it.
             setActive((curr) => (curr && curr.id === next.id ? null : curr));
+          } else {
+            // A session flipped back to pending (e.g. reschedule). Resync.
+            void fetchPending();
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Realtime is non-durable: INSERTs that fire while the socket is
+        // disconnected are NOT replayed on reconnect. Refetch on every
+        // (re)subscribe so requests created during an outage still appear.
+        if (status === "SUBSCRIBED") void fetchPending();
+      });
 
     return () => {
       alive = false;
       controller.abort();
+      refetchRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [userId]);
+
+  // Tabs that have been backgrounded or offline can miss realtime events.
+  // When the user returns focus to the page, resync so any sessions created
+  // while away show up immediately.
+  useEffect(() => {
+    if (!userId) return;
+    const refetch = () => refetchRef.current?.();
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") refetch();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", refetch);
+      window.addEventListener("online", refetch);
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", refetch);
+        window.removeEventListener("online", refetch);
+      }
+    };
+  }, [userId]);
 
   // Pull the next request from the queue into the active slot. We only do
   // this when there's no active request currently animating.
@@ -206,7 +262,7 @@ export function IncomingRequestBanner() {
       });
       if (error) return toastError(error);
       markSelfAction(active.id, ["session_accepted"]);
-      toast.success(`Accepted — ${active.credits} credits held in escrow`);
+      toast.success(`Accepted. ${active.credits} credits held in escrow`);
       void invalidateCreditBalance();
       removeFromQueue(active.id);
       close();

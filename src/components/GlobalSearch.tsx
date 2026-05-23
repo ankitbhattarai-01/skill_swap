@@ -11,7 +11,6 @@ import {
   Coins,
   Compass,
   History as HistoryIcon,
-  Keyboard,
   LayoutDashboard,
   Loader2,
   MessageSquare,
@@ -727,10 +726,10 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
             setScope(SCOPES[next].key);
           }
         }}
-        placeholder={compact ? "Search..." : "Search skills, people, messages, pages..."}
+        placeholder={compact ? "Search..." : "Search skills, people, sessions..."}
         className={cn(
-          "h-10 rounded-xl border-transparent bg-secondary/50 pl-10 transition-all focus-visible:bg-background focus-visible:ring-primary/40",
-          compact ? (query ? "pr-10" : "pr-3") : "pr-16",
+          "h-10 rounded-full border-border/50 bg-card/50 pl-10 text-sm placeholder:text-muted-foreground/70 transition-all hover:bg-card/70 focus-visible:border-primary/40 focus-visible:bg-background focus-visible:ring-primary/30",
+          query ? "pr-10" : "pr-3",
         )}
         aria-label="Global search"
         aria-expanded={open}
@@ -746,26 +745,18 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
             setResults([]);
             inputRef.current?.focus();
           }}
-          className={cn(
-            "absolute top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
-            compact ? "right-2" : "right-10 lg:right-12",
-          )}
+          className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           aria-label="Clear search"
         >
           <X className="h-3.5 w-3.5" />
         </button>
-      )}
-      {!compact && (
-        <kbd className="absolute right-3 top-1/2 hidden h-5 -translate-y-1/2 items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground lg:inline-flex">
-          <Keyboard className="h-3 w-3" />K
-        </kbd>
       )}
 
       {open && (
         <div
           id="global-search-listbox"
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/70 bg-background shadow-xl"
+          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/60 bg-background/95 shadow-xl backdrop-blur-xl"
         >
           <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border/60 px-2 py-2">
             {SCOPES.map((s) => (

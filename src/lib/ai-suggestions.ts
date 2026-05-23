@@ -84,9 +84,11 @@ function tidySuggestion(s: AiSuggestion): AiSuggestion {
 
 // Mirror of the same fn in supabase/functions/generate-suggestions/index.ts.
 // Converts em/en dashes used as sentence separators into periods, bare dashes
-// into commas, and collapses the leftover whitespace.
+// into commas, and collapses the leftover whitespace. Also rewrites messages
+// that lead with a digit (the prompt forbids it, but cached suggestions from
+// before the prompt update can still slip through).
 function tidyMessage(message: string): string {
-  return message
+  const cleaned = message
     .replace(/\s+[—–]\s+/g, ". ")
     .replace(/[—–]/g, ", ")
     .replace(/\s+\./g, ".")
@@ -94,4 +96,23 @@ function tidyMessage(message: string): string {
     .replace(/\.\s*\./g, ".")
     .replace(/\s{2,}/g, " ")
     .trim();
+  return rewriteLeadingNumber(cleaned);
+}
+
+function rewriteLeadingNumber(msg: string): string {
+  // "1 learner wants X. ..."  /  "3 learners want X. ..."
+  let m = msg.match(/^(\d+)\s+learners?\s+wants?\s+(.+?)\.\s*(.*)$/i);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const skill = m[2].trim();
+    const rest = m[3].trim();
+    const lead =
+      n === 1 ? `Someone wants to learn ${skill}.` : `${skill} has ${n} learners waiting.`;
+    return rest ? `${lead} ${rest}` : lead;
+  }
+  // "5 days since your last session. ..."
+  if (/^\d+\s+days?\s+since\b/i.test(msg)) return `It's been ${msg}`;
+  // "4 sessions this month, ..." / "4 sessions taught this month..."
+  if (/^\d+\s+sessions?\b/i.test(msg)) return `You've had ${msg}`;
+  return msg;
 }

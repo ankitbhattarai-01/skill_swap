@@ -160,10 +160,10 @@ function RootComponent() {
                 <Outlet />
               </div>
             ) : (
-              <div className="flex min-h-screen w-full flex-col md:[zoom:1.1]">
+              <div className="flex min-h-screen w-full flex-col">
                 <SiteHeader sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebar} />
                 <div
-                  className="min-h-screen pt-[calc(118px+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 md:pt-16 md:[padding-left:var(--sidebar-width)]"
+                  className="min-h-screen pt-[calc(118px+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 md:pt-16 md:[padding-left:var(--sidebar-width)] md:transition-[padding-left] md:duration-500 md:ease-[cubic-bezier(0.32,0.72,0,1)]"
                   style={{ "--sidebar-width": `${sidebarCollapsed ? 72 : 192}px` } as CSSProperties}
                 >
                   <ErrorBoundary label="IncomingRequestBanner">

@@ -44,7 +44,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/admin/reports")({
-  head: () => ({ meta: [{ title: "Moderation — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Moderation | SkillSwap" }] }),
   component: AdminReportsPage,
 });
 
@@ -89,12 +89,12 @@ type ReportView = Omit<
 const DISMISS_RESOLUTIONS: { value: ReportResolution; label: string; description: string }[] = [
   {
     value: "no_action",
-    label: "No action — not enough evidence",
+    label: "No action - not enough evidence",
     description: "Report wasn't substantiated. No penalty to anyone.",
   },
   {
     value: "bad_faith",
-    label: "Bad faith — fake or malicious report",
+    label: "Bad faith - fake or malicious report",
     description: "Issues a strike against the REPORTER for filing in bad faith.",
   },
 ];
@@ -102,18 +102,18 @@ const DISMISS_RESOLUTIONS: { value: ReportResolution; label: string; description
 const RESOLVE_RESOLUTIONS: { value: ReportResolution; label: string; description: string }[] = [
   {
     value: "upheld_minor",
-    label: "Upheld — minor (1 strike)",
+    label: "Upheld - minor (1 strike)",
     description: "Confirmed violation. Reported user gets 1 strike.",
   },
   {
     value: "upheld_major",
-    label: "Upheld — major (2 strikes)",
+    label: "Upheld - major (2 strikes)",
     description: "Serious violation. Reported user gets 2 strikes.",
   },
   {
     value: "upheld_severe",
-    label: "Upheld — severe (4 strikes)",
-    description: "Severe violation. 4 strikes — may trigger permanent ban.",
+    label: "Upheld - severe (4 strikes)",
+    description: "Severe violation. 4 strikes may trigger permanent ban.",
   },
 ];
 
@@ -308,16 +308,16 @@ function AdminReportsPage() {
     void queryClient.invalidateQueries({ queryKey: ADMIN_REPORTS_KEY(user?.id) });
     toast.success(
       pendingAction.status === "dismissed" && resolution === "bad_faith"
-        ? "Dismissed — strike issued to reporter"
+        ? "Dismissed - strike issued to reporter"
         : pendingAction.status === "resolved"
-          ? `Resolved — strike issued to reported user`
+          ? `Resolved - strike issued to reported user`
           : `Marked ${pendingAction.status}`,
     );
     setPendingAction(null);
   };
 
   if (authLoading || permissionsQuery.isLoading || authorized === null) {
-    return <PageLoading variant="messages" />;
+    return <PageLoading variant="list-wide" />;
   }
   if (!authorized) return null;
 
@@ -412,7 +412,7 @@ function AdminReportsPage() {
                       {r.reportedUserName ? (
                         <span className="font-semibold">{r.reportedUserName}</span>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">N/A</span>
                       )}
                     </div>
                   </div>

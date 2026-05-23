@@ -86,8 +86,14 @@ export function SessionEventHeadsUp() {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const teardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const userId = user?.id;
+
+  // Keyed on user.id rather than the whole `user` object — Supabase replaces
+  // the User reference on every auth event (token refresh, user update),
+  // and tearing the channel down each time would drop INSERTs that arrive
+  // in the resubscribe gap.
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setQueue([]);
       setActive(null);
       setVisible(false);
@@ -95,14 +101,14 @@ export function SessionEventHeadsUp() {
       return;
     }
     const channel = supabase
-      .channel(`session-events-${user.id}`)
+      .channel(`session-events-${userId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "notifications",
-          filter: `user_id=eq.${user.id}`,
+          filter: `user_id=eq.${userId}`,
         },
         (payload) => {
           const n = payload.new as NotificationRow;
@@ -127,7 +133,7 @@ export function SessionEventHeadsUp() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
     if (active || queue.length === 0) return;

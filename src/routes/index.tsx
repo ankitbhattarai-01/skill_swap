@@ -386,11 +386,11 @@ function HeroCard({
           <div className="relative grid grid-cols-2 gap-x-5 px-5 py-4 sm:gap-x-6 sm:px-7 sm:py-5">
             <Stat
               label={peerCount === 1 ? "Student" : "Students"}
-              value={loading ? "—" : peerCount.toLocaleString()}
+              value={loading ? "-" : peerCount.toLocaleString()}
             />
             <Stat
               label={skillCount === 1 ? "Skill" : "Skills"}
-              value={loading ? "—" : skillCount.toLocaleString()}
+              value={loading ? "-" : skillCount.toLocaleString()}
             />
           </div>
 
@@ -511,7 +511,7 @@ function FeaturedEmpty() {
             Yours could be first.
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            Sign up and list a skill — your name shows up here.
+            Sign up and list a skill. Your name shows up here.
           </div>
         </div>
       </div>
@@ -560,7 +560,7 @@ function HowItWorks() {
             Three steps. <span className="gradient-brand-text">That's it.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted-foreground sm:mt-5 sm:text-lg sm:leading-8">
-            One flat $2/month platform fee — after that, exchange skills with
+            One flat $2/month platform fee. After that, exchange skills with
             any peer, any time.
           </p>
         </div>
@@ -743,7 +743,7 @@ function Momentum({
         ) : (
           <div className="mt-8 rounded-3xl border border-dashed border-border bg-card/40 px-6 py-10 text-center sm:mt-10 sm:px-8 sm:py-12">
             <p className="text-base text-muted-foreground">
-              No skills listed yet. Sign up and add the first one — every peer
+              No skills listed yet. Sign up and add the first one. Every peer
               who joins makes the platform more useful.
             </p>
             <div className="mt-6">

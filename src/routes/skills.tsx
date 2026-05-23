@@ -23,13 +23,13 @@ export const Route = createFileRoute("/skills")({
   }),
   head: () => ({
     meta: [
-      { title: "Browse skills — SkillSwap" },
+      { title: "Browse skills | SkillSwap" },
       {
         name: "description",
         content:
           "A curated catalog of skills peers are teaching on SkillSwap. Sign up to message a peer and book a session.",
       },
-      { property: "og:title", content: "Browse skills — SkillSwap" },
+      { property: "og:title", content: "Browse skills | SkillSwap" },
       {
         property: "og:description",
         content: "Skills shared by students on SkillSwap. No accounts required to browse.",
@@ -321,15 +321,15 @@ function PublicHero({
 
           <div className="grid grid-cols-3 gap-3 sm:gap-4">
             <StatTile
-              value={loading ? "—" : totalSkills.toLocaleString()}
+              value={loading ? "-" : totalSkills.toLocaleString()}
               label={totalSkills === 1 ? "skill" : "skills"}
             />
             <StatTile
-              value={loading ? "—" : totalCategories.toLocaleString()}
+              value={loading ? "-" : totalCategories.toLocaleString()}
               label={totalCategories === 1 ? "category" : "categories"}
             />
             <StatTile
-              value={loading ? "—" : totalTeachers.toLocaleString()}
+              value={loading ? "-" : totalTeachers.toLocaleString()}
               label={totalTeachers === 1 ? "peer teaching" : "peers teaching"}
             />
           </div>
@@ -458,7 +458,7 @@ function EmptyState({ query, category }: { query: string; category: string }) {
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
         {hasFilter
           ? "Try a different category or clear your search."
-          : "Be the first peer to list a skill — every student who joins makes this catalog richer."}
+          : "Be the first peer to list a skill. Every student who joins makes this catalog richer."}
       </p>
       <div className="mt-6">
         <Button variant="hero" size="lg" asChild>
@@ -486,7 +486,7 @@ function PublicCTA() {
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground sm:text-lg">
           Start with your student email and 10 starter credits. One flat $2 a
-          month — no per-session fees.
+          month, no per-session fees.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button variant="hero" size="xl" asChild>

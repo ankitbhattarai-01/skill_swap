@@ -59,7 +59,7 @@ import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 const LEVEL_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3 };
 
 export const Route = createFileRoute("/dashboard")({
-  head: () => ({ meta: [{ title: "Dashboard — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Dashboard | SkillSwap" }] }),
   component: DashboardPage,
 });
 
@@ -196,7 +196,7 @@ type DashboardCache = {
   sessions: SessionRow[];
   recs: AiSuggestion[] | null;
   teacherRatings: [string, TeacherRating][];
-  completedLast30d: number;
+  streak: number;
 };
 
 function getDashboardCache(userId: string) {
@@ -300,6 +300,43 @@ async function loadCompletedSessionCounts(userIds: string[]) {
   return counts;
 }
 
+// Streak = consecutive days with at least one completed session, walking
+// back from today. If today has no completed session yet we start from
+// yesterday — the day isn't over, so a missing entry shouldn't kill the streak.
+async function loadStreak(userId: string): Promise<number> {
+  const since = new Date();
+  since.setDate(since.getDate() - 120);
+  const { data } = await supabase
+    .from("sessions")
+    .select("scheduled_at")
+    .or(`learner_id.eq.${userId},teacher_id.eq.${userId}`)
+    .eq("status", "completed")
+    .gte("scheduled_at", since.toISOString());
+
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const days = new Set<string>();
+  for (const row of data ?? []) {
+    if (!row.scheduled_at) continue;
+    const d = new Date(row.scheduled_at);
+    if (Number.isNaN(d.getTime())) continue;
+    days.add(dayKey(d));
+  }
+  if (!days.size) return 0;
+
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  if (!days.has(dayKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+    if (!days.has(dayKey(cursor))) return 0;
+  }
+  let count = 0;
+  while (days.has(dayKey(cursor))) {
+    count++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
+}
+
 async function loadMyLearningSkills(userId: string) {
   const withMethod = await supabase
     .from("user_learning_skills")
@@ -371,7 +408,7 @@ function DashboardPage() {
     }[]
   >([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [completedLast30d, setCompletedLast30d] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [recs, setRecs] = useState<AiSuggestion[] | null>(null);
   const [recsRefreshing, setRecsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -430,9 +467,9 @@ function DashboardPage() {
     // query lands instead.
     setMyTeaching(cache.myTeaching ?? []);
     setSessions(cache.sessions ?? []);
+    setStreak(cache.streak ?? 0);
     setRecs(cache.recs ?? null);
     setTeacherRatings(new Map(cache.teacherRatings ?? []));
-    setCompletedLast30d(cache.completedLast30d ?? 0);
     setLoading(false);
   }, [user]);
 
@@ -497,25 +534,13 @@ function DashboardPage() {
       }
       setProfile(p as Profile);
 
-      // Streak count for the welcome hero. Fetched in parallel with the main
-      // queries so the chip is set before setLoading(false) and doesn't pop in
-      // after the welcome card has already painted.
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const streakPromise = supabase
-        .from("sessions")
-        .select("id", { count: "exact", head: true })
-        .or(`teacher_id.eq.${user.id},learner_id.eq.${user.id}`)
-        .eq("status", "completed")
-        .gte("updated_at", thirtyDaysAgo)
-        .then(({ count }) => (typeof count === "number" ? count : 0));
-
-      const [learn, myTeach, rawSessions, completedCount] = await Promise.all([
+      const [learn, myTeach, rawSessions, streakCount] = await Promise.all([
         loadMyLearningSkills(user.id),
         loadMyTeachingSkills(user.id),
         queryDashboardSessionRows(user.id),
-        streakPromise,
+        loadStreak(user.id),
       ]);
-      setCompletedLast30d(completedCount);
+      setStreak(streakCount);
 
       const learnRows = learn ?? [];
       setLearning(learnRows);
@@ -773,7 +798,7 @@ function DashboardPage() {
         sessions: sessionList,
         recs,
         teacherRatings: Array.from(ratings.entries()),
-        completedLast30d: completedCount,
+        streak: streakCount,
       });
 
       setLoading(false);
@@ -1028,15 +1053,10 @@ function DashboardPage() {
     <div className="min-h-screen flex flex-col">
       <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-5 md:space-y-6">
         {/* Hero — landing-inspired soft gradient that shifts with time of day. */}
-        <section
-          className={cn(
-            "animate-fade-up relative overflow-hidden rounded-3xl border border-border/40 bg-gradient-to-br p-6 md:p-10",
-            getHeroGradient(),
-          )}
-        >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(124,77,255,0.18),transparent_55%)]" />
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_15%_85%,rgba(34,211,238,0.12),transparent_55%)]" />
-          <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:gap-8">
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          <div className="relative flex flex-col gap-6 p-6 md:p-10 md:flex-row md:items-center md:gap-8">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-muted-foreground">{getGreeting()},</div>
               <h1 className="mt-1 text-3xl md:text-5xl font-bold tracking-tight">{firstName}</h1>
@@ -1074,37 +1094,28 @@ function DashboardPage() {
                 </Button>
               </div>
               <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                <span className="inline-flex items-center gap-1.5">
+                {/* Credits — shown until the CreditsCard takes over at lg. */}
+                <span className="inline-flex items-center gap-1.5 lg:hidden">
                   <Coins className="h-4 w-4 text-amber-500" />
                   <span className="font-semibold">{liveCreditBalance ?? 0}</span>
                   <span className="text-muted-foreground">credits</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Flame className="h-4 w-4 text-orange-500" />
+                  <span className="font-semibold">{streak}</span>
+                  <span className="text-muted-foreground">day streak</span>
                 </span>
                 <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
                 <span className="text-muted-foreground">
                   <span className="font-semibold text-foreground/80">{teachers.length}</span> match
                   {teachers.length === 1 ? "" : "es"}
                 </span>
-                {sessions.length > 0 && (
-                  <>
-                    <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
-                    <span className="text-muted-foreground">
-                      <span className="font-semibold text-foreground/80">{sessions.length}</span>{" "}
-                      active session{sessions.length === 1 ? "" : "s"}
-                    </span>
-                  </>
-                )}
-                {/* Mobile-only inline streak chip. Desktop gets the larger right-side card. */}
-                <span className="md:hidden inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                  <Flame className="h-3 w-3" />
-                  {completedLast30d === 0
-                    ? "Start your streak"
-                    : `${completedLast30d} session${completedLast30d === 1 ? "" : "s"} this month`}
-                </span>
               </div>
             </div>
 
-            {/* Desktop streak card — gamified, simple. Fills the empty right side. */}
-            <StreakCard count={completedLast30d} />
+            {/* Desktop credits card — fills the empty right side with a calm,
+                on-brand summary of the user's balance. */}
+            <CreditsCard credits={liveCreditBalance ?? 0} />
 
           </div>
         </section>
@@ -1148,6 +1159,7 @@ function DashboardPage() {
               icon={<Users className="h-4 w-4 text-brand-purple" />}
               actionLabel="See all"
               actionTo="/explore"
+              actionSearch={{ match: true }}
             >
               {teachersForRow.slice(0, 6).map((t) => {
                 const learningRow = learning.find((l) => l.skill_id === t.skill_id);
@@ -1180,7 +1192,7 @@ function DashboardPage() {
               icon={<HandHeart className="h-4 w-4 text-brand-cyan" />}
               actionLabel="See all"
               actionTo="/explore"
-              actionSearch={{ mode: "learners" }}
+              actionSearch={{ mode: "learners", match: true }}
             >
               {seekers.slice(0, 6).map((s) => {
                 const teachingMode =
@@ -1278,19 +1290,6 @@ function getGreeting(): string {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
-}
-
-// Hero gradient shifts with time of day. All three variants are full literal
-// strings so Tailwind's JIT scanner detects them at build time.
-function getHeroGradient(): string {
-  const h = new Date().getHours();
-  if (h >= 5 && h < 12) {
-    return "from-amber-400/[0.10] via-brand-cyan/[0.06] to-brand-cyan/[0.10]";
-  }
-  if (h < 18) {
-    return "from-brand-purple/10 via-brand-blue/[0.06] to-brand-cyan/10";
-  }
-  return "from-brand-purple/[0.14] via-brand-purple/[0.06] to-indigo-500/[0.10]";
 }
 
 function formatTimeUntil(iso: string): string {
@@ -1530,13 +1529,13 @@ function NextMoveCard({
         <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
           <Sparkles className="h-3.5 w-3.5" /> Welcome to SkillSwap
         </div>
-        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
+        <h2 className="mt-3 text-2xl md:text-3xl font-bold tracking-tight leading-tight">
           Book your first session in 3 steps
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tell us what you want to learn — we'll handle the matching.
+        <p className="mt-2 text-sm md:text-base text-muted-foreground max-w-xl">
+          Pick a skill you want to learn and we'll match you with someone who teaches it.
         </p>
-        <ol className="mt-6 grid gap-3 sm:grid-cols-3 sm:gap-4">
+        <ol className="mt-7 grid gap-4 sm:grid-cols-3">
           <WelcomeStep
             n="1"
             Icon={GraduationCap}
@@ -1553,7 +1552,7 @@ function NextMoveCard({
             n="3"
             Icon={Video}
             title="Meet & learn"
-            body="Join a video session — credits transfer when you're done."
+            body="Hop on a video call and your credits move over after."
           />
         </ol>
         <div className="mt-6">
@@ -1628,49 +1627,26 @@ function TopMatchTile({
   );
 }
 
-function StreakCard({ count }: { count: number }) {
-  // Tiny ladder for the "next milestone" hint. Keeps it goal-oriented but not
-  // pushy — once you're past 30, we stop suggesting a target.
-  const milestones = [3, 5, 10, 20, 30];
-  const nextMilestone = milestones.find((m) => m > count) ?? null;
-  const progress = nextMilestone ? Math.min(100, Math.round((count / nextMilestone) * 100)) : 100;
-  const isNew = count === 0;
-
+function CreditsCard({ credits }: { credits: number }) {
   return (
-    <div className="hidden md:flex md:w-44 lg:w-52 shrink-0 flex-col items-center justify-center rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/15 via-amber-500/10 to-orange-500/10 px-5 py-5 shadow-sm">
-      <Flame
-        className={cn(
-          "h-7 w-7 text-amber-500",
-          !isNew && "drop-shadow-[0_0_8px_rgba(245,158,11,0.45)]",
-        )}
-      />
-      <div className="mt-1 text-4xl font-bold tabular-nums text-amber-600 dark:text-amber-400">
-        {count}
+    <div className="relative hidden lg:flex lg:w-56 shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-white/15 bg-[linear-gradient(135deg,#5978c4_0%,#1ead8d_100%)] px-5 py-5 text-white shadow-glow dark:border-white/[0.06] dark:bg-none dark:bg-[#141416] dark:text-foreground dark:shadow-none">
+      <div className="absolute -top-2 -right-2 text-white/15 dark:text-white/[0.04]">
+        <Coins className="h-16 w-16" strokeWidth={1.5} />
       </div>
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80">
-        {count === 1 ? "session" : "sessions"} this month
+      <div className="relative">
+        <div className="text-xs font-semibold uppercase tracking-wide text-white/85 dark:text-muted-foreground">
+          Your Credits
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-4xl font-bold tabular-nums dark:text-foreground">{credits}</span>
+          <Coins className="h-5 w-5 text-amber-200 drop-shadow-[0_0_6px_rgba(253,224,71,0.45)] dark:text-amber-300/80 dark:drop-shadow-none" />
+        </div>
       </div>
-      {isNew ? (
-        <div className="mt-3 text-center text-[10px] font-semibold uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80">
-          Book a session to start your streak
-        </div>
-      ) : nextMilestone ? (
-        <>
-          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-amber-500/15">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width]"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <div className="mt-1.5 text-[10px] text-muted-foreground">
-            {nextMilestone - count} to {nextMilestone}
-          </div>
-        </>
-      ) : (
-        <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-          On fire
-        </div>
-      )}
+      <p className="relative mt-3 text-[11px] leading-relaxed text-white/85 dark:text-muted-foreground">
+        Use credits to learn.
+        <br />
+        Earn credits by teaching.
+      </p>
     </div>
   );
 }
@@ -1687,15 +1663,15 @@ function WelcomeStep({
   body: string;
 }) {
   return (
-    <li className="rounded-2xl border border-border/40 bg-card/40 p-4">
-      <div className="flex items-center gap-2">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-purple/15 text-[11px] font-bold text-brand-purple">
+    <li className="group relative rounded-2xl border border-border/40 bg-card/60 backdrop-blur p-5 transition-all hover:-translate-y-0.5 hover:border-brand-purple/40 hover:shadow-md hover:shadow-brand-purple/5">
+      <div className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-brand-purple/15 to-brand-cyan/15 ring-1 ring-brand-purple/15">
+        <Icon className="h-5 w-5 text-brand-purple" />
+        <span className="absolute -top-1.5 -right-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-background ring-1 ring-border text-[10px] font-bold text-foreground/70">
           {n}
         </span>
-        <Icon className="h-4 w-4 text-brand-cyan" />
       </div>
-      <div className="mt-2 text-sm font-semibold">{title}</div>
-      <p className="mt-1 text-xs text-muted-foreground leading-snug">{body}</p>
+      <div className="mt-4 text-sm font-semibold leading-tight">{title}</div>
+      <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{body}</p>
     </li>
   );
 }
@@ -1707,8 +1683,6 @@ type AiInsightCardProps = {
 };
 
 function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
-  const [expanded, setExpanded] = useState(false);
-
   if (recs === null) {
     return (
       <section className="rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
@@ -1725,8 +1699,7 @@ function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
 
   if (recs.length === 0) return null;
 
-  const visible = recs.slice(0, 2);
-  const rest = recs.slice(2, 5);
+  const visible = recs.slice(0, 4);
 
   return (
     <section className="relative overflow-hidden rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
@@ -1737,7 +1710,7 @@ function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
             <Sparkles className="h-3.5 w-3.5 text-brand-cyan" />
           </div>
           <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground font-semibold">
-            AI Insight
+            AI Suggestions
           </span>
         </div>
         <button
@@ -1757,31 +1730,6 @@ function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
           <InsightTile key={`v-${i}`} suggestion={r} />
         ))}
       </div>
-
-      {rest.length > 0 && (
-        <>
-          {expanded && (
-            <div className="relative mt-3 grid gap-3 border-t border-border/40 pt-4 md:grid-cols-2 md:gap-4">
-              {rest.map((r, i) => (
-                <InsightTile key={`r-${i}`} suggestion={r} />
-              ))}
-            </div>
-          )}
-          <div className="relative mt-3 flex justify-center">
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              aria-label={expanded ? "Show fewer insights" : "Show more insights"}
-              title={expanded ? "Show fewer insights" : "Show more insights"}
-              className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
-            >
-              <ChevronDown
-                className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
-              />
-            </button>
-          </div>
-        </>
-      )}
     </section>
   );
 }
@@ -1810,7 +1758,7 @@ function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
         >
           <Icon className={cn("h-5 w-5", meta.fg)} />
         </div>
-        <p className="text-sm leading-snug pt-1.5">{suggestion.message}</p>
+        <p className="text-sm leading-snug pt-1.5 line-clamp-2">{suggestion.message}</p>
         <ArrowRight className="ml-auto h-4 w-4 shrink-0 mt-2 text-muted-foreground/40 transition-all group-hover:text-brand-purple group-hover:translate-x-0.5" />
       </div>
     </>
@@ -1869,7 +1817,7 @@ type PeopleSectionProps = {
   icon: React.ReactNode;
   actionLabel?: string;
   actionTo?: string;
-  actionSearch?: Record<string, string>;
+  actionSearch?: Record<string, string | boolean>;
   children: React.ReactNode;
 };
 
@@ -2208,7 +2156,7 @@ function ActiveSessionsStrip({
                 {earlyReleaseAvailable && (
                   <ConfirmAction
                     title="Release credits to your teacher now?"
-                    description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room — otherwise the release will be blocked.`}
+                    description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room, otherwise the release will be blocked.`}
                     confirmLabel="Release now"
                     onConfirm={() => onComplete(session)}
                   >

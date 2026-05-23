@@ -8,11 +8,14 @@ import { TrackProposalDialog } from "@/components/TrackProposalDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
-import { findAcceptedSession } from "@/lib/sessions";
+import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { playRequestSentChime } from "@/lib/sounds";
+import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ArrowLeft,
   BookOpen,
+  CalendarPlus,
   GraduationCap,
   Loader2,
   MessageCircle,
@@ -70,6 +73,9 @@ function PublicUserPage() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [openingChat, setOpeningChat] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [myCredits, setMyCredits] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -168,6 +174,23 @@ function PublicUserPage() {
     };
   }, [userId]);
 
+  useEffect(() => {
+    if (!user) {
+      setMyCredits(null);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    (async () => {
+      const { data } = await supabase.rpc("my_credit_balance").abortSignal(controller.signal);
+      if (alive) setMyCredits(typeof data === "number" ? data : null);
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [user]);
+
   if (loading) {
     return <PageLoading variant="profile" />;
   }
@@ -175,7 +198,7 @@ function PublicUserPage() {
   if (!profile) {
     return (
       <div className="min-h-screen flex flex-col">
-        <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
+        <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6">
           <div className="glass rounded-3xl p-10 text-center">
             <h1 className="text-2xl font-bold">Profile not found</h1>
             <Button variant="hero" className="mt-6" asChild>
@@ -217,36 +240,77 @@ function PublicUserPage() {
     navigate({ to: "/messages", search: { s: data.id } });
   };
 
+  const primaryTeachingSkill = teaching.find((skill) => skill.skills?.id) ?? null;
+
+  const openRequest = () => {
+    if (!user) {
+      navigate({ to: "/login", search: { redirect: `/users/${userId}` } });
+      return;
+    }
+    if (!primaryTeachingSkill?.skills?.id) {
+      toast.error("This student has not listed a teaching skill yet.");
+      return;
+    }
+    setRequestOpen(true);
+  };
+
+  const confirmRequest = async (duration: SessionDuration, scheduledAt: string): Promise<void> => {
+    if (!user || !primaryTeachingSkill?.skills?.id) return;
+    setRequesting(true);
+    try {
+      const { sessionId, error } = await getOrCreateSession({
+        learnerId: user.id,
+        teacherId: userId,
+        initiatorId: user.id,
+        skillId: primaryTeachingSkill.skills.id,
+        creditsPerHour: primaryTeachingSkill.credits_per_hour,
+        durationMinutes: duration,
+        scheduledAt,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      if (sessionId) {
+        playRequestSentChime();
+        toast.success("Session requested. You can message after it is accepted.");
+        setRequestOpen(false);
+      }
+    } finally {
+      setRequesting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 md:py-8 space-y-6">
+      <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-4 md:space-y-6">
         {/* Hero — gradient glass shell matching Explore */}
         <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
-          <div className="relative p-6 md:p-8">
-            <Button variant="ghost" size="sm" asChild className="-ml-2 mb-5 text-muted-foreground hover:text-foreground">
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          <div className="relative p-5 md:p-8">
+            <Button variant="ghost" size="sm" asChild className="-ml-2 mb-3 md:mb-5 text-muted-foreground hover:text-foreground">
               <Link to="/explore" preload="intent">
                 <ArrowLeft className="h-4 w-4" />
                 Back to Explore
               </Link>
             </Button>
-            <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-              <div className="flex flex-col gap-5 sm:flex-row sm:items-center min-w-0">
+            <div className="flex flex-col gap-4 md:gap-6 md:flex-row md:items-start md:justify-between">
+              <div className="flex flex-row items-center gap-4 sm:gap-5 sm:items-center min-w-0">
                 <UserAvatar
                   name={profile.full_name}
                   url={profile.avatar_url}
-                  className="h-24 w-24 rounded-3xl ring-4 ring-white/10 shadow-glow"
-                  fallbackClassName="text-3xl rounded-3xl"
+                  className="h-16 w-16 sm:h-24 sm:w-24 rounded-3xl ring-4 ring-white/10 shadow-glow shrink-0"
+                  fallbackClassName="text-2xl sm:text-3xl rounded-3xl"
                 />
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-3xl md:text-4xl font-bold leading-tight">
+                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold leading-tight">
                     {profile.full_name ?? "Student"}
                   </h1>
                   {profile.bio && (
-                    <p className="mt-2 max-w-2xl text-muted-foreground">{profile.bio}</p>
+                    <p className="mt-1.5 sm:mt-2 max-w-2xl text-sm sm:text-base text-muted-foreground">{profile.bio}</p>
                   )}
-                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-muted-foreground">
                     {averageRating !== null ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-400">
                         <Star className="h-3.5 w-3.5 fill-amber-400" />
@@ -272,6 +336,21 @@ function PublicUserPage() {
               </div>
               {user?.id !== userId && (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-end">
+                  {primaryTeachingSkill && (
+                    <Button
+                      variant="hero"
+                      size="lg"
+                      onClick={openRequest}
+                      disabled={requesting}
+                    >
+                      {requesting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CalendarPlus className="h-4 w-4" />
+                      )}
+                      Request session
+                    </Button>
+                  )}
                   <Button variant="hero" size="lg" onClick={openChat} disabled={openingChat}>
                     {openingChat ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -358,8 +437,8 @@ function PublicUserPage() {
           </SkillSection>
         </div>
 
-        <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
-          <div className="mb-5 flex items-center gap-3">
+        <section className="glass rounded-3xl border border-white/10 p-5 md:p-7">
+          <div className="mb-4 md:mb-5 flex items-center gap-3">
             <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400/15">
               <MessageSquareQuote className="h-4 w-4 text-amber-400" />
             </div>
@@ -408,6 +487,20 @@ function PublicUserPage() {
           )}
         </section>
       </main>
+      {requestOpen && primaryTeachingSkill?.skills && (
+        <SessionRequestDialog
+          open={requestOpen}
+          onOpenChange={setRequestOpen}
+          title="Request a session"
+          skillName={primaryTeachingSkill.skills.name}
+          creditsPerHour={primaryTeachingSkill.credits_per_hour}
+          availableCredits={myCredits}
+          busy={requesting}
+          learnerId={user?.id}
+          teacherId={userId}
+          onConfirm={confirmRequest}
+        />
+      )}
       {trackDialog && (
         <TrackProposalDialog
           open={trackDialog !== null}
@@ -437,8 +530,8 @@ function SkillSection({
 }) {
   const tonedBg = tone === "cyan" ? "bg-brand-cyan/15" : "bg-brand-purple/15";
   return (
-    <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
-      <div className="mb-5 flex items-center gap-3">
+    <section className="glass rounded-3xl border border-white/10 p-5 md:p-7">
+      <div className="mb-4 md:mb-5 flex items-center gap-3">
         <div
           className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${tonedBg}`}
         >

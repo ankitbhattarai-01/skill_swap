@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/tracks")({
-  head: () => ({ meta: [{ title: "Learning Tracks — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Learning Tracks | SkillSwap" }] }),
   component: TracksPage,
 });
 
@@ -101,7 +101,7 @@ function TracksPage() {
     try {
       const { error } = await supabase.rpc("accept_track", { p_track_id: id });
       if (error) return toast.error(error.message);
-      toast.success("Track accepted — sessions scheduled");
+      toast.success("Track accepted. Sessions scheduled.");
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not accept track");
@@ -153,15 +153,15 @@ function TracksPage() {
     };
   }, [tracks]);
 
-  if (authLoading || loading) return <PageLoading variant="messages" />;
+  if (authLoading || loading) return <PageLoading variant="hero-stats" />;
   if (!user) return null;
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative flex flex-col gap-6 p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="flex items-start gap-4">

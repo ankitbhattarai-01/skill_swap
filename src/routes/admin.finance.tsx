@@ -395,7 +395,7 @@ function AdminFinancePage() {
     }
   };
 
-  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="dashboard" />;
+  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;
   if (!user) return null;
 
   if (!canRead) {
@@ -525,7 +525,7 @@ function AdminFinancePage() {
               No requests match the current filters.
             </div>
           ) : (
-            <Table>
+            <Table className="table-stack-mobile">
               <TableHeader>
                 <TableRow>
                   <TableHead>Maker</TableHead>
@@ -542,20 +542,20 @@ function AdminFinancePage() {
                     onClick={() => setDetailRequest(request)}
                     className="cursor-pointer hover:bg-muted/30"
                   >
-                    <TableCell className="max-w-[180px] truncate">
+                    <TableCell data-label="Maker" className="md:max-w-[180px] md:truncate break-anywhere">
                       {request.maker_email ?? request.maker_id ?? "Deleted admin"}
                     </TableCell>
-                    <TableCell>
-                      <div className="space-y-1">
+                    <TableCell data-label="Action">
+                      <div className="space-y-1 text-right md:text-left">
                         <div>{payloadText(request.payload, "action_type")}</div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-muted-foreground break-anywhere">
                           {payloadText(request.payload, "target_user_id") !== "-"
                             ? payloadText(request.payload, "target_user_id")
                             : payloadText(request.payload, "session_id")}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label="Status">
                       <Badge
                         variant={
                           request.status === "pending"
@@ -568,7 +568,7 @@ function AdminFinancePage() {
                         {request.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{request.ticket_ref ?? "-"}</TableCell>
+                    <TableCell data-label="Ticket">{request.ticket_ref ?? "-"}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
                         <Button
@@ -777,10 +777,10 @@ function AdminFinancePage() {
                 />
                 <DetailField
                   label="Checker"
-                  value={detailRequest.checker_email ?? detailRequest.checker_id ?? "—"}
+                  value={detailRequest.checker_email ?? detailRequest.checker_id ?? "N/A"}
                 />
                 <DetailField label="Reason code" value={detailRequest.reason_code} />
-                <DetailField label="Ticket" value={detailRequest.ticket_ref ?? "—"} />
+                <DetailField label="Ticket" value={detailRequest.ticket_ref ?? "N/A"} />
                 <DetailField label="Created" value={formatDate(detailRequest.created_at)} />
                 <DetailField label="Decided" value={formatDate(detailRequest.decided_at)} />
                 <DetailField label="Executed" value={formatDate(detailRequest.executed_at)} />

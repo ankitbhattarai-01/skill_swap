@@ -345,17 +345,17 @@ function SessionsPage() {
   };
 
   if (authLoading) {
-    return <PageLoading />;
+    return <PageLoading variant="hero-stats" />;
   }
 
   const isInitialLoading = loading && sessions.length === 0;
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
+    <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6">
       <section className="space-y-6">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative flex flex-col gap-6 p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
@@ -363,7 +363,7 @@ function SessionsPage() {
                   Your <span className="gradient-brand-text">Sessions</span>
                 </h1>
                 <p className="mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
-                  Track every booking in one place — accept, join, and review.
+                  Track every booking in one place. Accept, join, and review.
                 </p>
               </div>
               <Button variant="hero" asChild className="self-start md:self-auto">
@@ -782,7 +782,7 @@ function SessionCard({
           {earlyReleaseAvailable && (
             <ConfirmAction
               title="Release credits to your teacher now?"
-              description={`This sends ${session.credits} credits to ${otherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room — otherwise the release will be blocked.`}
+              description={`This sends ${session.credits} credits to ${otherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room, otherwise the release will be blocked.`}
               confirmLabel="Release now"
               onConfirm={onComplete}
             >

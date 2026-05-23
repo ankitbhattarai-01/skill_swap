@@ -372,7 +372,7 @@ function VideoCallPage() {
   }, [apiRoomName, navigate, session, videoCallsEnabled, viewer]);
 
   if (authLoading || loading || !session || !viewer) {
-    return <PageLoading variant="detail" />;
+    return <PageLoading variant="video" />;
   }
 
   if (!videoCallsEnabled) {
@@ -459,7 +459,7 @@ function VideoCallPage() {
           <p className="mt-1 text-amber-900/85 dark:text-amber-100/85">
             {isTeacher
               ? "As the teacher, click Log-in inside the call window and sign in with Google to start the room. You only need to do this once per browser."
-              : "Waiting for the teacher to start the room. They'll sign in once with Google — you don't need to log in."}
+              : "Waiting for the teacher to start the room. They'll sign in once with Google. You don't need to log in."}
           </p>
         </div>
       )}

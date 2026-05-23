@@ -84,7 +84,7 @@ function ResetPasswordPage() {
               </div>
               <h1 className="text-2xl font-bold text-center">Create a new password</h1>
               <p className="text-sm text-muted-foreground text-center mt-1">
-                Use at least 6 characters for your new password.
+                Use at least 8 characters for your new password.
               </p>
 
               <form onSubmit={handleSubmit} className="mt-6 space-y-4">
@@ -96,7 +96,7 @@ function ResetPasswordPage() {
                     type="password"
                     autoComplete="new-password"
                     required
-                    minLength={6}
+                    minLength={8}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="glass border-white/10 mt-1.5 h-11"
@@ -110,7 +110,7 @@ function ResetPasswordPage() {
                     type="password"
                     autoComplete="new-password"
                     required
-                    minLength={6}
+                    minLength={8}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     className="glass border-white/10 mt-1.5 h-11"

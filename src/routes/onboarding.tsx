@@ -22,7 +22,7 @@ import { AvailabilityEditor } from "@/components/AvailabilityEditor";
 import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 
 export const Route = createFileRoute("/onboarding")({
-  head: () => ({ meta: [{ title: "Onboarding — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Onboarding | SkillSwap" }] }),
   component: OnboardingPage,
 });
 

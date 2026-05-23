@@ -89,32 +89,37 @@
 .dark {
   color-scheme: dark;
 
-  --background: #050505;
-  --foreground: #f9fafb;
+  /* Premium dark palette: layered off-blacks instead of pure #050505.
+     A single restrained violet accent replaces the bright violet→teal duo —
+     the gradient saturation made the previous dark mode read as "cheap."
+     Borders and glows are pulled back so depth comes from surface hierarchy,
+     not color. */
+  --background: #0a0a0a;
+  --foreground: #f4f4f5;
 
-  --card: rgb(17 17 17 / 0.8);
-  --card-foreground: #f9fafb;
+  --card: rgb(20 20 22 / 0.92);
+  --card-foreground: #f4f4f5;
 
-  --popover: rgb(17 17 17 / 0.95);
-  --popover-foreground: #f9fafb;
+  --popover: rgb(20 20 22 / 0.96);
+  --popover-foreground: #f4f4f5;
 
   --primary: #a78bfa;
-  --primary-foreground: #050505;
+  --primary-foreground: #0a0a0a;
 
-  --secondary: #1f1f1f;
-  --secondary-foreground: #e5e7eb;
+  --secondary: #18181b;
+  --secondary-foreground: #e4e4e7;
 
-  --muted: #1f1f1f;
-  --muted-foreground: #9ca3af;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
 
   --accent: #34d399;
-  --accent-foreground: #050505;
+  --accent-foreground: #0a0a0a;
 
   --destructive: #f87171;
-  --destructive-foreground: #050505;
+  --destructive-foreground: #0a0a0a;
 
-  --border: rgb(255 255 255 / 0.1);
-  --input: rgb(255 255 255 / 0.05);
+  --border: rgb(255 255 255 / 0.06);
+  --input: rgb(255 255 255 / 0.04);
   --ring: #a78bfa;
 
   --brand-blue: #a78bfa;
@@ -123,24 +128,47 @@
   --brand-green: #34d399;
   --brand-yellow: #fbbf24;
 
-  --glass-bg: rgb(17 17 17 / 0.7);
-  --glass-border: rgb(255 255 255 / 0.1);
-  --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.4);
-  --gradient-brand: linear-gradient(135deg, #a78bfa, #34d399);
-  --gradient-brand-soft: linear-gradient(135deg, rgb(167 139 250 / 0.18), rgb(52 211 153 / 0.18));
-  --gradient-hero: radial-gradient(at 20% 20%, rgb(167 139 250 / 0.2) 0%, transparent 52%),
-                   radial-gradient(at 82% 12%, rgb(52 211 153 / 0.14) 0%, transparent 52%),
-                   var(--background);
+  /* Fully opaque in dark mode. Translucent glass cards on top of a near-black
+     page that also paints decorative radial gradients produced a visible
+     violet "fog" bleeding through hero surfaces — it read as a smeary shadow
+     instead of elevation. Going opaque kills the bleed without changing the
+     card visual elsewhere. */
+  --glass-bg: #141416;
+  --glass-border: rgb(255 255 255 / 0.06);
+  /* No drop shadow in dark. Heavy black box-shadows on a near-black page
+     read as a smudged halo around the element ("shadow bending space"),
+     not as elevation. Premium dark UIs use a 1px border + a hairline inset
+     highlight instead. */
+  --glass-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+  /* Restrained near-monochrome violet, not a two-color rainbow. Used by .gradient-brand —
+     keeps the hero button / active sidebar item from feeling like a candy gradient. */
+  --gradient-brand: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  --gradient-brand-soft: linear-gradient(135deg, rgb(167 139 250 / 0.12), rgb(167 139 250 / 0.04));
+  /* Flat in dark mode. The radial wash was the other half of the "bending
+     shadow" effect on hero cards. */
+  --gradient-hero: var(--background);
   --page-background: var(--background);
-  --shadow-glow: 0 16px 42px -18px rgb(167 139 250 / 0.55);
-  --shadow-glow-blue: 0 12px 34px -16px rgb(52 211 153 / 0.5);
-  --shadow-card: var(--glass-shadow);
+  /* Same story — no diffuse drop shadow in dark. Cards rely on the border
+     + opaque surface color for separation. */
+  --shadow-glow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+  --shadow-glow-blue: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset;
 }
 
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  scrollbar-gutter: stable;
+}
+
+/* Radix's scroll-lock (used by DropdownMenu/Popover/Dialog) adds padding-right
+   to <body> to compensate for the removed scrollbar. Combined with our stable
+   scrollbar gutter on <html>, that double-compensates and shifts page content
+   left when a menu opens. Cancel the body-level shift so layout stays put. */
+body[data-scroll-locked] {
+  margin-right: 0 !important;
+  padding-right: 0 !important;
 }
 
 html, body {
@@ -240,6 +268,15 @@ body.messages-page-open {
     background-clip: text;
     color: transparent;
   }
+  /* In dark mode the button gradient runs darker (restrained violet) but text
+     needs to stay readable on near-black, so brand-text gets its own brighter
+     near-monochrome violet. */
+  .dark .gradient-brand-text {
+    background: linear-gradient(135deg, #c4b5fd, #a78bfa);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
   .gradient-hero {
     background: var(--gradient-hero);
   }
@@ -285,13 +322,13 @@ body.messages-page-open {
     box-shadow: 0 0 20px rgb(124 58 237 / 0.3);
   }
   .dark .glow-primary {
-    box-shadow: 0 0 30px rgb(167 139 250 / 0.4), 0 0 60px rgb(167 139 250 / 0.2);
+    box-shadow: 0 0 24px rgb(167 139 250 / 0.18);
   }
   .glow-accent {
     box-shadow: 0 0 20px rgb(16 185 129 / 0.3);
   }
   .dark .glow-accent {
-    box-shadow: 0 0 30px rgb(52 211 153 / 0.4), 0 0 60px rgb(52 211 153 / 0.2);
+    box-shadow: 0 0 24px rgb(52 211 153 / 0.18);
   }
   .pb-safe {
     padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
@@ -306,6 +343,87 @@ body.messages-page-open {
     padding-right: env(safe-area-inset-right);
   }
 }
+
+/* Responsive guards — desktop layouts are preserved (all rules scoped to
+   max-width: 767px, i.e. below Tailwind's `md` breakpoint). */
+@media (max-width: 767px) {
+  /* Guard against horizontal overflow from wide content. The site has many
+     fixed-width sub-grids (admin filters, side-by-side metric tiles) that
+     can exceed 360px on a narrow phone; capping <html>/<body> to 100vw and
+     hiding overflow-x lets accidental overflow scroll within a container
+     rather than pushing the whole page sideways. */
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  /* Long unbroken tokens (UUIDs, urls, emails) breaking layout. */
+  .break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* Tables → stacked cards. Opt-in via `table-stack-mobile` on the <table>.
+     Cells without a data-label get treated as full-width rows so we don't
+     need to thread labels through every column. */
+  .table-stack-mobile {
+    display: block;
+    width: 100%;
+  }
+  .table-stack-mobile thead {
+    display: none;
+  }
+  .table-stack-mobile tbody {
+    display: block;
+    width: 100%;
+  }
+  .table-stack-mobile tr {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    background: var(--card);
+    padding: 0.75rem;
+    margin-bottom: 0.625rem;
+  }
+  .table-stack-mobile td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.375rem 0;
+    border: 0 !important;
+    width: 100%;
+    text-align: left;
+  }
+  .table-stack-mobile td[data-label]::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .table-stack-mobile td.text-right {
+    justify-content: flex-end;
+  }
+  /* Action cells (typically last) often hold a row of buttons. Let them
+     wrap to the next line and align right. */
+  .table-stack-mobile td:last-child {
+    border-top: 1px solid var(--border);
+    margin-top: 0.375rem;
+    padding-top: 0.625rem;
+  }
+
+  /* Make dialogs sit comfortably on a 360px phone. The shadcn Dialog uses
+     max-w-lg with no horizontal padding from the viewport, so on narrow
+     screens it can clip. */
+  [role="dialog"][data-state="open"] {
+    max-width: calc(100vw - 1rem) !important;
+  }
+}
+
 
 @keyframes float {
   0%, 100% { transform: translateY(0px); }

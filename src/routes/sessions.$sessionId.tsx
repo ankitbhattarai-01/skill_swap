@@ -8,18 +8,12 @@ import { ReportDialog } from "@/components/ReportDialog";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { getVideoRoomUrl } from "@/lib/jitsi";
-import {
-  canJoinSession,
-  describeJoinWindow,
-  buildSessionIcsFile,
-  downloadSessionIcs,
-} from "@/lib/sessions";
+import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { RescheduleSection } from "@/components/RescheduleSection";
 import type { Enums } from "@/integrations/supabase/types";
 import {
   ArrowLeft,
-  Calendar,
   CalendarClock,
   Check,
   Clock,
@@ -197,7 +191,7 @@ function SessionPage() {
     // neutral success message and let the history page show the detail.
     toast.success(
       session.status === "pending_review"
-        ? "Session settled — see history for the outcome"
+        ? "Session settled. See history for the outcome."
         : "Session completed and credits transferred",
     );
     navigate({ to: "/history" });
@@ -305,28 +299,6 @@ function SessionPage() {
   const canEarlyRelease = isAcceptedSession && !isTeacher && earlyReleaseUnlocked;
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
   const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
-  const handleAddToCalendar = () => {
-    if (!session.scheduled_at) {
-      toast.error("Pick a date and time first.");
-      return;
-    }
-    const link = getVideoRoomUrl({
-      link: session.meet_link,
-      sessionId: session.id,
-      skillName: session.skills?.name,
-    });
-    const ics = buildSessionIcsFile({
-      sessionId: session.id,
-      skillName: session.skills?.name ?? "Skill session",
-      scheduledAt: session.scheduled_at,
-      durationMinutes: session.duration_minutes,
-      meetLink: link || null,
-      organizerName: session.teacherName,
-      attendeeName: session.learnerName,
-    });
-    downloadSessionIcs(`skillswap-${session.id}.ics`, ics);
-  };
-
   const statusTone = sessionStatusTone(session.status);
   const scheduledLabel = session.scheduled_at
     ? new Date(session.scheduled_at).toLocaleString(undefined, {
@@ -340,10 +312,10 @@ function SessionPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
+      <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">
@@ -540,12 +512,6 @@ function SessionPage() {
                         {joinHint ?? "Join Session"}
                       </Button>
                     )}
-                    {session.scheduled_at && (
-                      <Button variant="outline" onClick={handleAddToCalendar}>
-                        <Calendar className="h-4 w-4" />
-                        Add to Calendar
-                      </Button>
-                    )}
                   </div>
                 ) : (
                   <Button
@@ -630,7 +596,7 @@ function SessionPage() {
                     "We'll release escrow based on who attended the call. If both showed up, the teacher receives the credits. " +
                     "If someone didn't show, you'll be refunded automatically."
                   }
-                  confirmLabel="All good — settle now"
+                  confirmLabel="All good, settle now"
                   onConfirm={completeSession}
                 >
                   <Button variant="hero" className="w-full" disabled={busy === "complete"}>
@@ -684,7 +650,7 @@ function SessionPage() {
             {canEarlyRelease && (
               <ConfirmAction
                 title="Release credits to your teacher now?"
-                description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room — otherwise the release will be blocked and credits will release automatically once the session wraps up.`}
+                description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room, otherwise the release will be blocked and credits will release automatically once the session wraps up.`}
                 confirmLabel="Release now"
                 onConfirm={completeSession}
               >

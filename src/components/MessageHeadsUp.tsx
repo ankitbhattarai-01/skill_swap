@@ -44,9 +44,14 @@ export function MessageHeadsUp() {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const teardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const userId = user?.id;
+
   // Subscribe to new chat messages for sessions the user participates in.
+  // Keyed on user.id, not the full user object — Supabase emits a fresh
+  // User reference on every auth event and we don't want to tear down /
+  // re-subscribe the channel each time and risk dropping messages.
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setQueue([]);
       setActive(null);
       setVisible(false);
@@ -58,7 +63,7 @@ export function MessageHeadsUp() {
     const controller = new AbortController();
 
     const enqueueMessage = async (msg: MessageRow) => {
-      if (!alive || msg.sender_id === user.id || seenRef.current.has(msg.id)) return;
+      if (!alive || msg.sender_id === userId || seenRef.current.has(msg.id)) return;
       seenRef.current.add(msg.id);
 
       const { data: session } = await supabase
@@ -70,7 +75,7 @@ export function MessageHeadsUp() {
       if (!alive || !session) return;
 
       const sess = session as unknown as SessionPreview;
-      if (sess.learner_id !== user.id && sess.teacher_id !== user.id) return;
+      if (sess.learner_id !== userId && sess.teacher_id !== userId) return;
 
       const { data: sender } = await supabase
         .from("profiles")
@@ -94,14 +99,14 @@ export function MessageHeadsUp() {
     };
 
     const channel = supabase
-      .channel(`message-headsup-${user.id}`)
+      .channel(`message-headsup-${userId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "messages",
-          filter: `sender_id=neq.${user.id}`,
+          filter: `sender_id=neq.${userId}`,
         },
         (payload) => void enqueueMessage(payload.new as MessageRow),
       )
@@ -112,7 +117,7 @@ export function MessageHeadsUp() {
       controller.abort();
       void supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [userId]);
 
   // Pull next from queue when nothing is active.
   useEffect(() => {

@@ -185,7 +185,7 @@ function AdminSessionsPage() {
     }
   }, [authLoading, navigate, user]);
 
-  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="dashboard" />;
+  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;
   if (!user) return null;
 
   if (!canRead) {
@@ -253,7 +253,7 @@ function AdminSessionsPage() {
         )}
         {!dashboardQuery.isError && dashboard?._fallback && (
           <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-500">
-            <div className="font-semibold">Fallback mode — admin sessions RPC not deployed</div>
+            <div className="font-semibold">Fallback mode: admin sessions RPC not deployed</div>
             <p className="mt-1 text-xs">
               The numbers above only count sessions where <em>you</em> are a participant. The full
               admin dashboard (all users' sessions, escrow flags, report counts, joined emails)
@@ -366,7 +366,7 @@ function AdminSessionsPage() {
           </div>
         </div>
 
-        <Table>
+        <Table className="table-stack-mobile">
           <TableHeader>
             <TableRow>
               <TableHead>Session</TableHead>
@@ -384,37 +384,41 @@ function AdminSessionsPage() {
                 onClick={() => setDetailSession(session)}
                 className="cursor-pointer hover:bg-muted/30"
               >
-                <TableCell>
-                  <div className="space-y-1">
-                    <div className="font-medium">{session.skill_name ?? "Unknown skill"}</div>
-                    <div className="text-xs text-muted-foreground">{session.id}</div>
+                <TableCell data-label="Session">
+                  <div className="space-y-1 text-right md:text-left">
+                    <div className="font-medium break-anywhere">{session.skill_name ?? "Unknown skill"}</div>
+                    <div className="text-xs text-muted-foreground break-anywhere">{session.id}</div>
                     <Badge variant="outline" className="capitalize">
                       {session.status}
                     </Badge>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="space-y-1 text-sm">
+                <TableCell data-label="Participants">
+                  <div className="space-y-1 text-sm text-right md:text-left break-anywhere">
                     <div>Learner: {session.learner_email ?? session.learner_id ?? "-"}</div>
                     <div>Teacher: {session.teacher_email ?? session.teacher_id ?? "-"}</div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div>{session.credits}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {session.duration_minutes} minutes
+                <TableCell data-label="Credits">
+                  <div className="text-right md:text-left">
+                    <div>{session.credits}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {session.duration_minutes} minutes
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="text-sm">{formatDate(session.scheduled_at)}</div>
-                  {session.updated_at && (
-                    <div className="text-[11px] text-muted-foreground">
-                      Updated {formatDate(session.updated_at)}
-                    </div>
-                  )}
+                <TableCell data-label="Scheduled">
+                  <div className="text-right md:text-left">
+                    <div className="text-sm">{formatDate(session.scheduled_at)}</div>
+                    {session.updated_at && (
+                      <div className="text-[11px] text-muted-foreground">
+                        Updated {formatDate(session.updated_at)}
+                      </div>
+                    )}
+                  </div>
                 </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-2">
+                <TableCell data-label="Risk">
+                  <div className="flex flex-wrap gap-2 justify-end md:justify-start">
                     {session.escrow_held && (
                       <Badge variant="secondary" className="gap-1">
                         <Coins className="h-3 w-3" /> escrow
@@ -426,7 +430,7 @@ function AdminSessionsPage() {
                       </Badge>
                     )}
                     {!session.escrow_held && session.open_report_count === 0 && (
-                      <span className="text-xs text-muted-foreground">—</span>
+                      <span className="text-xs text-muted-foreground">N/A</span>
                     )}
                   </div>
                 </TableCell>
@@ -499,8 +503,8 @@ function AdminSessionsPage() {
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <DetailField label="Skill" value={detailSession.skill_name ?? "—"} />
-                <DetailField label="Category" value={detailSession.skill_category ?? "—"} />
+                <DetailField label="Skill" value={detailSession.skill_name ?? "N/A"} />
+                <DetailField label="Category" value={detailSession.skill_category ?? "N/A"} />
                 <DetailField label="Status" value={detailSession.status} />
                 <DetailField label="Credits" value={String(detailSession.credits)} />
                 <DetailField label="Duration" value={`${detailSession.duration_minutes} min`} />
@@ -516,11 +520,11 @@ function AdminSessionsPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <DetailField
                   label="Learner"
-                  value={detailSession.learner_email ?? detailSession.learner_id ?? "—"}
+                  value={detailSession.learner_email ?? detailSession.learner_id ?? "N/A"}
                 />
                 <DetailField
                   label="Teacher"
-                  value={detailSession.teacher_email ?? detailSession.teacher_id ?? "—"}
+                  value={detailSession.teacher_email ?? detailSession.teacher_id ?? "N/A"}
                 />
               </div>
             </div>

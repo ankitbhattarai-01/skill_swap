@@ -215,7 +215,7 @@ function AdminUsersPage() {
     toast.success("PII reveal logged.");
   };
 
-  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="dashboard" />;
+  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;
   if (!user) return null;
 
   if (!canRead) {
@@ -270,7 +270,7 @@ function AdminUsersPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-[2fr_1fr_1fr_180px]">
+        <div className="mt-5 grid gap-3 md:grid-cols-[2fr_1fr_1fr_180px]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -342,7 +342,7 @@ function AdminUsersPage() {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>
             Showing {filteredUsers.length}
-            {hasFilters ? ` of ${allUsers.length} loaded` : ""} (max 50 per query — narrow the
+            {hasFilters ? ` of ${allUsers.length} loaded` : ""} (max 50 per query, narrow the
             search for more)
           </span>
           {hasFilters && (
@@ -367,8 +367,8 @@ function AdminUsersPage() {
         )}
       </section>
 
-      <section className="mt-5 rounded-2xl border border-border/70 bg-card/80 p-4">
-        <Table>
+      <section className="mt-5 rounded-2xl border border-border/70 bg-card/80 p-2 sm:p-4">
+        <Table className="table-stack-mobile">
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
@@ -385,23 +385,25 @@ function AdminUsersPage() {
                 onClick={() => setDetailUser(row)}
                 className="cursor-pointer hover:bg-muted/30"
               >
-                <TableCell>
-                  <div className="space-y-1">
-                    <div className="font-medium">{row.masked_email ?? "masked user"}</div>
-                    <div className="text-xs text-muted-foreground">{row.masked_name ?? row.id}</div>
+                <TableCell data-label="User">
+                  <div className="space-y-1 text-right md:text-left">
+                    <div className="font-medium break-anywhere">{row.masked_email ?? "masked user"}</div>
+                    <div className="text-xs text-muted-foreground break-anywhere">{row.masked_name ?? row.id}</div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="text-sm">{row.session_count} sessions</div>
-                  <div className="text-xs text-muted-foreground">
-                    {row.report_count} reports
-                    {row.report_count > 0 && (
-                      <FileText className="ml-1 inline h-3 w-3 text-amber-400" />
-                    )}
+                <TableCell data-label="Activity">
+                  <div className="text-right md:text-left">
+                    <div className="text-sm">{row.session_count} sessions</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.report_count} reports
+                      {row.report_count > 0 && (
+                        <FileText className="ml-1 inline h-3 w-3 text-amber-400" />
+                      )}
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="flex flex-col items-start gap-1">
+                <TableCell data-label="Admin">
+                  <div className="flex flex-row items-center gap-1 md:flex-col md:items-start">
                     <Badge variant={row.has_admin_role ? "default" : "outline"}>
                       {row.has_admin_role ? "privileged" : "standard"}
                     </Badge>
@@ -412,7 +414,7 @@ function AdminUsersPage() {
                     )}
                   </div>
                 </TableCell>
-                <TableCell>{formatDate(row.last_sign_in_at)}</TableCell>
+                <TableCell data-label="Last sign-in">{formatDate(row.last_sign_in_at)}</TableCell>
                 <TableCell className="text-right">
                   <div
                     className="flex flex-wrap justify-end gap-2"
@@ -527,14 +529,14 @@ function AdminUsersPage() {
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <DetailField label="Masked email" value={detailUser.masked_email ?? "—"} />
-                <DetailField label="Masked name" value={detailUser.masked_name ?? "—"} />
+                <DetailField label="Masked email" value={detailUser.masked_email ?? "N/A"} />
+                <DetailField label="Masked name" value={detailUser.masked_name ?? "N/A"} />
                 <DetailField
                   label="Role"
                   value={detailUser.has_admin_role ? "privileged" : "standard"}
                 />
                 <DetailField label="Onboarded" value={detailUser.onboarded ? "yes" : "no"} />
-                <DetailField label="Learning mode" value={detailUser.learning_mode ?? "—"} />
+                <DetailField label="Learning mode" value={detailUser.learning_mode ?? "N/A"} />
                 <DetailField label="Sessions" value={String(detailUser.session_count)} />
                 <DetailField label="Reports" value={String(detailUser.report_count)} />
                 <DetailField label="Created" value={formatDate(detailUser.created_at)} />

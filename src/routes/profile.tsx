@@ -14,7 +14,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { notifyProfileUpdated } from "@/lib/profile-events";
 import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
-import { Camera, ChevronDown, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Camera, ChevronDown, KeyRound, Loader2, Plus, Trash2, X } from "lucide-react";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
 import { cn } from "@/lib/utils";
 import {
@@ -24,9 +24,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toastError } from "@/lib/errors";
 
 export const Route = createFileRoute("/profile")({
-  head: () => ({ meta: [{ title: "Profile — SkillSwap" }] }),
+  head: () => ({ meta: [{ title: "Profile | SkillSwap" }] }),
   component: ProfilePage,
 });
 
@@ -290,12 +299,116 @@ const NameBioForm = memo(
   }),
 );
 
+const ChangePasswordDialog = memo(function ChangePasswordDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const handleOpenChange = (next: boolean) => {
+    onOpenChange(next);
+    if (!next) {
+      setNewPassword("");
+      setConfirmNewPassword("");
+    }
+  };
+
+  const submit = async () => {
+    if (newPassword.length < 8) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+    setChangingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setChangingPassword(false);
+    if (error) return toastError(error);
+    handleOpenChange(false);
+    toast.success("Password updated.");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="glass-strong border-white/10 sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Change password</DialogTitle>
+          <DialogDescription>
+            Choose a new password for your account (at least 8 characters).
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+          className="space-y-4"
+        >
+          <div>
+            <Label htmlFor="new-password">New password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="glass mt-1.5 h-10 border-white/10"
+            />
+          </div>
+          <div>
+            <Label htmlFor="confirm-new-password">Confirm new password</Label>
+            <Input
+              id="confirm-new-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              className="glass mt-1.5 h-10 border-white/10"
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => handleOpenChange(false)}
+              disabled={changingPassword}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="hero" size="sm" disabled={changingPassword}>
+              {changingPassword && <Loader2 className="h-3 w-3 animate-spin" />}
+              Update password
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+});
+
 function ProfilePage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState<ProfileState | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  // Only users with an email/password identity can change a password. OAuth-
+  // only accounts (Google, GitHub) have no password on file — they recover
+  // access via the OAuth provider, not via this dialog.
+  const hasPasswordAuth = (user?.identities ?? []).some((i) => i.provider === "email");
   const [openSessionCount, setOpenSessionCount] = useState(0);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const nameBioRef = useRef<NameBioFormHandle>(null);
@@ -736,17 +849,10 @@ function ProfilePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-4">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-4">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.16),transparent_55%)] pointer-events-none" />
-
-          <div className="relative h-1 w-full bg-white/[0.06]" aria-hidden>
-            <div
-              className="h-full bg-gradient-to-r from-brand-purple via-brand-cyan to-brand-blue transition-[width] duration-500"
-              style={{ width: `${profileProgress}%` }}
-            />
-          </div>
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.16),transparent_55%)] pointer-events-none dark:hidden" />
 
           <div className="relative p-5 md:p-6">
             <div className="flex flex-col gap-5 md:flex-row md:items-start md:gap-6">
@@ -1173,7 +1279,19 @@ function ProfilePage() {
           <AvailabilityEditor defaultMode="teach" />
         </section>
 
-        <div className="flex justify-end pt-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+          {hasPasswordAuth && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full border border-white/10 bg-white/5 px-4 text-xs text-muted-foreground hover:bg-white/10 hover:text-foreground"
+              onClick={() => setPasswordDialogOpen(true)}
+            >
+              <KeyRound className="h-3 w-3" />
+              Change password
+            </Button>
+          )}
           <ConfirmAction
             title="Delete your account?"
             description={
@@ -1200,6 +1318,11 @@ function ProfilePage() {
             </Button>
           </ConfirmAction>
         </div>
+
+        <ChangePasswordDialog
+          open={passwordDialogOpen}
+          onOpenChange={setPasswordDialogOpen}
+        />
       </main>
     </div>
   );

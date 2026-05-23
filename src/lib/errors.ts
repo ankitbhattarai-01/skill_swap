@@ -70,7 +70,7 @@ const KNOWN_PATTERNS: Array<{ test: RegExp; message: string }> = [
   // Messages
   {
     test: /Sharing phone numbers in chat is not allowed/i,
-    message: "You can't share phone numbers in chat — keep it on SkillSwap.",
+    message: "You can't share phone numbers in chat. Keep it on SkillSwap.",
   },
   {
     test: /Sharing external meeting links/i,
@@ -110,7 +110,7 @@ const KNOWN_PATTERNS: Array<{ test: RegExp; message: string }> = [
   {
     test: /You have already reported this user multiple times/i,
     message:
-      "You've already reported this user recently — a moderator will review the existing reports.",
+      "You've already reported this user recently. A moderator will review the existing reports.",
   },
   { test: /Choose something to report/i, message: "Pick something to report." },
   {
@@ -157,7 +157,7 @@ const KNOWN_PATTERNS: Array<{ test: RegExp; message: string }> = [
       "Too many verification emails were requested. Please wait a few minutes before trying again.",
   },
   { test: /Not authenticated/i, message: "Please log in first." },
-  { test: /JWT expired/i, message: "Your session expired — please log in again." },
+  { test: /JWT expired/i, message: "Your session expired. Please log in again." },
   {
     test: /(failed to fetch|networkerror|fetch failed|load failed)/i,
     message:

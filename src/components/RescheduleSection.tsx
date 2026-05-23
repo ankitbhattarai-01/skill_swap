@@ -93,7 +93,7 @@ export function RescheduleSection({
       toast.error(error.message);
       return;
     }
-    toast.success("Reschedule proposed — waiting for the other party to accept");
+    toast.success("Reschedule proposed. Waiting for the other party to accept.");
     setProposeOpen(false);
     setProposeDraft("");
     setProposeNote("");
@@ -109,7 +109,7 @@ export function RescheduleSection({
       toast.error(error.message);
       return;
     }
-    toast.success("Reschedule accepted — session time updated");
+    toast.success("Reschedule accepted. Session time updated.");
     await loadProposal();
     onScheduleChanged();
   };

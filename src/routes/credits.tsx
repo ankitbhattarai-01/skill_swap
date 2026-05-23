@@ -266,15 +266,15 @@ function CreditsPage() {
   );
 
   if (authLoading || loading || !profile) {
-    return <PageLoading />;
+    return <PageLoading variant="hero-stats" />;
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-[18px] sm:px-[18px] md:py-6">
+    <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6">
       <section className="space-y-6">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-          <div className="absolute inset-0 gradient-hero pointer-events-none" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none" />
+          <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative flex flex-col gap-6 p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="flex items-start gap-4">
@@ -326,36 +326,7 @@ function CreditsPage() {
           </div>
         </section>
 
-        <section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
-          <div className="mb-5 flex items-center gap-3">
-            <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
-              <Gift className="h-4 w-4 text-brand-purple" />
-            </div>
-            <h2 className="text-lg font-semibold leading-tight">How Credits Work</h2>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-3">
-            <HowItWorksCard
-              title="Earn Credits"
-              description="Teach your skills to others and earn credits for each completed session."
-              tone="earned"
-              icon={ArrowDownLeft}
-            />
-            <HowItWorksCard
-              title="Spend Credits"
-              description="Use your credits to book sessions and learn new skills from peers."
-              tone="spent"
-              icon={ArrowUpRight}
-            />
-            <HowItWorksCard
-              title="Bonus Credits"
-              description="Get bonus credits for completing challenges, referrals, and achievements."
-              tone="bonus"
-              icon={Gift}
-            />
-          </div>
-        </section>
-
-        <section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+<section className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">
@@ -428,80 +399,33 @@ function SummaryCard({
   return (
     <article
       className={cn(
-        "group rounded-2xl border border-white/10 bg-white/5 px-5 py-5 transition-all hover:-translate-y-0.5 sm:rounded-3xl sm:px-6 sm:py-6",
+        "group rounded-2xl border border-white/10 bg-white/5 px-5 py-4 transition-all hover:-translate-y-0.5 sm:px-5 sm:py-5",
         toneStyles.hover,
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
           <div
             className={cn(
-              "mt-3 flex items-baseline gap-1.5 text-4xl font-bold leading-none sm:text-5xl",
+              "mt-2 flex items-baseline gap-1 text-4xl font-bold leading-none sm:text-5xl",
               toneStyles.value,
             )}
           >
             {value}
-            <span className="text-base font-medium text-muted-foreground sm:text-lg">cr</span>
+            <span className="text-sm font-medium text-muted-foreground">cr</span>
           </div>
-          <p className="mt-4 text-xs text-muted-foreground sm:text-sm">{caption}</p>
+          <p className="mt-3 text-xs text-muted-foreground">{caption}</p>
         </div>
         <div
           className={cn(
-            "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-110",
             toneStyles.badge,
           )}
         >
-          <Icon className="h-5 w-5" />
+          <Icon className="h-4 w-4" />
         </div>
       </div>
-    </article>
-  );
-}
-
-function HowItWorksCard({
-  title,
-  description,
-  tone,
-  icon: Icon,
-}: {
-  title: string;
-  description: string;
-  tone: "earned" | "spent" | "bonus";
-  icon: LucideIcon;
-}) {
-  const styles = {
-    earned: {
-      badge: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
-      hover: "hover:border-brand-cyan/30 hover:shadow-glow-blue",
-    },
-    spent: {
-      badge: "bg-orange-400/15 text-orange-400 ring-1 ring-orange-400/20",
-      hover: "hover:border-orange-400/30",
-    },
-    bonus: {
-      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
-      hover: "hover:border-brand-purple/30 hover:shadow-glow",
-    },
-  }[tone];
-
-  return (
-    <article
-      className={cn(
-        "group rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:-translate-y-0.5",
-        styles.hover,
-      )}
-    >
-      <div
-        className={cn(
-          "flex h-11 w-11 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
-          styles.badge,
-        )}
-      >
-        <Icon className="h-5 w-5" />
-      </div>
-      <h3 className="mt-4 text-base font-semibold sm:text-lg">{title}</h3>
-      <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{description}</p>
     </article>
   );
 }

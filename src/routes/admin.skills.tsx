@@ -134,7 +134,7 @@ function AdminSkillsPage() {
     await invalidate();
   };
 
-  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="dashboard" />;
+  if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;
   if (!user) return null;
 
   if (!canRead) {
@@ -224,7 +224,7 @@ function AdminSkillsPage() {
 
       <section className="mt-5 rounded-2xl border border-border/70 bg-card/80 p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="relative w-72">
+          <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
@@ -261,7 +261,7 @@ function AdminSkillsPage() {
             />
           )
         ) : (
-          <Table>
+          <Table className="table-stack-mobile">
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
@@ -277,17 +277,17 @@ function AdminSkillsPage() {
                 const inUse = skill.teaching_count + skill.learning_count + skill.session_count > 0;
                 return (
                   <TableRow key={skill.id}>
-                    <TableCell className="font-medium">{skill.name}</TableCell>
-                    <TableCell>
+                    <TableCell data-label="Name" className="font-medium">{skill.name}</TableCell>
+                    <TableCell data-label="Category">
                       {skill.category ? (
                         <Badge variant="outline">{skill.category}</Badge>
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">N/A</span>
                       )}
                     </TableCell>
-                    <TableCell>{skill.teaching_count}</TableCell>
-                    <TableCell>{skill.learning_count}</TableCell>
-                    <TableCell>{skill.session_count}</TableCell>
+                    <TableCell data-label="Teaching">{skill.teaching_count}</TableCell>
+                    <TableCell data-label="Learning">{skill.learning_count}</TableCell>
+                    <TableCell data-label="Sessions">{skill.session_count}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
