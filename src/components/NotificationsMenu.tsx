@@ -13,6 +13,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import {
+  clearClearedHorizon,
+  clearedHorizonKey,
+  readClearedHorizon,
+  writeClearedHorizon,
+} from "@/lib/notifications-horizon";
 import type { Json } from "@/integrations/supabase/types";
 
 type Notification = {
@@ -133,6 +139,11 @@ export function NotificationsMenu() {
   // DB rows and the fallback poller happily re-injects the same messages on
   // next mount because the in-closure Set never learned about them.
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  // Cleared-horizon timestamp (ms epoch). Anything created at-or-before this
+  // is filtered out everywhere — DB load, realtime INSERT, fallback poll.
+  // This is the durable suppression mechanism; seenMessageIds is the
+  // best-effort dedupe for individual dismisses.
+  const clearedHorizonRef = useRef(0);
 
   const unreadCount = notifications.filter((notification) => !notification.read_at).length;
 
@@ -159,7 +170,16 @@ export function NotificationsMenu() {
     if (!user) return;
     let alive = true;
     const controller = new AbortController();
-    const cachedNotifications = readCachedNotifications(user.id);
+    clearedHorizonRef.current = readClearedHorizon(user.id);
+    const horizonFilter = (createdAtIso: string) => {
+      if (!clearedHorizonRef.current) return true;
+      const t = Date.parse(createdAtIso);
+      return Number.isFinite(t) ? t > clearedHorizonRef.current : true;
+    };
+
+    const cachedNotifications = readCachedNotifications(user.id).filter((n) =>
+      horizonFilter(n.created_at),
+    );
     if (cachedNotifications.length) setNotifications(cachedNotifications);
     try {
       seenMessageIdsRef.current = new Set<string>(
@@ -184,13 +204,19 @@ export function NotificationsMenu() {
         .abortSignal(controller.signal);
 
       if (alive) {
-        const dbNotifications = error ? [] : ((data ?? []) as Notification[]);
+        const rawDbNotifications = error ? [] : ((data ?? []) as Notification[]);
+        // Defense in depth: if a previous Clear all's DELETE silently failed
+        // (RLS hiccup, expired token), the rows are still in the DB. Hide
+        // them anyway — the user has expressed intent that they're gone.
+        const dbNotifications = rawDbNotifications.filter((n) => horizonFilter(n.created_at));
         // Record every DB-backed message notification's underlying messageId so
         // the fallback poller won't re-create it after the user dismisses.
         markMessagesSeen(
           dbNotifications.map(getNotificationMessageId).filter((id): id is string => Boolean(id)),
         );
-        const fallbackNotifications = readFallbackNotifications(user.id);
+        const fallbackNotifications = readFallbackNotifications(user.id).filter((n) =>
+          horizonFilter(n.created_at),
+        );
         const merged = mergeNotifications(fallbackNotifications, dbNotifications);
         setNotifications(merged);
         writeCachedNotifications(user.id, merged);
@@ -217,6 +243,15 @@ export function NotificationsMenu() {
     const addMessageNotification = async (message: MessagePayload) => {
       if (!alive || message.sender_id === user.id || seenMessageIdsRef.current.has(message.id))
         return;
+      // Suppress anything sent at-or-before the last Clear all. This is the
+      // line that actually stops the poller from resurrecting cleared
+      // notifications on refresh — the seen-id set alone wasn't enough
+      // because legacy DB rows have no `messageId` in metadata, so they
+      // never made it into the set.
+      if (!horizonFilter(message.created_at)) {
+        markMessagesSeen([message.id]);
+        return;
+      }
 
       const { data: sessionData } = await supabase
         .from("sessions")
@@ -350,10 +385,19 @@ export function NotificationsMenu() {
     // restores both UI and the two cache layers (otherwise we'd leave the
     // bell empty while the server still has every row).
     const previous = notifications;
-    // Mark every cleared message notification's underlying messageId as seen.
-    // Without this, deleting the DB rows only removes them until the next
-    // mount, when pollRecentMessages re-fetches the same messages and the
-    // fallback path re-injects them — the "they come back after refresh" bug.
+    const previousHorizonIso = window.localStorage.getItem(clearedHorizonKey(user.id));
+    // Set the horizon BEFORE deleting so any realtime DELETE callback that
+    // re-runs loadNotifications sees the new horizon and filters correctly.
+    // Anything created at-or-before this instant is suppressed forever on
+    // this device — covers (a) DB rows that survived a failed delete and
+    // (b) legacy message notifications whose metadata predates `messageId`,
+    // which the seen-id set could not protect against.
+    const horizonIso = new Date().toISOString();
+    writeClearedHorizon(user.id, horizonIso);
+    clearedHorizonRef.current = Date.parse(horizonIso);
+    // Belt-and-braces: still mark every cleared message notification's
+    // underlying messageId as seen, so the realtime fallback path skips
+    // them without paying the timestamp comparison cost.
     markMessagesSeen(
       previous.map(getNotificationMessageId).filter((id): id is string => Boolean(id)),
     );
@@ -362,6 +406,15 @@ export function NotificationsMenu() {
     writeCachedNotifications(user.id, []);
     const { error } = await supabase.from("notifications").delete().eq("user_id", user.id);
     if (error) {
+      // Roll back horizon too — if the delete didn't happen the user should
+      // see their notifications return on next refresh, not stay hidden.
+      if (previousHorizonIso) {
+        writeClearedHorizon(user.id, previousHorizonIso);
+        clearedHorizonRef.current = Date.parse(previousHorizonIso) || 0;
+      } else {
+        clearClearedHorizon(user.id);
+        clearedHorizonRef.current = 0;
+      }
       setNotifications(previous);
       writeFallbackNotifications(user.id, previous);
       writeCachedNotifications(user.id, previous);

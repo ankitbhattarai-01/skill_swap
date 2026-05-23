@@ -23,6 +23,7 @@ import { PageLoading } from "@/components/PageLoading";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/lib/auth-context";
+import { writeClearedHorizon } from "@/lib/notifications-horizon";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/notifications")({
@@ -198,6 +199,13 @@ function NotificationsPage() {
     if (readFilter === "unread") query = query.is("read_at", null);
     if (readFilter === "read") query = query.not("read_at", "is", null);
     const { error } = await query;
+    // When clearing the unfiltered view, also raise the bell dropdown's
+    // "cleared horizon" so its fallback poll won't resurrect the same
+    // messages (see src/lib/notifications-horizon.ts). Filtered clears
+    // intentionally don't touch the horizon since they're surgical.
+    if (!error && typeFilter === "all" && readFilter === "all") {
+      writeClearedHorizon(user.id, new Date().toISOString());
+    }
 
     setBusy(false);
     setClearAllOpen(false);
