@@ -3,7 +3,6 @@ export type CreateVideoRoomPayload = {
   skillName?: string | null;
 };
 
-const PUBLIC_JITSI_DOMAIN = "meet.jit.si";
 const JAAS_DOMAIN = "8x8.vc";
 
 export function getJaasAppId(): string | null {
@@ -15,9 +14,14 @@ export function isJaasMode() {
   return Boolean(getJaasAppId());
 }
 
+// Returns the JaaS domain when configured, or "" when not. The public
+// meet.jit.si fallback was removed because it has no per-room
+// authorization — anyone with the URL could enter the call. Callers
+// should use isJaasMode() (or rely on the empty return) to gate UI
+// instead of silently downgrading to an insecure provider.
 export function getJitsiDomain() {
-  if (isJaasMode()) return import.meta.env.VITE_JITSI_DOMAIN || JAAS_DOMAIN;
-  return import.meta.env.VITE_JITSI_DOMAIN || PUBLIC_JITSI_DOMAIN;
+  if (!isJaasMode()) return "";
+  return import.meta.env.VITE_JITSI_DOMAIN || JAAS_DOMAIN;
 }
 
 function makeRawRoomName(sessionId: string, skillName?: string | null) {
@@ -38,16 +42,13 @@ function withTenantPrefix(rawRoomName: string) {
 
 export function isJitsiRoomUrl(link: string | null | undefined) {
   if (!link) return false;
+  if (!isJaasMode()) return false;
   try {
     const url = new URL(link);
     if (url.protocol !== "https:") return false;
     if (url.hostname !== getJitsiDomain()) return false;
-
-    if (isJaasMode()) {
-      const appId = getJaasAppId();
-      return appId ? url.pathname.startsWith(`/${appId}/`) : false;
-    }
-    return true;
+    const appId = getJaasAppId();
+    return appId ? url.pathname.startsWith(`/${appId}/`) : false;
   } catch {
     return false;
   }
@@ -69,15 +70,21 @@ export function getVideoRoomUrl({
 }) {
   const existing = sanitizeVideoRoomUrl(link);
   if (existing) return existing;
+  // No JaaS = no safe room. Returning "" lets callers (Join buttons,
+  // session detail pages) treat the room as unavailable instead of
+  // silently sending users to an unauthenticated meet.jit.si link.
+  if (!isJaasMode()) return "";
 
   const domain = getJitsiDomain();
   const path = withTenantPrefix(makeRawRoomName(sessionId, skillName));
   return `https://${domain}/${path}`;
 }
 
-// Returns the roomName as the External API expects it. In JaaS the API takes
-// the tenant-prefixed form (`<APP_ID>/<room>`); on meet.jit.si it's bare.
+// Returns the roomName as the External API expects it (tenant-prefixed
+// `<APP_ID>/<room>`). Returns "" outside JaaS mode — callers must not
+// initialise the External API without a real tenant.
 export function getApiRoomName(sessionId: string, skillName?: string | null) {
+  if (!isJaasMode()) return "";
   return withTenantPrefix(makeRawRoomName(sessionId, skillName));
 }
 
@@ -107,6 +114,11 @@ export async function createVideoRoom({
   skillName,
 }: CreateVideoRoomPayload): Promise<{ link: string }> {
   if (!sessionId) throw new Error("Missing session id");
+  if (!isJaasMode()) {
+    throw new Error(
+      "Video calls are not configured for this environment. Ask an admin to set VITE_JAAS_APP_ID.",
+    );
+  }
   return { link: getVideoRoomUrl({ sessionId, skillName }) };
 }
 
@@ -134,6 +146,11 @@ let externalApiPromise: Promise<JitsiExternalApiConstructor> | null = null;
 export function loadJitsiExternalApi(): Promise<JitsiExternalApiConstructor> {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("Jitsi requires a browser environment"));
+  }
+  if (!isJaasMode()) {
+    return Promise.reject(
+      new Error("Video calls are not configured for this environment."),
+    );
   }
   if (window.JitsiMeetExternalAPI) {
     return Promise.resolve(window.JitsiMeetExternalAPI);

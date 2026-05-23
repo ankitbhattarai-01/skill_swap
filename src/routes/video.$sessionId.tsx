@@ -393,17 +393,28 @@ function VideoCallPage() {
     return <PageLoading variant="video" />;
   }
 
-  if (!videoCallsEnabled) {
+  // Refuse to render the call surface when no authenticated provider is
+  // configured. The previous behaviour fell back to public meet.jit.si with
+  // a deterministic room name — anyone with that URL could enter the room
+  // without joining the app. Now we treat "no JaaS" the same as the admin
+  // disable flag and route the user back to chat instead.
+  if (!videoCallsEnabled || !isJaasMode()) {
+    const adminDisabled = !videoCallsEnabled;
     return (
       <main className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-3xl flex-col items-center justify-center px-4 py-10">
         <div className="glass flex w-full flex-col items-center rounded-3xl p-8 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
             <VideoOff className="h-6 w-6" />
           </div>
-          <h1 className="text-xl font-semibold">Video calls are temporarily disabled</h1>
+          <h1 className="text-xl font-semibold">
+            {adminDisabled
+              ? "Video calls are temporarily disabled"
+              : "Video calls are not configured"}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            An administrator has disabled in-app video calling. You can still chat and reschedule
-            from the session page.
+            {adminDisabled
+              ? "An administrator has disabled in-app video calling. You can still chat and reschedule from the session page."
+              : "This deployment does not have a video provider configured. You can still chat and reschedule from the session page."}
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             <Button asChild variant="outline">
