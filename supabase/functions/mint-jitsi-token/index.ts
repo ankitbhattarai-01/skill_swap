@@ -64,6 +64,20 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
     const user = userData.user;
 
+    // Refuse JaaS tokens for admin-suspended accounts. is_suspended_self()
+    // is a SECURITY DEFINER RPC that wraps the private suspension helper —
+    // it returns boolean without leaking the suspended_at column to the
+    // caller's role. We treat an RPC error as a hard fail rather than
+    // letting the call slip through, since failing open here would defeat
+    // the purpose of the gate.
+    const { data: suspended, error: suspErr } = await supabase.rpc("is_suspended_self");
+    if (suspErr) {
+      return json(500, { error: "Could not verify account status" });
+    }
+    if (suspended === true) {
+      return json(403, { error: "Your account is suspended and cannot join video calls." });
+    }
+
     const rawBody = await req.json().catch(() => null);
     const parsed = RequestSchema.safeParse(rawBody);
     if (!parsed.success) {
