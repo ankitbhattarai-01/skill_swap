@@ -207,18 +207,34 @@ function VideoCallPage() {
 
   // Listen for a decline coming back from the other party so the caller
   // doesn't sit indefinitely in an empty Jitsi room.
+  //
+  // Previously this used Supabase Realtime Broadcast on a per-session
+  // channel — broadcast has no sender authentication, so anyone with the
+  // session id could push a fake decline. We now subscribe to
+  // postgres_changes on call_decline_signals (RLS-gated to participants),
+  // and only act when the inserted row's decliner is the counterparty.
   useEffect(() => {
     if (!session || !user) return;
+    const otherId = session.teacher_id === user.id ? session.learner_id : session.teacher_id;
     const channel = supabase
-      .channel(`call-decline-${session.id}`, {
-        config: { broadcast: { self: false } },
-      })
-      .on("broadcast", { event: "call_declined" }, () => {
-        const otherName =
-          session.teacher_id === user.id ? session.learnerName : session.teacherName;
-        toast.error(`${otherName} declined the call`);
-        navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
-      })
+      .channel(`call-decline-table-${session.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "call_decline_signals",
+          filter: `session_id=eq.${session.id}`,
+        },
+        (msg) => {
+          const row = msg.new as { decliner_id?: string };
+          if (row?.decliner_id !== otherId) return;
+          const otherName =
+            session.teacher_id === user.id ? session.learnerName : session.teacherName;
+          toast.error(`${otherName} declined the call`);
+          navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
+        },
+      )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -281,9 +297,9 @@ function VideoCallPage() {
       // is forgiving but a tab that stops heartbeating (closed, crashed,
       // forged-from-console) stops accruing credited time within ~90s.
       stopHeartbeat();
-      void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
+      void supabase.rpc("record_session_heartbeat" as never, { p_session_id: session.id } as never);
       heartbeatTimer = window.setInterval(() => {
-        void supabase.rpc("record_session_heartbeat", { p_session_id: session.id });
+        void supabase.rpc("record_session_heartbeat" as never, { p_session_id: session.id } as never);
       }, 30_000);
     };
 

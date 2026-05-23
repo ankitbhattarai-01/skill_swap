@@ -75,17 +75,51 @@ export function IncomingCallToast() {
   useEffect(() => {
     if (!user) return;
 
+    let cancelled = false;
     const channel = supabase
       .channel(`call-signal-${user.id}`, { config: { broadcast: { self: false } } })
       .on("broadcast", { event: "call_ringing" }, (msg) => {
+        // Broadcast channels have no sender authentication — anyone who
+        // knows the recipient's user id can publish a fake call_ringing
+        // event. Validate the payload against the sessions table before
+        // showing the toast: the session must exist, be in a callable
+        // state, and have THIS user as a participant with the claimed
+        // caller as the counterparty. RLS on `sessions` enforces the
+        // participant gate, so a non-participant simply gets no row back.
         const payload = msg.payload as CallRingingPayload;
-        setCall(payload);
-        // Animate in on next frame.
-        requestAnimationFrame(() => setVisible(true));
+        if (
+          !payload?.sessionId ||
+          !payload?.callerId ||
+          typeof payload.callerName !== "string"
+        ) {
+          return;
+        }
+        void (async () => {
+          const { data: session } = await supabase
+            .from("sessions")
+            .select("id, learner_id, teacher_id, status")
+            .eq("id", payload.sessionId)
+            .maybeSingle();
+          if (cancelled || !session) return;
+          const isParticipant =
+            session.learner_id === user.id || session.teacher_id === user.id;
+          const counterpartyId =
+            session.learner_id === user.id ? session.teacher_id : session.learner_id;
+          if (
+            !isParticipant ||
+            payload.callerId !== counterpartyId ||
+            (session.status !== "accepted" && session.status !== "active")
+          ) {
+            return;
+          }
+          setCall(payload);
+          requestAnimationFrame(() => setVisible(true));
+        })();
       })
       .subscribe();
 
     return () => {
+      cancelled = true;
       stopRing();
       void supabase.removeChannel(channel);
     };

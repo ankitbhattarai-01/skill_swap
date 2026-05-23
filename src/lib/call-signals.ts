@@ -49,33 +49,21 @@ export async function sendCallRinging(
   }
 }
 
-// Decline goes on a per-session channel rather than the caller's user-wide
-// channel so the caller's video-route listener doesn't have to share a
-// channel name with IncomingCallToast (separate logical purpose).
+// Decline is persisted to call_decline_signals (RLS-gated) instead of
+// broadcast. Broadcast has no sender authentication — anyone authenticated
+// who knew a sessionId could fake a decline and kick the legitimate caller
+// out of an in-progress room. The RLS policy on call_decline_signals only
+// permits inserts when the caller is a real participant of the named
+// session, so only the actual callee can manifest a decline event. The
+// caller's video route subscribes via postgres_changes on the table and
+// gets RLS-filtered notifications.
 export async function sendCallDeclined(
   _targetUserId: string,
   payload: CallDeclinedPayload,
 ): Promise<void> {
   void _targetUserId;
-  const channel = supabase.channel(`call-decline-${payload.sessionId}`, {
-    config: { broadcast: { self: false } },
-  });
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("subscribe timeout")), 4000);
-      channel.subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          clearTimeout(t);
-          resolve();
-        }
-      });
-    });
-    await channel.send({
-      type: "broadcast",
-      event: "call_declined",
-      payload,
-    });
-  } finally {
-    void supabase.removeChannel(channel);
-  }
+  // emit_call_decline is a thin SECURITY INVOKER RPC that wraps the INSERT
+  // so we don't need to regenerate supabase types for the new table. The
+  // table's RLS policy still applies — RPC is just the call shape.
+  await supabase.rpc("emit_call_decline" as never, { p_session_id: payload.sessionId } as never);
 }
