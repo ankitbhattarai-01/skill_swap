@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { PageLoading } from "@/components/PageLoading";
 import { exchangeAuthCodeFromUrl } from "@/lib/auth-redirect";
-import { safeRedirectPath } from "@/lib/redirect";
+import { resolvePostAuthRoute, safeRedirectPath } from "@/lib/redirect";
 import { humanizeError } from "@/lib/errors";
 import { useAuth } from "@/lib/auth-context";
 
@@ -46,11 +46,18 @@ function AuthCallbackPage() {
   }, [navigate, search.next]);
 
   useEffect(() => {
-    if (loading || navigatedRef.current) return;
-    if (user) {
-      navigatedRef.current = true;
-      navigate({ to: search.next, replace: true });
-    }
+    if (loading || navigatedRef.current || !user) return;
+    // Reserve the slot synchronously so a re-render before the async resolve
+    // finishes can't double-navigate.
+    navigatedRef.current = true;
+    let cancelled = false;
+    void resolvePostAuthRoute(user.id, search.next).then((to) => {
+      if (cancelled) return;
+      navigate({ to, replace: true });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [loading, user, navigate, search.next]);
 
   return <PageLoading variant="simple" />;

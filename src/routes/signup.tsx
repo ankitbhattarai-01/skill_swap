@@ -8,7 +8,7 @@ import { CaptchaChallenge } from "@/components/CaptchaChallenge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, MailCheck } from "lucide-react";
-import { safeRedirectPath } from "@/lib/redirect";
+import { resolvePostAuthRoute, safeRedirectPath } from "@/lib/redirect";
 import { prepareGitHubOAuth, prepareGoogleOAuth } from "@/lib/oauth";
 import { humanizeError, toastError } from "@/lib/errors";
 import { isAuthCaptchaConfigured } from "@/lib/captcha";
@@ -127,9 +127,16 @@ function SignupPage() {
 
   useEffect(() => {
     if (authLoading || !user) return;
-    // Already signed in — don't show the signup form. Send them through to the
-    // post-signup destination (defaults to /onboarding via safeRedirectPath).
-    navigate({ to: search.redirect });
+    // Already signed in — don't show the signup form. Resolve against the
+    // onboarded flag so a returning user doesn't flash the onboarding wizard
+    // before being bounced back to /dashboard.
+    let cancelled = false;
+    void resolvePostAuthRoute(user.id, search.redirect).then((to) => {
+      if (!cancelled) navigate({ to });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, navigate, user, search.redirect]);
 
   const callbackRedirectUrl = () => {

@@ -141,7 +141,8 @@ function RootComponent() {
     pathname === "/reset-password" ||
     pathname === "/signup" ||
     pathname === "/onboarding" ||
-    pathname === "/skills";
+    pathname === "/skills" ||
+    pathname === "/auth/callback";
 
   return (
     <ThemeProvider>
