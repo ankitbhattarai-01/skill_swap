@@ -183,7 +183,7 @@ function RootComponent() {
                 </div>
               </div>
             )}
-            <Toaster richColors position="top-center" offset={80} />
+            <Toaster position="top-center" offset={80} />
           </AuthGateProvider>
         </AuthProvider>
       </QueryClientProvider>

@@ -320,11 +320,11 @@ const ChangePasswordDialog = memo(function ChangePasswordDialog({
 
   const submit = async () => {
     if (newPassword.length < 8) {
-      toast.error("Password must be at least 8 characters.");
+      toast.error("Your password needs to be a bit longer. Use at least 8 characters.");
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      toast.error("Passwords do not match.");
+      toast.error("Those two passwords don't match. Please retype them.");
       return;
     }
     setChangingPassword(true);

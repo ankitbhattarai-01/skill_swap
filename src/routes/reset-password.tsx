@@ -27,7 +27,7 @@ function ResetPasswordPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match.");
+      toast.error("Those two passwords don't match. Please retype them.");
       return;
     }
 
