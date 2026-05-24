@@ -277,7 +277,9 @@ function AdminFinancePage() {
       }
       toast.success("Finance request submitted for approval.");
       closeRequest();
-      await invalidate();
+      // Fire-and-forget: the dashboard refetch shouldn't block the dialog's
+      // busy spinner from clearing — the RPC has already succeeded.
+      void invalidate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not submit finance request.");
     } finally {
@@ -316,7 +318,7 @@ function AdminFinancePage() {
         decision.action === "approve" ? "Finance action approved." : "Finance action rejected.",
       );
       closeDecision();
-      await invalidate();
+      void invalidate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not record decision.");
     } finally {
@@ -348,7 +350,7 @@ function AdminFinancePage() {
       }
       toast.success("Reconciliation completed.");
       closeReconcile();
-      await invalidate();
+      void invalidate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not run reconciliation.");
     } finally {
@@ -386,7 +388,7 @@ function AdminFinancePage() {
       }
       setManifest((data ?? {}) as Record<string, unknown>);
       toast.success("Finance report manifest generated.");
-      await invalidate();
+      void invalidate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not generate manifest.");
     } finally {

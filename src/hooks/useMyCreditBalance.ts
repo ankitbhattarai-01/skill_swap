@@ -24,6 +24,11 @@ export function useMyCreditBalance() {
   return useQuery({
     queryKey: MY_CREDIT_BALANCE_KEY(userId),
     enabled: Boolean(userId),
+    // Realtime push via CreditBalanceRealtimeBridge invalidates this key on
+    // every credit_transactions INSERT for the user — so the cached balance
+    // is treated as fresh indefinitely. Without this, any consumer remount
+    // past the 30s default re-issued my_credit_balance() redundantly.
+    staleTime: Infinity,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("my_credit_balance");
       if (error) throw error;
