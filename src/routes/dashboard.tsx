@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { Children, useCallback, useEffect, useState } from "react";
+import { Children, Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
@@ -43,7 +43,6 @@ import {
 } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
-import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -56,6 +55,13 @@ import { cn } from "@/lib/utils";
 import { useInvalidateMyCreditBalance, useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import { queryUserSessions } from "@/lib/session-queries";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
+
+// Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
+// Keeping it out of the dashboard route chunk strips ~40–60kb from first paint
+// since the dialog only mounts when a user actually opens it.
+const SessionRequestDialog = lazy(() =>
+  import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
 
 const LEVEL_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3 };
 
@@ -1296,31 +1302,33 @@ function DashboardPage() {
       </main>
 
       {requestDialog && (
-        <SessionRequestDialog
-          open={requestDialog !== null}
-          onOpenChange={(open) => {
-            if (!open) setRequestDialog(null);
-          }}
-          title={requestDialog.kind === "request" ? "Request a session" : "Offer to help"}
-          skillName={
-            requestDialog.kind === "request"
-              ? (requestDialog.teacher.skills?.name ?? "skill")
-              : (requestDialog.seeker.skills?.name ?? "skill")
-          }
-          creditsPerHour={
-            requestDialog.kind === "request"
-              ? requestDialog.teacher.credits_per_hour
-              : requestDialog.creditsPerHour
-          }
-          availableCredits={requestDialog.kind === "request" ? (liveCreditBalance ?? null) : null}
-          confirmLabel={requestDialog.kind === "request" ? "Send request" : "Send offer"}
-          busy={busyIds.has(
-            requestDialog.kind === "request" ? requestDialog.teacher.id : requestDialog.seeker.id,
-          )}
-          learnerId={requestDialog.kind === "request" ? user?.id : requestDialog.seeker.user_id}
-          teacherId={requestDialog.kind === "request" ? requestDialog.teacher.user_id : user?.id}
-          onConfirm={confirmRequestDialog}
-        />
+        <Suspense fallback={null}>
+          <SessionRequestDialog
+            open={requestDialog !== null}
+            onOpenChange={(open) => {
+              if (!open) setRequestDialog(null);
+            }}
+            title={requestDialog.kind === "request" ? "Request a session" : "Offer to help"}
+            skillName={
+              requestDialog.kind === "request"
+                ? (requestDialog.teacher.skills?.name ?? "skill")
+                : (requestDialog.seeker.skills?.name ?? "skill")
+            }
+            creditsPerHour={
+              requestDialog.kind === "request"
+                ? requestDialog.teacher.credits_per_hour
+                : requestDialog.creditsPerHour
+            }
+            availableCredits={requestDialog.kind === "request" ? (liveCreditBalance ?? null) : null}
+            confirmLabel={requestDialog.kind === "request" ? "Send request" : "Send offer"}
+            busy={busyIds.has(
+              requestDialog.kind === "request" ? requestDialog.teacher.id : requestDialog.seeker.id,
+            )}
+            learnerId={requestDialog.kind === "request" ? user?.id : requestDialog.seeker.user_id}
+            teacherId={requestDialog.kind === "request" ? requestDialog.teacher.user_id : user?.id}
+            onConfirm={confirmRequestDialog}
+          />
+        </Suspense>
       )}
     </div>
   );

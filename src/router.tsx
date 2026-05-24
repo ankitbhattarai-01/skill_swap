@@ -67,7 +67,11 @@ export const getRouter = () => {
     routeTree,
     context: {},
     scrollRestoration: true,
-    defaultPreloadStaleTime: 0,
+    // Match TanStack Query's defaultOptions.queries.staleTime (30s). At 0,
+    // every hover-preload was treated as immediately stale, so the navigation
+    // that followed a hover re-ran the loader and waited for the network
+    // instead of reusing the just-prefetched data.
+    defaultPreloadStaleTime: 30 * 1000,
     defaultErrorComponent: DefaultErrorComponent,
     defaultPendingComponent: PageLoading,
     defaultPendingMs: 0,

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { memo, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +15,6 @@ import { useAuthGate } from "@/lib/auth-gate";
 import { useAuth } from "@/lib/auth-context";
 import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
-import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { TeacherRatingBadge } from "@/components/TeacherRatingBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -43,6 +42,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureEnabled } from "@/lib/feature-flags";
+
+// Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
+// Keeping it out of the explore route chunk strips ~40–60kb from first paint
+// since the request/offer dialogs only mount when a user actually opens one.
+const SessionRequestDialog = lazy(() =>
+  import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
 
 type ExploreMode = "teachers" | "learners";
 
@@ -1329,38 +1335,42 @@ function ExplorePage() {
       </section>
 
       {requestRow && (
-        <SessionRequestDialog
-          open={requestRow !== null}
-          onOpenChange={(open) => {
-            if (!open) setRequestRow(null);
-          }}
-          title="Request a session"
-          skillName={requestRow.skills?.name ?? "skill"}
-          creditsPerHour={requestRow.credits_per_hour}
-          availableCredits={myCredits}
-          busy={busyAction === `request-${requestRow.id}`}
-          learnerId={user?.id}
-          teacherId={requestRow.user_id}
-          onConfirm={confirmRequest}
-        />
+        <Suspense fallback={null}>
+          <SessionRequestDialog
+            open={requestRow !== null}
+            onOpenChange={(open) => {
+              if (!open) setRequestRow(null);
+            }}
+            title="Request a session"
+            skillName={requestRow.skills?.name ?? "skill"}
+            creditsPerHour={requestRow.credits_per_hour}
+            availableCredits={myCredits}
+            busy={busyAction === `request-${requestRow.id}`}
+            learnerId={user?.id}
+            teacherId={requestRow.user_id}
+            onConfirm={confirmRequest}
+          />
+        </Suspense>
       )}
 
       {offerRow && (
-        <SessionRequestDialog
-          open={offerRow !== null}
-          onOpenChange={(open) => {
-            if (!open) setOfferRow(null);
-          }}
-          title="Offer to help"
-          skillName={offerRow.skills?.name ?? "skill"}
-          creditsPerHour={offerRow.skills ? (myTeachingPrices.get(offerRow.skills.id) ?? 4) : 4}
-          availableCredits={null}
-          confirmLabel="Send offer"
-          busy={busyAction === `offer-${offerRow.id}`}
-          learnerId={offerRow.user_id}
-          teacherId={user?.id}
-          onConfirm={confirmOffer}
-        />
+        <Suspense fallback={null}>
+          <SessionRequestDialog
+            open={offerRow !== null}
+            onOpenChange={(open) => {
+              if (!open) setOfferRow(null);
+            }}
+            title="Offer to help"
+            skillName={offerRow.skills?.name ?? "skill"}
+            creditsPerHour={offerRow.skills ? (myTeachingPrices.get(offerRow.skills.id) ?? 4) : 4}
+            availableCredits={null}
+            confirmLabel="Send offer"
+            busy={busyAction === `offer-${offerRow.id}`}
+            learnerId={offerRow.user_id}
+            teacherId={user?.id}
+            onConfirm={confirmOffer}
+          />
+        </Suspense>
       )}
     </div>
   );

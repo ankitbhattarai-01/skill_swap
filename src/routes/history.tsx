@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ConfirmAction";
@@ -18,7 +18,6 @@ import {
 } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
-import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { ReviewDialog } from "@/components/ReviewDialog";
 import { Star } from "lucide-react";
 import { useInvalidateMyCreditBalance } from "@/hooks/useMyCreditBalance";
@@ -45,6 +44,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
+
+// Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
+// Keeping it out of the history route chunk strips ~40–60kb from first paint
+// since the rebook dialog only mounts when a user actually opens it.
+const SessionRequestDialog = lazy(() =>
+  import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
 
 const SESSION_FILTER_VALUES = ["all", "pending", "accepted", "completed"] as const;
 
@@ -504,24 +510,26 @@ function SessionsPage() {
       </section>
 
       {rebookSession && (
-        <SessionRequestDialog
-          open={rebookSession !== null}
-          onOpenChange={(open) => {
-            if (!open) setRebookSession(null);
-          }}
-          title={user && rebookSession.teacher_id === user.id ? "Offer help again" : "Book again"}
-          skillName={rebookSession.skills?.name ?? "skill"}
-          creditsPerHour={
-            (rebookSession.credits * 60) / Math.max(rebookSession.duration_minutes ?? 60, 1)
-          }
-          availableCredits={
-            user && rebookSession.learner_id === user.id ? (profile?.credits ?? null) : null
-          }
-          busy={busyIds.has(rebookSession.id)}
-          learnerId={rebookSession.learner_id}
-          teacherId={rebookSession.teacher_id}
-          onConfirm={confirmRebook}
-        />
+        <Suspense fallback={null}>
+          <SessionRequestDialog
+            open={rebookSession !== null}
+            onOpenChange={(open) => {
+              if (!open) setRebookSession(null);
+            }}
+            title={user && rebookSession.teacher_id === user.id ? "Offer help again" : "Book again"}
+            skillName={rebookSession.skills?.name ?? "skill"}
+            creditsPerHour={
+              (rebookSession.credits * 60) / Math.max(rebookSession.duration_minutes ?? 60, 1)
+            }
+            availableCredits={
+              user && rebookSession.learner_id === user.id ? (profile?.credits ?? null) : null
+            }
+            busy={busyIds.has(rebookSession.id)}
+            learnerId={rebookSession.learner_id}
+            teacherId={rebookSession.teacher_id}
+            onConfirm={confirmRebook}
+          />
+        </Suspense>
       )}
       {reviewSession && user && (
         <ReviewDialog

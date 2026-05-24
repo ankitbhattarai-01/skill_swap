@@ -79,6 +79,19 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      // Open the TCP+TLS handshake to Supabase in parallel with HTML parse so
+      // the first REST call (profile/sessions/credit balance) doesn't pay it
+      // serially after the JS bundle finishes evaluating.
+      ...(import.meta.env.VITE_SUPABASE_URL
+        ? [
+            {
+              rel: "preconnect",
+              href: import.meta.env.VITE_SUPABASE_URL,
+              crossOrigin: "anonymous",
+            } as const,
+            { rel: "dns-prefetch", href: import.meta.env.VITE_SUPABASE_URL } as const,
+          ]
+        : []),
       { rel: "icon", href: "/brand-mark.png", type: "image/png" },
       { rel: "icon", href: "/icon-light-32x32.png", media: "(prefers-color-scheme: light)" },
       { rel: "icon", href: "/icon-dark-32x32.png", media: "(prefers-color-scheme: dark)" },

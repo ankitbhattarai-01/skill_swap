@@ -363,7 +363,10 @@ export default defineConfig((env) => ({
     },
   },
   // Pre-bundle heavy deps so cold dev start doesn't pay the transform cost
-  // on first route hit.
+  // on first route hit. Only deps that are imported on the *initial* route
+  // chunk belong here — recharts/cmdk/embla/day-picker live behind lazy
+  // boundaries (AdminCharts, GlobalSearch, Calendar in lazy dialogs), so
+  // including them only slows dev cold-start without speeding any route.
   optimizeDeps: {
     include: [
       "@supabase/supabase-js",
@@ -371,10 +374,6 @@ export default defineConfig((env) => ({
       "@tanstack/react-router",
       "sonner",
       "lucide-react",
-      "recharts",
-      "react-day-picker",
-      "embla-carousel-react",
-      "cmdk",
     ],
   },
 }));

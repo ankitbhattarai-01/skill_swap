@@ -1,17 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { Button } from "@/components/ui/button";
 import { ReportDialog } from "@/components/ReportDialog";
-import { TrackProposalDialog } from "@/components/TrackProposalDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
 import { isUuid } from "@/lib/uuid";
 import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
 import { playRequestSentChime } from "@/lib/sounds";
-import { SessionRequestDialog } from "@/components/SessionRequestDialog";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ArrowLeft,
@@ -27,6 +25,16 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
+
+// Lazy: both dialogs pull in react-day-picker via the Calendar UI. Keeping
+// them out of the route chunk strips ~40–60kb from first paint — neither
+// dialog is open on initial render.
+const SessionRequestDialog = lazy(() =>
+  import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
+const TrackProposalDialog = lazy(() =>
+  import("@/components/TrackProposalDialog").then((m) => ({ default: m.TrackProposalDialog })),
+);
 
 export const Route = createFileRoute("/users/$userId")({
   head: () => ({ meta: [{ title: "Profile - SkillSwap" }] }),
@@ -501,28 +509,32 @@ function PublicUserPage() {
         </section>
       </main>
       {requestOpen && primaryTeachingSkill?.skills && (
-        <SessionRequestDialog
-          open={requestOpen}
-          onOpenChange={setRequestOpen}
-          title="Request a session"
-          skillName={primaryTeachingSkill.skills.name}
-          creditsPerHour={primaryTeachingSkill.credits_per_hour}
-          availableCredits={myCredits}
-          busy={requesting}
-          learnerId={user?.id}
-          teacherId={userId}
-          onConfirm={confirmRequest}
-        />
+        <Suspense fallback={null}>
+          <SessionRequestDialog
+            open={requestOpen}
+            onOpenChange={setRequestOpen}
+            title="Request a session"
+            skillName={primaryTeachingSkill.skills.name}
+            creditsPerHour={primaryTeachingSkill.credits_per_hour}
+            availableCredits={myCredits}
+            busy={requesting}
+            learnerId={user?.id}
+            teacherId={userId}
+            onConfirm={confirmRequest}
+          />
+        </Suspense>
       )}
       {trackDialog && (
-        <TrackProposalDialog
-          open={trackDialog !== null}
-          onOpenChange={(open) => !open && setTrackDialog(null)}
-          teacherId={userId}
-          teacherName={profile?.full_name ?? "Teacher"}
-          skillId={trackDialog.skillId}
-          skillName={trackDialog.skillName}
-        />
+        <Suspense fallback={null}>
+          <TrackProposalDialog
+            open={trackDialog !== null}
+            onOpenChange={(open) => !open && setTrackDialog(null)}
+            teacherId={userId}
+            teacherName={profile?.full_name ?? "Teacher"}
+            skillId={trackDialog.skillId}
+            skillName={trackDialog.skillName}
+          />
+        </Suspense>
       )}
     </div>
   );
