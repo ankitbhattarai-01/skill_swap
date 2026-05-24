@@ -295,11 +295,50 @@ export function NotificationsMenu() {
       });
     };
 
+    // Shared "we already have the session + sender, just enqueue" tail used
+    // by the batched poll below. addMessageNotification stays the realtime
+    // path (single message, two single-row follow-ups) — see the realtime
+    // INSERT handler for that channel.
+    const enqueuePrefetchedMessageNotification = (
+      message: MessagePayload,
+      session: SessionPreview,
+      senderName: string | null,
+    ) => {
+      if (!alive) return;
+      const isParticipant = session.learner_id === user.id || session.teacher_id === user.id;
+      if (!isParticipant) return;
+
+      markMessagesSeen([message.id]);
+      const fallback: Notification = {
+        id: `message-${message.id}`,
+        type: "message",
+        title: `${senderName ?? "Someone"} sent you a message`,
+        body: message.text,
+        link: `/messages?s=${encodeURIComponent(message.session_id)}`,
+        read_at: null,
+        created_at: message.created_at,
+        metadata: { sessionId: message.session_id, messageId: message.id },
+      };
+
+      setNotifications((current) => {
+        if (current.some((notification) => getNotificationMessageId(notification) === message.id)) {
+          return current;
+        }
+        const next = [fallback, ...current].slice(0, 8);
+        writeFallbackNotifications(user.id, next);
+        writeCachedNotifications(user.id, next);
+        return next;
+      });
+    };
+
     const pollRecentMessages = async () => {
       const { data: sessions } = await supabase
         .from("sessions")
         .select("id")
-        .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`);
+        .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`)
+        // Bound so a heavy user with thousands of historical sessions
+        // doesn't push an unbounded id list into the .in() below.
+        .limit(500);
 
       if (!alive || !sessions?.length) return;
 
@@ -312,8 +351,45 @@ export function NotificationsMenu() {
         .order("created_at", { ascending: false })
         .limit(8);
 
-      for (const message of ((messages ?? []) as MessagePayload[]).reverse()) {
-        await addMessageNotification(message);
+      // Drop dedupe + horizon misses BEFORE issuing the per-id batches so we
+      // don't fetch sessions/profiles for messages we'd discard.
+      const candidates = ((messages ?? []) as MessagePayload[])
+        .filter(
+          (message) =>
+            !seenMessageIdsRef.current.has(message.id) && horizonFilter(message.created_at),
+        )
+        .reverse();
+      if (!alive || !candidates.length) return;
+
+      // Batch the two follow-up lookups: one sessions.in(id) covering every
+      // candidate's session, one profiles.in(id) covering every distinct
+      // sender — instead of the prior N×2 sequential per-message round-trips.
+      const candidateSessionIds = Array.from(new Set(candidates.map((m) => m.session_id)));
+      const candidateSenderIds = Array.from(new Set(candidates.map((m) => m.sender_id)));
+      const [{ data: sessionRows }, { data: senderRows }] = await Promise.all([
+        supabase
+          .from("sessions")
+          .select("id, learner_id, teacher_id, skills:skill_id(name)")
+          .in("id", candidateSessionIds),
+        supabase.from("profiles").select("id, full_name").in("id", candidateSenderIds),
+      ]);
+      if (!alive) return;
+
+      const sessionsById = new Map(
+        ((sessionRows ?? []) as unknown as SessionPreview[]).map((row) => [row.id, row]),
+      );
+      const sendersById = new Map(
+        (senderRows ?? []).map((row) => [row.id, row.full_name ?? null] as const),
+      );
+
+      for (const message of candidates) {
+        const session = sessionsById.get(message.session_id);
+        if (!session) continue;
+        enqueuePrefetchedMessageNotification(
+          message,
+          session,
+          sendersById.get(message.sender_id) ?? null,
+        );
       }
     };
 

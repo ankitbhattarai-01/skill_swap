@@ -66,24 +66,28 @@ export function MessageHeadsUp() {
       if (!alive || msg.sender_id === userId || seenRef.current.has(msg.id)) return;
       seenRef.current.add(msg.id);
 
-      const { data: session } = await supabase
-        .from("sessions")
-        .select("id, learner_id, teacher_id, skills:skill_id(name)")
-        .eq("id", msg.session_id)
-        .abortSignal(controller.signal)
-        .maybeSingle();
+      // Parallel: session lookup gates participation but doesn't depend on
+      // the sender lookup. Run both at once — discarding the in-flight
+      // sender response if the participation check fails is cheap compared
+      // to a sequential second round-trip.
+      const [{ data: session }, { data: sender }] = await Promise.all([
+        supabase
+          .from("sessions")
+          .select("id, learner_id, teacher_id, skills:skill_id(name)")
+          .eq("id", msg.session_id)
+          .abortSignal(controller.signal)
+          .maybeSingle(),
+        supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", msg.sender_id)
+          .abortSignal(controller.signal)
+          .maybeSingle(),
+      ]);
       if (!alive || !session) return;
 
       const sess = session as unknown as SessionPreview;
       if (sess.learner_id !== userId && sess.teacher_id !== userId) return;
-
-      const { data: sender } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", msg.sender_id)
-        .abortSignal(controller.signal)
-        .maybeSingle();
-      if (!alive) return;
 
       setQueue((rs) => [
         ...rs,

@@ -7,10 +7,14 @@ export async function fetchTeacherRatings(userIds: string[]) {
   const unique = Array.from(new Set(userIds));
   if (!unique.length) return map;
 
+  // Safety cap so a teacher with an exceptional review count can't unbound
+  // the response on a list page. 2000 rows is well above any realistic
+  // per-teacher count multiplied by the typical 10-teacher dashboard list.
   const { data, error } = await supabase
     .from("reviews")
     .select("reviewee_id, rating")
-    .in("reviewee_id", unique);
+    .in("reviewee_id", unique)
+    .limit(2000);
 
   if (error) {
     // Returning an empty map keeps the calling pages alive — ratings are
