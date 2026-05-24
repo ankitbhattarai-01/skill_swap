@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PageLoading } from "@/components/PageLoading";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/lib/auth-context";
@@ -293,8 +294,13 @@ function NotificationsPage() {
 
       <section className="mt-5 space-y-2">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          // Card-shaped skeletons matching the loaded <article> height (~96px)
+          // so the list area's vertical space is reserved up front and the
+          // loaded notifications don't push later content down on arrival.
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <Skeleton key={index} className="h-24 w-full rounded-2xl" />
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="glass rounded-2xl px-6 py-12 text-center text-sm text-muted-foreground">
