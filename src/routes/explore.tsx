@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, memo, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -753,100 +753,140 @@ function ExplorePage() {
     };
   }, []);
 
-  const categories = Array.from(
-    new Set(rows.map((r) => r.skills?.category).filter((c): c is string => Boolean(c))),
-  ).sort();
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map((r) => r.skills?.category).filter((c): c is string => Boolean(c))),
+      ).sort(),
+    [rows],
+  );
 
-  const isMatchForUser = (row: TeachingSkillRow) =>
-    Boolean(row.skills && myLearningSkillIds.has(row.skills.id));
+  const isMatchForUser = useCallback(
+    (row: TeachingSkillRow) => Boolean(row.skills && myLearningSkillIds.has(row.skills.id)),
+    [myLearningSkillIds],
+  );
 
-  const intersectionSlotMs = (uid: string) => {
-    const slot = intersections.get(uid);
-    if (!slot) return null;
-    const t = Date.parse(slot);
-    return Number.isNaN(t) ? null : t;
-  };
+  const intersectionSlotMs = useCallback(
+    (uid: string) => {
+      const slot = intersections.get(uid);
+      if (!slot) return null;
+      const t = Date.parse(slot);
+      return Number.isNaN(t) ? null : t;
+    },
+    [intersections],
+  );
 
-  const filtered = rows
-    .filter((r) => {
-      if (user && r.user_id === user.id) return false;
-      if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
-      if (levelFilter !== "all" && r.level !== levelFilter) return false;
-      if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
-      if (matchOnly && !isMatchForUser(r)) return false;
-      if (!query) return true;
-      const q = query.toLowerCase();
-      return (
-        r.skills?.name.toLowerCase().includes(q) ||
-        r.skills?.category?.toLowerCase().includes(q) ||
-        r.profiles?.full_name?.toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      if (sortOption === "available_soon") {
-        // Teachers with a known next-free slot come first, ordered by
-        // soonest. Teachers without posted free times fall to the bottom.
-        const aSlot = intersectionSlotMs(a.user_id);
-        const bSlot = intersectionSlotMs(b.user_id);
-        if (aSlot != null && bSlot != null) return aSlot - bSlot;
-        if (aSlot != null) return -1;
-        if (bSlot != null) return 1;
-        // Tie-breaker: rating.
-        const aAvg = ratings.get(a.user_id)?.average ?? 0;
-        const bAvg = ratings.get(b.user_id)?.average ?? 0;
-        return bAvg - aAvg;
-      }
-      if (sortOption === "rated") {
-        const aAvg = ratings.get(a.user_id)?.average ?? 0;
-        const bAvg = ratings.get(b.user_id)?.average ?? 0;
-        if (aAvg !== bAvg) return bAvg - aAvg;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      if (sortOption === "newest") {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      // default: availability boost > skill match > rating > recency
-      const aSlot = intersectionSlotMs(a.user_id);
-      const bSlot = intersectionSlotMs(b.user_id);
-      const aAvail = aSlot != null ? 1 : 0;
-      const bAvail = bSlot != null ? 1 : 0;
-      if (aAvail !== bAvail) return bAvail - aAvail;
-      const aMatch = isMatchForUser(a) ? 1 : 0;
-      const bMatch = isMatchForUser(b) ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
-      const aAvg = ratings.get(a.user_id)?.average ?? 0;
-      const bAvg = ratings.get(b.user_id)?.average ?? 0;
-      if (aAvg !== bAvg) return bAvg - aAvg;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+  const filtered = useMemo(
+    () =>
+      rows
+        .filter((r) => {
+          if (user && r.user_id === user.id) return false;
+          if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
+          if (levelFilter !== "all" && r.level !== levelFilter) return false;
+          if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
+          if (matchOnly && !isMatchForUser(r)) return false;
+          if (!query) return true;
+          const q = query.toLowerCase();
+          return (
+            r.skills?.name.toLowerCase().includes(q) ||
+            r.skills?.category?.toLowerCase().includes(q) ||
+            r.profiles?.full_name?.toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          if (sortOption === "available_soon") {
+            // Teachers with a known next-free slot come first, ordered by
+            // soonest. Teachers without posted free times fall to the bottom.
+            const aSlot = intersectionSlotMs(a.user_id);
+            const bSlot = intersectionSlotMs(b.user_id);
+            if (aSlot != null && bSlot != null) return aSlot - bSlot;
+            if (aSlot != null) return -1;
+            if (bSlot != null) return 1;
+            // Tie-breaker: rating.
+            const aAvg = ratings.get(a.user_id)?.average ?? 0;
+            const bAvg = ratings.get(b.user_id)?.average ?? 0;
+            return bAvg - aAvg;
+          }
+          if (sortOption === "rated") {
+            const aAvg = ratings.get(a.user_id)?.average ?? 0;
+            const bAvg = ratings.get(b.user_id)?.average ?? 0;
+            if (aAvg !== bAvg) return bAvg - aAvg;
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+          if (sortOption === "newest") {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+          // default: availability boost > skill match > rating > recency
+          const aSlot = intersectionSlotMs(a.user_id);
+          const bSlot = intersectionSlotMs(b.user_id);
+          const aAvail = aSlot != null ? 1 : 0;
+          const bAvail = bSlot != null ? 1 : 0;
+          if (aAvail !== bAvail) return bAvail - aAvail;
+          const aMatch = isMatchForUser(a) ? 1 : 0;
+          const bMatch = isMatchForUser(b) ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+          const aAvg = ratings.get(a.user_id)?.average ?? 0;
+          const bAvg = ratings.get(b.user_id)?.average ?? 0;
+          if (aAvg !== bAvg) return bAvg - aAvg;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }),
+    [
+      rows,
+      user,
+      categoryFilter,
+      levelFilter,
+      onlyAvailable,
+      matchOnly,
+      query,
+      sortOption,
+      ratings,
+      isMatchForUser,
+      intersectionSlotMs,
+    ],
+  );
 
-  const learnerMatchesMe = (row: LearningSkillRow) =>
-    Boolean(row.skills && myTeachingPrices.has(row.skills.id));
+  const learnerMatchesMe = useCallback(
+    (row: LearningSkillRow) => Boolean(row.skills && myTeachingPrices.has(row.skills.id)),
+    [myTeachingPrices],
+  );
 
-  const filteredLearners = learnerRows
-    .filter((r) => {
-      if (user && r.user_id === user.id) return false;
-      if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
-      if (levelFilter !== "all" && r.current_level !== levelFilter) return false;
-      if (matchOnly && !learnerMatchesMe(r)) return false;
-      if (!query) return true;
-      const q = query.toLowerCase();
-      return (
-        r.skills?.name.toLowerCase().includes(q) ||
-        r.skills?.category?.toLowerCase().includes(q) ||
-        r.profiles?.full_name?.toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      if (sortOption === "newest") {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      // default: skills the viewer can teach come first, then newest
-      const aMatch = learnerMatchesMe(a) ? 1 : 0;
-      const bMatch = learnerMatchesMe(b) ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+  const filteredLearners = useMemo(
+    () =>
+      learnerRows
+        .filter((r) => {
+          if (user && r.user_id === user.id) return false;
+          if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
+          if (levelFilter !== "all" && r.current_level !== levelFilter) return false;
+          if (matchOnly && !learnerMatchesMe(r)) return false;
+          if (!query) return true;
+          const q = query.toLowerCase();
+          return (
+            r.skills?.name.toLowerCase().includes(q) ||
+            r.skills?.category?.toLowerCase().includes(q) ||
+            r.profiles?.full_name?.toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          if (sortOption === "newest") {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+          // default: skills the viewer can teach come first, then newest
+          const aMatch = learnerMatchesMe(a) ? 1 : 0;
+          const bMatch = learnerMatchesMe(b) ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }),
+    [
+      learnerRows,
+      user,
+      categoryFilter,
+      levelFilter,
+      matchOnly,
+      query,
+      sortOption,
+      learnerMatchesMe,
+    ],
+  );
 
   const offerHelp = useCallback(
     (row: LearningSkillRow) => {

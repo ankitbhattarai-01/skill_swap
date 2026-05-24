@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 type ThemePreference = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
@@ -79,27 +87,35 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => media.removeEventListener("change", handleChange);
   }, [preference]);
 
-  const setPreference = (next: ThemePreference) => {
+  const setPreference = useCallback((next: ThemePreference) => {
     setPreferenceState(next);
     window.localStorage.setItem(THEME_STORAGE_KEY, next);
     const resolved = resolveTheme(next);
     setTheme(resolved);
     applyTheme(resolved);
-  };
+  }, []);
 
-  const toggleTheme = () => {
-    // Cycle: system → light → dark → system. Predictable order makes the
-    // 3-state toggle button feel like a regular UI control.
-    const next: ThemePreference =
-      preference === "system" ? "light" : preference === "light" ? "dark" : "system";
-    setPreference(next);
-  };
+  // Use the functional setState form so the cycle reads the latest preference
+  // without closing over a stale `preference` value — that lets toggleTheme
+  // stay reference-stable across renders.
+  const toggleTheme = useCallback(() => {
+    setPreferenceState((current) => {
+      const next: ThemePreference =
+        current === "system" ? "light" : current === "light" ? "dark" : "system";
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
+      const resolved = resolveTheme(next);
+      setTheme(resolved);
+      applyTheme(resolved);
+      return next;
+    });
+  }, []);
 
-  return (
-    <ThemeContext.Provider value={{ preference, theme, setPreference, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
+  const value = useMemo<ThemeContextValue>(
+    () => ({ preference, theme, setPreference, toggleTheme }),
+    [preference, theme, setPreference, toggleTheme],
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

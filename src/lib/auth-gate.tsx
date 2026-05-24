@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Dialog,
@@ -26,27 +26,35 @@ export function AuthGateProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState<string>("Please log in or sign up to continue.");
 
-  const requireAuth = (callback?: () => void, customMessage?: string) => {
-    if (user) {
-      callback?.();
-      return true;
-    }
-    setMessage(customMessage ?? "Please log in or sign up to continue.");
-    setOpen(true);
-    return false;
-  };
+  const requireAuth = useCallback(
+    (callback?: () => void, customMessage?: string) => {
+      if (user) {
+        callback?.();
+        return true;
+      }
+      setMessage(customMessage ?? "Please log in or sign up to continue.");
+      setOpen(true);
+      return false;
+    },
+    [user],
+  );
 
-  const goToAuth = (mode: "login" | "signup") => {
-    const redirect = window.location.pathname + window.location.search;
-    setOpen(false);
-    navigate({
-      to: mode === "login" ? "/login" : "/signup",
-      search: { redirect },
-    });
-  };
+  const goToAuth = useCallback(
+    (mode: "login" | "signup") => {
+      const redirect = window.location.pathname + window.location.search;
+      setOpen(false);
+      navigate({
+        to: mode === "login" ? "/login" : "/signup",
+        search: { redirect },
+      });
+    },
+    [navigate],
+  );
+
+  const value = useMemo<AuthGateContextValue>(() => ({ requireAuth }), [requireAuth]);
 
   return (
-    <AuthGateContext.Provider value={{ requireAuth }}>
+    <AuthGateContext.Provider value={value}>
       {children}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="glass-strong border-white/10 sm:max-w-md">
