@@ -208,6 +208,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
         <div className="flex h-16 items-center border-b border-border/50 px-4">
           <Link
             to={user ? "/dashboard" : "/"}
+            preload="intent"
             className={cn(
               "flex min-w-0 items-center gap-3 transition-[justify-content] duration-300",
               sidebarCollapsed && "justify-center",
@@ -267,6 +268,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
           {user && (
             <Link
               to="/credits"
+              preload="intent"
               className="flex min-w-[104px] items-center gap-2 rounded-xl border border-accent/20 bg-accent/10 px-3 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/20"
             >
               <span className="h-2 w-2 rounded-full bg-accent" />
@@ -331,13 +333,14 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
 
       <header className="fixed inset-x-0 top-0 z-40 border-b border-border/50 glass pt-[env(safe-area-inset-top)] md:hidden">
         <div className="flex h-14 items-center justify-between px-4">
-          <Link to={user ? "/dashboard" : "/"} className="flex items-center">
+          <Link to={user ? "/dashboard" : "/"} preload="intent" className="flex items-center">
             <Logo size="sm" />
           </Link>
           <div className="flex items-center gap-2">
             {user && (
               <Link
                 to="/credits"
+                preload="intent"
                 className="flex min-w-[52px] items-center gap-1.5 rounded-lg bg-accent/10 px-2 py-1 text-sm font-semibold text-accent"
               >
                 <Coins className="h-3.5 w-3.5" />
