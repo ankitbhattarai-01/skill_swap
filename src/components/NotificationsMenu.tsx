@@ -405,12 +405,14 @@ export function NotificationsMenu() {
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    let notificationsChannel: RealtimeChannel | null = null;
-    let messagesChannel: RealtimeChannel | null = null;
+    // One channel with two .on() listeners is half the WebSocket overhead
+    // of the previous two-channel setup — same payload, same handlers,
+    // single subscribe handshake + heartbeat + reconnect path.
+    let bellChannel: RealtimeChannel | null = null;
 
     try {
-      notificationsChannel = supabase
-        .channel(`notifications-${user.id}-${channelSuffix}`)
+      bellChannel = supabase
+        .channel(`notifications-bell-${user.id}-${channelSuffix}`)
         .on(
           "postgres_changes",
           {
@@ -421,21 +423,15 @@ export function NotificationsMenu() {
           },
           () => scheduleReload(),
         )
-        .subscribe();
-
-      // Narrow the fallback channel so it doesn't broadcast events for
-      // messages the current user just sent. RLS still gates payload
-      // visibility for sessions the user isn't part of, but skipping
-      // own-sender events also cuts realtime chatter roughly in half
-      // (PERF-001 in the audit).
-      messagesChannel = supabase
-        .channel(`message-notification-fallback-${user.id}-${channelSuffix}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "messages",
+            // Narrow so we don't broadcast events for the user's own sent
+            // messages — cuts realtime chatter on the fallback path roughly
+            // in half (PERF-001 in the original audit).
             filter: `sender_id=neq.${user.id}`,
           },
           (payload) => void addMessageNotification(payload.new as MessagePayload),
@@ -450,8 +446,7 @@ export function NotificationsMenu() {
       controller.abort();
       window.clearInterval(pollId);
       if (reloadTimer) clearTimeout(reloadTimer);
-      if (notificationsChannel) void supabase.removeChannel(notificationsChannel);
-      if (messagesChannel) void supabase.removeChannel(messagesChannel);
+      if (bellChannel) void supabase.removeChannel(bellChannel);
     };
   }, [user, markMessagesSeen]);
 
