@@ -115,7 +115,7 @@ function NotificationsPage() {
       alive = false;
       controller.abort();
     };
-  }, [user]);
+  }, [user?.id]);
 
   const types = useMemo(
     () => Array.from(new Set(notifications.map((n) => n.type))).sort(),

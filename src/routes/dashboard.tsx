@@ -467,7 +467,10 @@ function DashboardPage() {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/dashboard" } });
     }
-  }, [authLoading, user, navigate]);
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed, which previously refired this and
+    // every other [user] effect on the page 3× during bootstrap.
+  }, [authLoading, user?.id, navigate]);
 
   // Fast onboarded pre-check that runs ahead of the full loadDashboard
   // pipeline. If the user hasn't finished onboarding we bounce immediately
@@ -492,7 +495,7 @@ function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user, onboardingGateReady, navigate]);
+  }, [authLoading, user?.id, onboardingGateReady, navigate]);
 
   useEffect(() => {
     if (!user) return;
@@ -516,7 +519,7 @@ function DashboardPage() {
     setRecs(cache.recs ?? null);
     setTeacherRatings(new Map(cache.teacherRatings ?? []));
     setLoading(false);
-  }, [user]);
+  }, [user?.id]);
 
   const loadDashboard = useCallback(async () => {
     if (!user) return;
@@ -858,7 +861,9 @@ function DashboardPage() {
       setMatchesHydrated(true);
       toastError(error, "Could not load dashboard");
     }
-  }, [user, navigate]);
+    // Stable across user-object rotations so useEffect(loadDashboard) below
+    // only refires when the actual user changes, not on every auth event.
+  }, [user?.id, navigate]);
 
   useEffect(() => {
     void loadDashboard();
@@ -901,7 +906,7 @@ function DashboardPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [user, debouncedReloadDashboard]);
+  }, [user?.id, debouncedReloadDashboard]);
 
   const openRequestDialog = (teacher: TeachOffer) => {
     setRequestDialog({ kind: "request", teacher });

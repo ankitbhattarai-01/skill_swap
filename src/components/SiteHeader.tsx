@@ -160,7 +160,15 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
         ]);
         if (cancelled || !data) return;
 
-        const signedAvatarUrl = await signSingleAvatarUrl(data.avatar_url);
+        // 96×96 covers 2× DPR on the 36–48px header/sidebar display.
+        // Without the transform, Supabase returns the original 400–800px
+        // upload — ~200KB PNG per Lighthouse — to render a 36px circle.
+        const signedAvatarUrl = await signSingleAvatarUrl(data.avatar_url, {
+          width: 96,
+          height: 96,
+          quality: 75,
+          resize: "cover",
+        });
         if (cancelled) return;
         const nextProfile = {
           full_name: data.full_name,
@@ -180,7 +188,12 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
       cancelled = true;
       window.removeEventListener(PROFILE_UPDATED_EVENT, loadProfile);
     };
-  }, [user]);
+    // Depend on user.id only — Supabase auth events rotate the user object
+    // reference (TOKEN_REFRESHED, USER_UPDATED, INITIAL_SESSION) even when
+    // the user hasn't actually changed. The previous [user] dep refired this
+    // effect 3× during bootstrap, issuing 3 profile + 3 is_admin + 3 avatar
+    // signing requests for the same user.
+  }, [user?.id]);
 
   const displayName = profile?.full_name ?? user?.email ?? null;
   const sidebarWidth = sidebarCollapsed ? 72 : 192;

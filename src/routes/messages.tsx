@@ -190,7 +190,7 @@ function MessagesIndexPage() {
     if (!user) return;
     setHiddenIds(loadHiddenMessageIds(user.id));
     setLastOpened(loadLastOpened(user.id));
-  }, [user]);
+  }, [user?.id]);
 
   const markOpened = useCallback(
     (otherUserId: string) => {
@@ -481,7 +481,7 @@ function MessagesIndexPage() {
       alive = false;
       controller.abort();
     };
-  }, [user]);
+  }, [user?.id]);
 
   // Backwards-compat: if a deep link arrives as ?s=<sessionId>, resolve to ?u=<otherUserId>.
   useEffect(() => {
@@ -495,7 +495,7 @@ function MessagesIndexPage() {
         replace: true,
       });
     }
-  }, [user, search.s, search.u, threads, navigate]);
+  }, [user?.id, search.s, search.u, threads, navigate]);
 
   const selectedThread = useMemo(
     () => threads.find((t) => t.otherUserId === selectedUserId) ?? null,
@@ -728,7 +728,7 @@ function MessagesIndexPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [user, sessionIdsKey, markOpened]);
+  }, [user?.id, sessionIdsKey, markOpened]);
 
   useEffect(() => {
     const scroller = messageScrollerRef.current;

@@ -554,7 +554,7 @@ function ExplorePage() {
       alive = false;
       controller.abort();
     };
-  }, [user]);
+  }, [user?.id]);
 
   // Load learners (people seeking skills) lazily — only when the user toggles
   // to learner mode. Stays empty until then to save a round trip on first

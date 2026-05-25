@@ -448,7 +448,10 @@ export function NotificationsMenu() {
       if (reloadTimer) clearTimeout(reloadTimer);
       if (bellChannel) void supabase.removeChannel(bellChannel);
     };
-  }, [user, markMessagesSeen]);
+    // Depend on user.id only — Supabase rotates the user object reference on
+    // every auth event even when the id is unchanged, which previously tore
+    // down + re-subscribed the notifications channel 2–4× per page load.
+  }, [user?.id, markMessagesSeen]);
 
   const clearAll = async () => {
     if (!user || notifications.length === 0) return;

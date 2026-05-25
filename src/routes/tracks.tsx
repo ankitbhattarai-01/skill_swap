@@ -91,7 +91,7 @@ function TracksPage() {
 
   useEffect(() => {
     if (user) void load();
-  }, [user]);
+  }, [user?.id]);
 
   // try/finally so `busyId` is always cleared. Without it, a network throw
   // (offline, fetch aborted, etc.) before the `setBusyId(null)` line leaves

@@ -203,7 +203,7 @@ function SessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     void loadSessions();

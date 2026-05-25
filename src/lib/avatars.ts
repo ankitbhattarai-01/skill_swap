@@ -104,6 +104,20 @@ async function withTimeout<T>(promise: Promise<T>, ms: number) {
   ]);
 }
 
+// Display-size transform spec for Supabase Storage's image renderer. Avatars
+// in the database are uploaded at full resolution (typically 400–800px square);
+// the header / sidebar display them at 32–48px, which is ~95% wasted bytes
+// without server-side resizing. See AvatarTransform usage in signSingleAvatarUrl.
+export type AvatarTransform = {
+  width: number;
+  height: number;
+  // 75 keeps file size small without visible artifacts at avatar sizes. Bump
+  // to 85+ for larger display contexts (profile page hero).
+  quality?: number;
+  // "cover" matches our circular-crop UX — fills the box and crops overflow.
+  resize?: "cover" | "contain" | "fill";
+};
+
 // Returns a Map<path, signedUrl> for the given storage paths. Filters out
 // nullish entries and de-duplicates so we make a single batched request.
 export async function signAvatarUrls(paths: (string | null | undefined)[]) {
@@ -142,8 +156,41 @@ export async function signAvatarUrls(paths: (string | null | undefined)[]) {
   return map;
 }
 
-export async function signSingleAvatarUrl(path: string | null | undefined) {
+export async function signSingleAvatarUrl(
+  path: string | null | undefined,
+  transform?: AvatarTransform,
+) {
   if (!path) return null;
-  const map = await signAvatarUrls([path]);
-  return map.get(path) ?? null;
+  if (!transform) {
+    // Fast path: piggy-back on the batched cache. Used by full-size contexts
+    // like the profile page hero where we want the original resolution.
+    const map = await signAvatarUrls([path]);
+    return map.get(path) ?? null;
+  }
+
+  // Transform path: createSignedUrls (batch) doesn't accept transforms in
+  // SDK v2, so we route through the singular signer. Cache key includes the
+  // pixel dimensions so different display sizes don't collide.
+  const cacheKey = `${path}::${transform.width}x${transform.height}@${transform.quality ?? 75}`;
+  const cached = getCachedAvatar(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const result = await withTimeout(
+      supabase.storage.from("avatars").createSignedUrl(path, AVATAR_TTL_SECONDS, {
+        transform: {
+          width: transform.width,
+          height: transform.height,
+          quality: transform.quality ?? 75,
+          resize: transform.resize ?? "cover",
+        },
+      }),
+      AVATAR_SIGN_TIMEOUT_MS,
+    );
+    if (!result?.data?.signedUrl) return null;
+    cacheAvatar(cacheKey, result.data.signedUrl);
+    return result.data.signedUrl;
+  } catch {
+    return null;
+  }
 }

@@ -208,7 +208,7 @@ function PublicUserPage() {
       alive = false;
       controller.abort();
     };
-  }, [user]);
+  }, [user?.id]);
 
   if (loading) {
     return <PageLoading variant="profile" />;

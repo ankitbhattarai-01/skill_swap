@@ -164,7 +164,7 @@ function OnboardingPage() {
     if (!authLoading && !user && !emailRedirectPending) {
       navigate({ to: "/login", search: { redirect: "/onboarding" } });
     }
-  }, [user, authLoading, emailRedirectPending, navigate]);
+  }, [user?.id, authLoading, emailRedirectPending, navigate]);
 
   useEffect(() => {
     if (authLoading || hydrated) return;
@@ -246,7 +246,7 @@ function OnboardingPage() {
       }
       setHydrated(true);
     })();
-  }, [user, authLoading, navigate, hydrated]);
+  }, [user?.id, authLoading, navigate, hydrated]);
 
   const findOrCreateSkill = async (name: string, category: string): Promise<Skill | null> => {
     const trimmed = name.trim();

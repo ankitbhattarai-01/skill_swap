@@ -81,7 +81,8 @@ function CreditsPage() {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/credits" } });
     }
-  }, [authLoading, navigate, user]);
+    // user?.id is sufficient — the redirect only cares whether a user exists.
+  }, [authLoading, navigate, user?.id]);
 
   const loadCredits = useCallback(async () => {
     if (!user) return;
@@ -199,7 +200,10 @@ function CreditsPage() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+    // user.id is the only field read above — depending on the whole user object
+    // re-created loadCredits on every auth event, which made the
+    // useEffect(loadCredits) below refire and double-fetch the page on mount.
+  }, [user?.id]);
 
   useEffect(() => {
     void loadCredits();

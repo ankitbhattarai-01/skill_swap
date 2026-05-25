@@ -118,7 +118,11 @@ export function IncomingCallToast() {
       stopRing();
       void supabase.removeChannel(channel);
     };
-  }, [user]);
+    // Depend on user.id only — Supabase rotates the user object reference on
+    // every onAuthStateChange event (TOKEN_REFRESHED, USER_UPDATED, …) even
+    // when the id is unchanged. Using [user] tore down + re-subscribed this
+    // realtime channel 2–4 times during auth bootstrap.
+  }, [user?.id]);
 
   // Start ringing whenever a call becomes visible; stop when it goes away.
   useEffect(() => {
