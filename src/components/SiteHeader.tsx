@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Suspense, lazy, memo, useEffect, useState } from "react";
+import { Suspense, lazy, memo } from "react";
 import type { CSSProperties, ElementType } from "react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "./Logo";
@@ -9,10 +9,8 @@ const GlobalSearch = lazy(() =>
   import("./GlobalSearch").then((m) => ({ default: m.GlobalSearch })),
 );
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/integrations/supabase/client";
-import { signSingleAvatarUrl } from "@/lib/avatars";
-import { PROFILE_UPDATED_EVENT } from "@/lib/profile-events";
 import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
+import { useHeaderProfile } from "@/hooks/useHeaderProfile";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { StrikeIndicator } from "./StrikeIndicator";
 import { ThemeToggle } from "./ThemeToggle";
@@ -40,18 +38,11 @@ import {
 } from "lucide-react";
 
 type NavItem = { name: string; icon: ElementType; to: string };
-type HeaderProfile = {
-  full_name: string | null;
-  avatar_url: string | null;
-  is_admin?: boolean;
-};
 
 type SiteHeaderProps = {
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 };
-
-const HEADER_PROFILE_CACHE_PREFIX = "skillswap-header-profile-";
 
 const NAV_ITEMS: NavItem[] = [
   { name: "Home", icon: LayoutDashboard, to: "/dashboard" },
@@ -131,69 +122,12 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [profile, setProfile] = useState<HeaderProfile | null>(null);
+  // Profile + is_admin + signed avatar are now bundled in a TanStack-Query
+  // hook with sessionStorage-backed initialData. Every consumer of
+  // useHeaderProfile shares the same cache so a navigation that mounts a new
+  // header instance doesn't re-issue the underlying RPCs.
+  const { data: profile } = useHeaderProfile();
   const { data: creditBalance } = useMyCreditBalance();
-
-  useEffect(() => {
-    if (!user) {
-      setProfile(null);
-      return;
-    }
-    let cancelled = false;
-    const cacheKey = `${HEADER_PROFILE_CACHE_PREFIX}${user.id}`;
-    try {
-      const cached = window.sessionStorage.getItem(cacheKey);
-      if (cached) setProfile(JSON.parse(cached) as HeaderProfile);
-    } catch {
-      // Header cache is optional.
-    }
-
-    const loadProfile = async () => {
-      try {
-        // is_admin is no longer column-readable from public profile SELECTs
-        // (it's hidden so admin accounts can't be enumerated). Credit
-        // balance now flows through useMyCreditBalance (TanStack Query),
-        // so only name/avatar/admin-flag are fetched here.
-        const [{ data }, { data: adminFlag }] = await Promise.all([
-          supabase.from("profiles").select("full_name, avatar_url").eq("id", user.id).maybeSingle(),
-          supabase.rpc("is_admin", { p_user: user.id }),
-        ]);
-        if (cancelled || !data) return;
-
-        // 96×96 covers 2× DPR on the 36–48px header/sidebar display.
-        // Without the transform, Supabase returns the original 400–800px
-        // upload — ~200KB PNG per Lighthouse — to render a 36px circle.
-        const signedAvatarUrl = await signSingleAvatarUrl(data.avatar_url, {
-          width: 96,
-          height: 96,
-          quality: 75,
-          resize: "cover",
-        });
-        if (cancelled) return;
-        const nextProfile = {
-          full_name: data.full_name,
-          avatar_url: signedAvatarUrl,
-          is_admin: Boolean(adminFlag),
-        };
-        setProfile(nextProfile);
-        window.sessionStorage.setItem(cacheKey, JSON.stringify(nextProfile));
-      } catch {
-        // Header should never block navigation or page rendering.
-      }
-    };
-
-    void loadProfile();
-    window.addEventListener(PROFILE_UPDATED_EVENT, loadProfile);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(PROFILE_UPDATED_EVENT, loadProfile);
-    };
-    // Depend on user.id only — Supabase auth events rotate the user object
-    // reference (TOKEN_REFRESHED, USER_UPDATED, INITIAL_SESSION) even when
-    // the user hasn't actually changed. The previous [user] dep refired this
-    // effect 3× during bootstrap, issuing 3 profile + 3 is_admin + 3 avatar
-    // signing requests for the same user.
-  }, [user?.id]);
 
   const displayName = profile?.full_name ?? user?.email ?? null;
   const sidebarWidth = sidebarCollapsed ? 72 : 192;
