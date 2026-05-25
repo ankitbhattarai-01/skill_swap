@@ -240,7 +240,16 @@ async function loadProfiles(ids: string[]) {
     .select("id, full_name, learning_mode, avatar_url, updated_at")
     .in("id", uniqueIds);
   const rows = data ?? [];
-  const signedUrlMap = await signAvatarUrls(rows.map((r) => r.avatar_url));
+  // 128x128 covers 2x DPR on the 40-64px avatar slots used across the
+  // dashboard (top-match tiles, active sessions strip, seeker cards). Without
+  // the transform, every avatar downloaded at its 400-800px upload size -
+  // the Lighthouse report flagged ~88 KB per tile for ~55px circles.
+  const signedUrlMap = await signAvatarUrls(rows.map((r) => r.avatar_url), {
+    width: 128,
+    height: 128,
+    quality: 75,
+    resize: "cover",
+  });
   for (const person of rows) {
     profileMap.set(person.id, {
       full_name: person.full_name ?? "Student",

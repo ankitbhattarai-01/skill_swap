@@ -596,7 +596,12 @@ function ExplorePage() {
 
         const avatarPaths = Array.from(profileMap.values()).map((p) => p.avatar_url);
         if (avatarPaths.length === 0) return;
-        const signed = await signAvatarUrls(avatarPaths);
+        const signed = await signAvatarUrls(avatarPaths, {
+          width: 128,
+          height: 128,
+          quality: 75,
+          resize: "cover",
+        });
         if (!alive) return;
         setLearnerRows(
           learningRows.map((row) => {
@@ -683,7 +688,12 @@ function ExplorePage() {
         const profileAvatarPaths = Array.from(profileMap.values()).map((p) => p.avatar_url);
         const [ratingResult, avatarResult] = await Promise.allSettled([
           fetchTeacherRatings(userIds),
-          signAvatarUrls(profileAvatarPaths),
+          signAvatarUrls(profileAvatarPaths, {
+            width: 128,
+            height: 128,
+            quality: 75,
+            resize: "cover",
+          }),
         ]);
 
         if (!alive) return;

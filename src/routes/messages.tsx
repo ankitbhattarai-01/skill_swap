@@ -416,7 +416,12 @@ function MessagesIndexPage() {
 
         const allSessionIds = rawSessions.map((s) => s.id);
         const [avatarResult, messageResult] = await Promise.allSettled([
-          signAvatarUrls(avatarPaths),
+          signAvatarUrls(avatarPaths, {
+            width: 128,
+            height: 128,
+            quality: 75,
+            resize: "cover",
+          }),
           allSessionIds.length
             ? supabase
                 .from("messages")

@@ -118,16 +118,39 @@ export type AvatarTransform = {
   resize?: "cover" | "contain" | "fill";
 };
 
-// Returns a Map<path, signedUrl> for the given storage paths. Filters out
-// nullish entries and de-duplicates so we make a single batched request.
-export async function signAvatarUrls(paths: (string | null | undefined)[]) {
+// Internal cache key. Original-path-only when no transform so existing
+// non-transform callers keep their cache entries. With a transform, the
+// dimensions are embedded so multiple display sizes for the same avatar
+// don't collide (header 96 vs dashboard tile 128 vs profile hero 400).
+function transformCacheKey(path: string, transform?: AvatarTransform): string {
+  if (!transform) return path;
+  return `${path}::${transform.width}x${transform.height}@${transform.quality ?? 75}`;
+}
+
+// Returns a Map<originalPath, signedUrl> for the given storage paths.
+//
+// Without `transform`: uses Supabase's batched createSignedUrls (one HTTP
+// roundtrip) and returns full-resolution signed URLs. Behavior unchanged
+// from the original implementation - existing callers needing original-size
+// avatars (e.g., the profile page hero) continue to work.
+//
+// With `transform`: fans out to parallel per-path createSignedUrl calls
+// because the batched endpoint doesn't accept a transform option in SDK v2.
+// The N extra sign roundtrips (each ~1 KB) are dwarfed by the per-image
+// bytes saved when the renderer downscales (e.g., 200 KB original →
+// ~5 KB at 128×128). Cache keys include the transform so a future caller
+// with different dimensions doesn't overwrite this one's entries.
+export async function signAvatarUrls(
+  paths: (string | null | undefined)[],
+  transform?: AvatarTransform,
+) {
   const map = new Map<string, string>();
   const valid = Array.from(new Set(paths.filter((p): p is string => Boolean(p))));
   if (!valid.length) return map;
 
   const missing: string[] = [];
   for (const path of valid) {
-    const cached = getCachedAvatar(path);
+    const cached = getCachedAvatar(transformCacheKey(path, transform));
     if (cached) {
       map.set(path, cached);
     } else {
@@ -136,6 +159,38 @@ export async function signAvatarUrls(paths: (string | null | undefined)[]) {
   }
   if (!missing.length) return map;
 
+  // Transform path: fan out to per-path createSignedUrl with the transform
+  // option. Promise.allSettled so a single transient failure doesn't drop
+  // the rest of the batch - missing entries simply don't appear in the map,
+  // which existing call sites already handle via the `?? null` fallback.
+  if (transform) {
+    const results = await Promise.allSettled(
+      missing.map((path) =>
+        withTimeout(
+          supabase.storage.from("avatars").createSignedUrl(path, AVATAR_TTL_SECONDS, {
+            transform: {
+              width: transform.width,
+              height: transform.height,
+              quality: transform.quality ?? 75,
+              resize: transform.resize ?? "cover",
+            },
+          }),
+          AVATAR_SIGN_TIMEOUT_MS,
+        ).then((result) => ({ path, result })),
+      ),
+    );
+    for (const settled of results) {
+      if (settled.status !== "fulfilled") continue;
+      const { path, result } = settled.value;
+      const signedUrl = result?.data?.signedUrl;
+      if (!signedUrl) continue;
+      map.set(path, signedUrl);
+      cacheAvatar(transformCacheKey(path, transform), signedUrl);
+    }
+    return map;
+  }
+
+  // Non-transform fast path: one batched request for the whole missing set.
   try {
     const result = await withTimeout(
       supabase.storage.from("avatars").createSignedUrls(missing, AVATAR_TTL_SECONDS),
@@ -171,7 +226,7 @@ export async function signSingleAvatarUrl(
   // Transform path: createSignedUrls (batch) doesn't accept transforms in
   // SDK v2, so we route through the singular signer. Cache key includes the
   // pixel dimensions so different display sizes don't collide.
-  const cacheKey = `${path}::${transform.width}x${transform.height}@${transform.quality ?? 75}`;
+  const cacheKey = transformCacheKey(path, transform);
   const cached = getCachedAvatar(cacheKey);
   if (cached) return cached;
 
