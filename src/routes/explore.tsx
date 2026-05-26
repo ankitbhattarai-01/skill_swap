@@ -928,7 +928,7 @@ function ExplorePage() {
       }
       if (sessionId) {
         playRequestSentChime();
-        toast.success("Help offered. You can message after they accept.");
+        toast.success("Help offered. Message them now to discuss before they accept.");
         setOfferRow(null);
       }
     } finally {
@@ -942,14 +942,35 @@ function ExplorePage() {
         void (async () => {
           if (!user || !row.skills) return;
           setBusyAction(`message-${row.id}`);
-          const { data, error } = await findAcceptedSession(user.id, row.user_id, row.skills.id);
-          setBusyAction(null);
-          if (error) return toast.error(error.message);
-          if (!data?.id) {
-            toast.error("You can message after the teacher accepts your session request.");
+          const { data: accepted } = await findAcceptedSession(
+            user.id,
+            row.user_id,
+            row.skills.id,
+          );
+          if (accepted?.id) {
+            setBusyAction(null);
+            navigate({ to: "/messages", search: { s: accepted.id } });
             return;
           }
-          navigate({ to: "/messages", search: { s: data.id } });
+          // No accepted session — open (or create) a pending one for
+          // pre-acceptance chat. getOrCreateSession returns the existing
+          // open session if one is already pending, otherwise creates a
+          // new pending row with a default 30-min duration.
+          const { sessionId, error } = await getOrCreateSession({
+            learnerId: user.id,
+            teacherId: row.user_id,
+            initiatorId: user.id,
+            skillId: row.skills.id,
+            creditsPerHour: row.credits_per_hour,
+            durationMinutes: 30,
+            scheduledAt: null,
+          });
+          setBusyAction(null);
+          if (error) {
+            toast.error(error.message);
+            return;
+          }
+          if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
         })();
       }, "Sign in to message this student.");
     },
@@ -985,7 +1006,7 @@ function ExplorePage() {
       }
       if (sessionId) {
         playRequestSentChime();
-        toast.success("Session requested. You can message after it is accepted.");
+        toast.success("Session requested. You can message them now while you wait.");
         setRequestRow(null);
       }
     } finally {

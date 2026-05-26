@@ -108,6 +108,13 @@ function persistLastOpened(userId: string, map: Record<string, string>) {
 }
 
 const OPEN_STATUSES = new Set(["accepted", "active"]);
+// Pre-acceptance messaging is allowed on pending sessions (subject to the
+// 15/day + 5-unanswered server caps in migration 20260526010000). The
+// chatSession on a thread is the one the composer targets; we prefer an
+// accepted/active session when present so the UX of an already-booked
+// thread is unchanged, and fall back to the most recent pending session.
+const CHAT_STATUSES = new Set(["pending", "accepted", "active"]);
+const PENDING_DAILY_LIMIT = 15;
 const CHAT_MESSAGE_PAGE_SIZE = 50;
 
 type ThreadItem = {
@@ -116,6 +123,7 @@ type ThreadItem = {
   otherAvatar: string | null;
   sessions: SessionRow[]; // ascending by created_at — chronological so Session 1 is oldest
   activeSession: SessionRow | null;
+  chatSession: SessionRow | null;
   latestSession: SessionRow;
   lastMessage: MessagePreview | null;
 };
@@ -176,6 +184,15 @@ function MessagesIndexPage() {
   const [sending, setSending] = useState(false);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [reportingMessageId, setReportingMessageId] = useState<string | null>(null);
+  const [pendingQuotaUsed, setPendingQuotaUsed] = useState<number | null>(null);
+
+  const refreshQuota = useCallback(async () => {
+    const { data, error } = await supabase.rpc("my_pending_message_quota");
+    if (error) return;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return;
+    if (typeof row.used === "number") setPendingQuotaUsed(row.used);
+  }, []);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messageScrollerRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -190,7 +207,8 @@ function MessagesIndexPage() {
     if (!user) return;
     setHiddenIds(loadHiddenMessageIds(user.id));
     setLastOpened(loadLastOpened(user.id));
-  }, [user?.id]);
+    void refreshQuota();
+  }, [user?.id, refreshQuota]);
 
   const markOpened = useCallback(
     (otherUserId: string) => {
@@ -332,7 +350,6 @@ function MessagesIndexPage() {
             "id, learner_id, teacher_id, status, credits, duration_minutes, created_at, scheduled_at, skills:skill_id(name)",
           )
           .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`)
-          .neq("status", "pending")
           .order("updated_at", { ascending: false })
           .limit(100)
           .abortSignal(controller.signal);
@@ -390,8 +407,10 @@ function MessagesIndexPage() {
 
         const baseThreads: ThreadItem[] = otherUserIds.map((otherUserId) => {
           const sessions = (sessionsByOther.get(otherUserId) ?? []).slice();
-          const activeSession =
-            [...sessions].reverse().find((s) => OPEN_STATUSES.has(s.status)) ?? null;
+          const reversed = [...sessions].reverse();
+          const activeSession = reversed.find((s) => OPEN_STATUSES.has(s.status)) ?? null;
+          const chatSession =
+            activeSession ?? reversed.find((s) => s.status === "pending") ?? null;
           const latestSession = sessions[sessions.length - 1];
           const profile = profileMap.get(otherUserId);
           const trimmedName = profile?.full_name?.trim();
@@ -405,6 +424,7 @@ function MessagesIndexPage() {
             otherAvatar: null,
             sessions,
             activeSession,
+            chatSession,
             latestSession,
             lastMessage: null,
           };
@@ -780,8 +800,8 @@ function MessagesIndexPage() {
 
   const filtered = useMemo(() => {
     let list = roleTab === "teaching" ? teachingThreads : learningThreads;
-    if (filter === "active") list = list.filter((t) => t.activeSession !== null);
-    else if (filter === "closed") list = list.filter((t) => t.activeSession === null);
+    if (filter === "active") list = list.filter((t) => t.chatSession !== null);
+    else if (filter === "closed") list = list.filter((t) => t.chatSession === null);
     if (!query.trim()) return list;
     const q = query.toLowerCase();
     return list.filter(
@@ -820,8 +840,8 @@ function MessagesIndexPage() {
 
   const sendMessage = async () => {
     if (!user || !selectedThread || !text.trim()) return;
-    const active = selectedThread.activeSession;
-    if (!active) {
+    const target = selectedThread.chatSession;
+    if (!target) {
       toast.error("No active session. Book one to keep chatting.");
       return;
     }
@@ -843,7 +863,7 @@ function MessagesIndexPage() {
     const optimisticCreatedAt = new Date().toISOString();
     const optimisticRow: MessageRow = {
       id: tempId,
-      session_id: active.id,
+      session_id: target.id,
       sender_id: user.id,
       text: trimmed,
       created_at: optimisticCreatedAt,
@@ -858,13 +878,16 @@ function MessagesIndexPage() {
     const { data, error } = await supabase
       .from("messages")
       .insert({
-        session_id: active.id,
+        session_id: target.id,
         sender_id: user.id,
         text: trimmed,
       })
       .select("id, session_id, sender_id, text, created_at, edited_at")
       .single();
     setSending(false);
+    if (target.status === "pending") {
+      void refreshQuota();
+    }
     if (error) {
       // Roll back the optimistic row and restore the composer text so the
       // user can retry without retyping.
@@ -898,9 +921,13 @@ function MessagesIndexPage() {
   // before /login takes over.
   if (!user) return null;
 
-  const activeSession = selectedThread?.activeSession ?? null;
-  const headerSession = activeSession ?? selectedThread?.latestSession ?? null;
+  const chatSession = selectedThread?.chatSession ?? null;
+  const isPendingChat = chatSession?.status === "pending";
+  const headerSession = chatSession ?? selectedThread?.latestSession ?? null;
   const headerTeaching = headerSession?.teacher_id === user?.id;
+  const pendingQuotaRemaining =
+    pendingQuotaUsed === null ? null : Math.max(0, PENDING_DAILY_LIMIT - pendingQuotaUsed);
+  const pendingQuotaExhausted = pendingQuotaRemaining === 0;
 
   return (
     <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh_-_6rem)] md:min-h-[36rem]">
@@ -1048,7 +1075,9 @@ function MessagesIndexPage() {
                   const unread = isUnread(t);
                   const subline = t.activeSession
                     ? `Active: ${t.activeSession.skill_name ?? "skill"} · ${t.activeSession.duration_minutes} min`
-                    : `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`;
+                    : t.chatSession?.status === "pending"
+                      ? `Pending: ${t.chatSession.skill_name ?? "skill"} · pre-session chat`
+                      : `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`;
                   const previewMine = t.lastMessage?.sender_id === user?.id;
                   const messagePreview = t.lastMessage
                     ? `${previewMine ? "You: " : ""}${t.lastMessage.text}`
@@ -1162,8 +1191,8 @@ function MessagesIndexPage() {
                       )}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {activeSession
-                        ? `${activeSession.skill_name ?? "Skill"} · ${activeSession.duration_minutes} min · ${statusLabel(activeSession.status)}`
+                      {chatSession
+                        ? `${chatSession.skill_name ?? "Skill"} · ${chatSession.duration_minutes} min · ${statusLabel(chatSession.status)}`
                         : `${selectedThread.sessions.length} session${selectedThread.sessions.length === 1 ? "" : "s"} · no active session`}
                     </div>
                   </div>
@@ -1235,49 +1264,68 @@ function MessagesIndexPage() {
                   <div ref={bottomRef} />
                 </div>
 
-                {activeSession ? (
-                  <form
-                    data-mobile-message-composer
-                    className="animate-fade-up sticky bottom-0 flex shrink-0 items-end gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
-                    style={{ animationDelay: "80ms" }}
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void sendMessage();
-                    }}
-                  >
-                    <textarea
-                      ref={composerRef}
-                      value={text}
-                      onChange={(e) => {
-                        setText(e.target.value);
-                        const el = e.currentTarget;
-                        el.style.height = "auto";
-                        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                {chatSession ? (
+                  <div className="flex shrink-0 flex-col">
+                    {isPendingChat && (
+                      <div className="border-t border-amber-400/15 bg-amber-400/5 px-4 py-2 text-[11px] text-amber-200/90">
+                        <span className="font-semibold">Pre-session chat.</span>{" "}
+                        {pendingQuotaRemaining === null
+                          ? `Up to ${PENDING_DAILY_LIMIT} messages/day until they accept.`
+                          : pendingQuotaExhausted
+                            ? "Daily limit reached. Resets at midnight UTC."
+                            : `${pendingQuotaRemaining} of ${PENDING_DAILY_LIMIT} messages left today · resets at midnight UTC.`}
+                      </div>
+                    )}
+                    <form
+                      data-mobile-message-composer
+                      className="animate-fade-up sticky bottom-0 flex items-end gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
+                      style={{ animationDelay: "80ms" }}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void sendMessage();
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                          e.preventDefault();
-                          void sendMessage();
-                        }
-                      }}
-                      placeholder={`Message about ${activeSession.skill_name ?? "the session"}...`}
-                      rows={1}
-                      className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30"
-                    />
-                    <Button
-                      variant="hero"
-                      type="submit"
-                      size="icon"
-                      className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
-                      disabled={sending || !text.trim()}
                     >
-                      {sending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                      )}
-                    </Button>
-                  </form>
+                      <textarea
+                        ref={composerRef}
+                        value={text}
+                        onChange={(e) => {
+                          setText(e.target.value);
+                          const el = e.currentTarget;
+                          el.style.height = "auto";
+                          el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                            e.preventDefault();
+                            void sendMessage();
+                          }
+                        }}
+                        placeholder={
+                          isPendingChat && pendingQuotaExhausted
+                            ? "Daily limit reached. Resets at midnight UTC."
+                            : `Message about ${chatSession.skill_name ?? "the session"}...`
+                        }
+                        rows={1}
+                        disabled={isPendingChat && pendingQuotaExhausted}
+                        className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30 disabled:opacity-60"
+                      />
+                      <Button
+                        variant="hero"
+                        type="submit"
+                        size="icon"
+                        className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
+                        disabled={
+                          sending || !text.trim() || (isPendingChat && pendingQuotaExhausted)
+                        }
+                      >
+                        {sending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                        )}
+                      </Button>
+                    </form>
+                  </div>
                 ) : (
                   <div
                     data-mobile-message-composer

@@ -1532,6 +1532,14 @@ export type Database = {
         Args: Record<string, never>;
         Returns: number;
       };
+      my_pending_message_quota: {
+        Args: Record<string, never>;
+        Returns: {
+          used: number;
+          daily_limit: number;
+          reset_at: string;
+        }[];
+      };
       reject_session: {
         Args: { p_session_id: string };
         Returns: Database["public"]["Tables"]["sessions"]["Row"];
