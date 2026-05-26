@@ -22,38 +22,57 @@ export function PageLoading({ variant = "hero-stats" }: { variant?: PageLoadingV
   }
 
   if (variant === "messages") {
+    // Mirrors the real messages route shell so there is no shift on load:
+    // same outer height calc, max-w-6xl wrapper, glass card, and inbox
+    // structure (header → tabs → search → filter chips → contact list).
+    // Right pane mirrors the "Select a conversation" empty state.
     return (
-      <div className="min-h-screen flex flex-col">
-        <main className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-5 pb-4 animate-in fade-in duration-150">
-          <div className="glass rounded-3xl overflow-hidden flex h-[calc(100dvh-7rem)]">
-            <aside className="w-full md:w-[360px] md:shrink-0 md:border-r border-white/10 p-5 space-y-4">
-              <Skeleton className="h-8 w-36 rounded-xl" />
-              <Skeleton className="h-11 rounded-2xl" />
-              {Array.from({ length: 6 }).map((_, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  <Skeleton className="h-11 w-11 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-3/5 rounded-full" />
-                    <Skeleton className="h-3 w-4/5 rounded-full" />
+      <div className="flex h-[calc(100dvh_-_118px_-_6rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[32rem] flex-col overflow-hidden md:h-[calc(100dvh_-_6rem)] md:min-h-[36rem]">
+        <main className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 animate-in fade-in duration-150">
+          <div className="glass flex min-h-0 flex-1 overflow-hidden rounded-3xl md:rounded-3xl">
+            <aside className="flex w-full flex-col bg-muted/30 dark:bg-background/40 md:w-[360px] md:shrink-0 md:border-r border-border/60">
+              <div className="border-b border-border/60 px-5 pt-5 pb-4">
+                <div className="flex items-start gap-3">
+                  <Skeleton className="h-10 w-10 shrink-0 rounded-2xl" />
+                  <div className="min-w-0 space-y-1.5 pt-0.5">
+                    <Skeleton className="h-6 w-32 rounded-md" />
+                    <Skeleton className="h-3 w-44 rounded-full" />
                   </div>
                 </div>
-              ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2 px-4 pt-3 pb-2">
+                <Skeleton className="h-10 rounded-xl" />
+                <Skeleton className="h-10 rounded-xl" />
+              </div>
+              <div className="px-4 pb-3">
+                <Skeleton className="h-10 w-full rounded-full" />
+              </div>
+              <div className="flex gap-1.5 px-4 pb-3">
+                <Skeleton className="h-7 w-12 rounded-full" />
+                <Skeleton className="h-7 w-16 rounded-full" />
+                <Skeleton className="h-7 w-16 rounded-full" />
+              </div>
+              <div className="flex-1 overflow-hidden px-2 py-1">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="my-1 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5"
+                  >
+                    <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <Skeleton className="h-4 w-3/5 rounded-full" />
+                      <Skeleton className="h-3 w-4/5 rounded-full" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </aside>
-            <section className="hidden flex-1 flex-col md:flex p-6">
-              <div className="flex items-center gap-3 border-b border-white/10 pb-4">
-                <Skeleton className="h-12 w-12 rounded-full" />
-                <div className="space-y-2">
-                  <Skeleton className="h-5 w-44 rounded-full" />
-                  <Skeleton className="h-3 w-28 rounded-full" />
-                </div>
-              </div>
-              <div className="flex-1 space-y-4 py-6">
-                <Skeleton className="ml-auto h-12 w-2/5 rounded-2xl" />
-                <Skeleton className="h-12 w-1/2 rounded-2xl" />
-                <Skeleton className="ml-auto h-16 w-3/5 rounded-2xl" />
-                <Skeleton className="h-14 w-2/5 rounded-2xl" />
-              </div>
-              <Skeleton className="h-12 rounded-2xl" />
+            <section className="hidden flex-1 flex-col items-center justify-center p-10 md:flex">
+              <Skeleton className="mb-5 h-20 w-20 rounded-3xl" />
+              <Skeleton className="h-8 w-64 rounded-md" />
+              <Skeleton className="mt-3 h-3 w-80 rounded-full" />
+              <Skeleton className="mt-2 h-3 w-64 rounded-full" />
+              <Skeleton className="mt-5 h-7 w-60 rounded-full" />
             </section>
           </div>
         </main>
