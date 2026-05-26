@@ -922,6 +922,69 @@ function DashboardPage() {
     setRequestDialog({ kind: "request", teacher });
   };
 
+  // Pre-acceptance chat: opens (or creates) a pending session with the other
+  // user and routes to /messages. The 15-msg/day + 5-unanswered caps are
+  // enforced server-side by enforce_pending_message_caps (see migration
+  // 20260526010000_pending_session_message_caps.sql), so the client just
+  // needs a pending session to attach the messages to.
+  const openChatWithTeacher = useCallback(
+    async (teacher: TeachOffer) => {
+      if (!user) return;
+      markBusy(teacher.id);
+      try {
+        const { sessionId, error } = await getOrCreateSession({
+          learnerId: user.id,
+          teacherId: teacher.user_id,
+          initiatorId: user.id,
+          skillId: teacher.skill_id,
+          creditsPerHour: teacher.credits_per_hour,
+          durationMinutes: 30,
+          scheduledAt: null,
+        });
+        if (error) {
+          toastError(error);
+          return;
+        }
+        if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
+      } finally {
+        clearBusy(teacher.id);
+      }
+    },
+    [clearBusy, markBusy, navigate, user],
+  );
+
+  const openChatWithSeeker = useCallback(
+    async (seeker: Seeker) => {
+      if (!user) return;
+      markBusy(seeker.id);
+      try {
+        const { data: teachingSkill } = await supabase
+          .from("user_teaching_skills")
+          .select("credits_per_hour")
+          .eq("user_id", user.id)
+          .eq("skill_id", seeker.skill_id)
+          .maybeSingle();
+        const { sessionId, error } = await getOrCreateSession({
+          learnerId: seeker.user_id,
+          teacherId: user.id,
+          initiatorId: user.id,
+          skillId: seeker.skill_id,
+          creditsPerHour: teachingSkill?.credits_per_hour ?? 4,
+          durationMinutes: 30,
+          scheduledAt: null,
+        });
+        if (error) {
+          toastError(error);
+          return;
+        }
+        if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
+      } finally {
+        clearBusy(seeker.id);
+      }
+    },
+    [clearBusy, markBusy, navigate, user],
+  );
+
   const refreshSuggestions = async () => {
     if (recsRefreshing) return;
     setRecsRefreshing(true);
@@ -1199,6 +1262,7 @@ function DashboardPage() {
               onAccept={acceptSession}
               onReject={rejectSession}
               onRequest={openRequestDialog}
+              onMessageTeacher={(t) => void openChatWithTeacher(t)}
             />
           ))}
         </div>
@@ -1239,6 +1303,7 @@ function DashboardPage() {
                     levelOk={levelOk}
                     busy={busyIds.has(t.id)}
                     onRequest={() => openRequestDialog(t)}
+                    onMessage={() => void openChatWithTeacher(t)}
                   />
                 );
               })}
@@ -1268,6 +1333,7 @@ function DashboardPage() {
                     matchLabel={deriveMatchLabel(teachingMode, s.learning_mode, "Learner Match")}
                     busy={busyIds.has(s.id)}
                     onOffer={() => void openOfferDialog(s)}
+                    onMessage={() => void openChatWithSeeker(s)}
                   />
                 );
               })}
@@ -1415,6 +1481,7 @@ type NextMoveCardProps = {
   onAccept: (s: SessionRow) => void;
   onReject: (s: SessionRow) => void;
   onRequest: (t: TeachOffer) => void;
+  onMessageTeacher: (t: TeachOffer) => void;
 };
 
 function NextMoveCard({
@@ -1425,6 +1492,7 @@ function NextMoveCard({
   onAccept,
   onReject,
   onRequest,
+  onMessageTeacher,
 }: NextMoveCardProps) {
   if (next.kind === "incoming") {
     const s = next.session;
@@ -1553,6 +1621,7 @@ function NextMoveCard({
               teacher={t}
               busy={busyIds.has(t.id)}
               onRequest={() => onRequest(t)}
+              onMessage={() => onMessageTeacher(t)}
             />
           ))}
         </div>
@@ -1633,10 +1702,12 @@ function TopMatchTile({
   teacher,
   busy,
   onRequest,
+  onMessage,
 }: {
   teacher: TeachOffer;
   busy: boolean;
   onRequest: () => void;
+  onMessage: () => void;
 }) {
   return (
     <div className="group relative overflow-hidden rounded-xl border border-border/40 bg-card/60 p-4 transition-all hover:-translate-y-0.5 hover:border-brand-purple/40 hover:shadow-md hover:shadow-brand-purple/5">
@@ -1670,20 +1741,37 @@ function TopMatchTile({
             </p>
           </div>
         </Link>
-        <Button
-          variant="hero"
-          size="sm"
-          className="shrink-0 rounded-full px-4"
-          onClick={onRequest}
-          disabled={busy}
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <MessageCircle className="h-3.5 w-3.5" />
-          )}
-          <span className="hidden sm:inline">Request</span>
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-3"
+            onClick={onMessage}
+            disabled={busy}
+            aria-label={`Message ${teacher.profiles?.full_name ?? "this teacher"}`}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MessageCircle className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Message</span>
+          </Button>
+          <Button
+            variant="hero"
+            size="sm"
+            className="rounded-full px-4"
+            onClick={onRequest}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <HandHeart className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Request</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -1955,6 +2043,7 @@ type TeacherScrollCardProps = {
   levelOk: boolean;
   busy: boolean;
   onRequest: () => void;
+  onMessage: () => void;
 };
 
 function TeacherScrollCard({
@@ -1964,6 +2053,7 @@ function TeacherScrollCard({
   levelOk,
   busy,
   onRequest,
+  onMessage,
 }: TeacherScrollCardProps) {
   const chip = !creditsOk
     ? { label: `Need ${teacher.credits_per_hour} cr/hr`, tone: "warn" as const }
@@ -2012,20 +2102,37 @@ function TeacherScrollCard({
             </span>
           </div>
         </Link>
-        <Button
-          variant="hero"
-          size="sm"
-          className="shrink-0 rounded-full px-3"
-          onClick={onRequest}
-          disabled={busy}
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <MessageCircle className="h-3.5 w-3.5" />
-          )}
-          <span className="hidden sm:inline">Request</span>
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-3"
+            onClick={onMessage}
+            disabled={busy}
+            aria-label={`Message ${teacher.profiles?.full_name ?? "this teacher"}`}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MessageCircle className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Message</span>
+          </Button>
+          <Button
+            variant="hero"
+            size="sm"
+            className="rounded-full px-3"
+            onClick={onRequest}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <HandHeart className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Request</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -2036,9 +2143,16 @@ type SeekerScrollCardProps = {
   matchLabel: string;
   busy: boolean;
   onOffer: () => void;
+  onMessage: () => void;
 };
 
-function SeekerScrollCard({ seeker, matchLabel, busy, onOffer }: SeekerScrollCardProps) {
+function SeekerScrollCard({
+  seeker,
+  matchLabel,
+  busy,
+  onOffer,
+  onMessage,
+}: SeekerScrollCardProps) {
   return (
     <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-cyan/40 hover:bg-background/70 hover:shadow-sm">
       <div className="flex items-start gap-3">
@@ -2066,20 +2180,37 @@ function SeekerScrollCard({ seeker, matchLabel, busy, onOffer }: SeekerScrollCar
             </span>
           </div>
         </Link>
-        <Button
-          variant="hero"
-          size="sm"
-          className="shrink-0 rounded-full px-3"
-          onClick={onOffer}
-          disabled={busy}
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <HandHeart className="h-3.5 w-3.5" />
-          )}
-          <span className="hidden sm:inline">Offer</span>
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-3"
+            onClick={onMessage}
+            disabled={busy}
+            aria-label={`Message ${seeker.profiles?.full_name ?? "this learner"}`}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MessageCircle className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Message</span>
+          </Button>
+          <Button
+            variant="hero"
+            size="sm"
+            className="rounded-full px-3"
+            onClick={onOffer}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <HandHeart className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Offer</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
