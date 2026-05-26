@@ -15,6 +15,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { AuthGateProvider } from "@/lib/auth-gate";
 import { ThemeProvider, themeInitScript } from "@/lib/theme-context";
 import { SiteHeader } from "@/components/SiteHeader";
+import { HelpButton } from "@/components/help/HelpButton";
 import { IncomingRequestBanner } from "@/components/IncomingRequestBanner";
 import { MessageHeadsUp } from "@/components/MessageHeadsUp";
 import { IncomingCallToast } from "@/components/IncomingCallToast";
@@ -194,6 +195,7 @@ function RootComponent() {
                   </ErrorBoundary>
                   <Outlet />
                 </div>
+                <HelpButton />
               </div>
             )}
             <Toaster position="top-center" offset={80} />
