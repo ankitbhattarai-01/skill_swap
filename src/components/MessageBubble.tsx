@@ -1,5 +1,16 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Copy, EyeOff, Flag, Loader2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import {
+  Copy,
+  Download,
+  EyeOff,
+  FileText,
+  Flag,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import { downloadAttachment, formatBytes } from "@/lib/messageAttachments";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +39,11 @@ export type MessageBubbleData = {
   text: string;
   created_at: string;
   edited_at?: string | null;
+  attachment_path?: string | null;
+  attachment_kind?: "image" | "document" | null;
+  attachment_name?: string | null;
+  attachment_size?: number | null;
+  attachment_mime?: string | null;
 };
 
 type Props = {
@@ -36,6 +52,7 @@ type Props = {
   otherName: string;
   otherAvatar: string | null;
   showAvatar: boolean;
+  attachmentUrl?: string | null;
   onEdit: (id: string, nextText: string) => Promise<void> | void;
   onUnsend: (id: string) => Promise<void> | void;
   onDeleteForMe: (id: string) => void;
@@ -55,6 +72,7 @@ function MessageBubbleInner({
   otherName,
   otherAvatar,
   showAvatar,
+  attachmentUrl,
   onEdit,
   onUnsend,
   onDeleteForMe,
@@ -221,8 +239,8 @@ function MessageBubbleInner({
                 onDeleteForMe={() => onDeleteForMe(message.id)}
               />
             )}
-            <button
-              type="button"
+            <div
+              role="group"
               onContextMenu={(e) => {
                 e.preventDefault();
                 setMenuOpen(true);
@@ -232,15 +250,45 @@ function MessageBubbleInner({
               onTouchMove={cancelLongPress}
               onTouchCancel={cancelLongPress}
               className={cn(
-                "select-text break-words px-4 py-2 text-left text-sm shadow-sm transition-shadow",
+                "select-text break-words text-left text-sm shadow-sm transition-shadow",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+                "overflow-hidden",
                 mine
                   ? "rounded-[1.35rem] rounded-br-md gradient-brand text-white"
                   : "rounded-[1.35rem] rounded-bl-md bg-card text-foreground",
+                message.attachment_kind === "image" && !message.text
+                  ? "p-1"
+                  : message.attachment_path
+                    ? "px-3 pt-2 pb-2"
+                    : "px-4 py-2",
               )}
             >
-              <div className="whitespace-pre-wrap leading-relaxed">{message.text}</div>
-            </button>
+              {message.attachment_kind === "image" && message.attachment_path && (
+                <ImageAttachment
+                  url={attachmentUrl ?? null}
+                  name={message.attachment_name ?? "Image"}
+                  mine={mine}
+                />
+              )}
+              {message.attachment_kind === "document" && message.attachment_path && (
+                <DocumentAttachment
+                  url={attachmentUrl ?? null}
+                  name={message.attachment_name ?? "Document"}
+                  size={message.attachment_size ?? null}
+                  mine={mine}
+                />
+              )}
+              {message.text && message.text.trim().length > 0 && (
+                <div
+                  className={cn(
+                    "whitespace-pre-wrap leading-relaxed",
+                    message.attachment_path && "mt-2 px-1",
+                  )}
+                >
+                  {message.text}
+                </div>
+              )}
+            </div>
             {!mine && (
               <BubbleMenu
                 mine={false}
@@ -366,6 +414,160 @@ function BubbleMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function useAttachmentDownload(url: string | null, name: string) {
+  const [downloading, setDownloading] = useState(false);
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!url || downloading) return;
+    setDownloading(true);
+    try {
+      await downloadAttachment(url, name);
+    } catch {
+      toast.error("Could not download file");
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return { downloading, handleDownload };
+}
+
+function ImageAttachment({
+  url,
+  name,
+  mine,
+}: {
+  url: string | null;
+  name: string;
+  mine: boolean;
+}) {
+  const { downloading, handleDownload } = useAttachmentDownload(url, name);
+  if (!url) {
+    return (
+      <div
+        className={cn(
+          "flex h-40 w-60 max-w-[60vw] items-center justify-center rounded-2xl",
+          mine ? "bg-white/10" : "bg-foreground/5",
+        )}
+      >
+        <Loader2 className="h-5 w-5 animate-spin opacity-60" />
+      </div>
+    );
+  }
+  return (
+    <div className="relative max-w-full overflow-hidden rounded-2xl">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="block"
+      >
+        <img
+          src={url}
+          alt={name}
+          className="block h-auto max-h-[320px] w-auto max-w-full rounded-2xl object-cover"
+          loading="lazy"
+        />
+      </a>
+      <button
+        type="button"
+        onClick={handleDownload}
+        disabled={downloading}
+        aria-label="Download image"
+        title="Download image"
+        className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/75 active:scale-95 disabled:opacity-60"
+      >
+        {downloading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="h-4 w-4" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function DocumentAttachment({
+  url,
+  name,
+  size,
+  mine,
+}: {
+  url: string | null;
+  name: string;
+  size: number | null;
+  mine: boolean;
+}) {
+  const sizeLabel = size ? formatBytes(size) : null;
+  const { downloading, handleDownload } = useAttachmentDownload(url, name);
+  return (
+    <div
+      className={cn(
+        "flex w-full max-w-xs items-center gap-3 rounded-2xl px-3 py-2",
+        mine ? "bg-white/10" : "bg-foreground/5",
+      )}
+    >
+      <div
+        className={cn(
+          "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+          mine ? "bg-white/20 text-white" : "bg-brand-purple/15 text-brand-purple",
+        )}
+      >
+        <FileText className="h-5 w-5" />
+      </div>
+      {url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 flex-1 transition-opacity hover:opacity-80"
+        >
+          <div className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}>
+            {name}
+          </div>
+          {sizeLabel && (
+            <div className={cn("text-[11px]", mine ? "text-white/75" : "text-muted-foreground")}>
+              {sizeLabel} · Open
+            </div>
+          )}
+        </a>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <div className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}>
+            {name}
+          </div>
+          {sizeLabel && (
+            <div className={cn("text-[11px]", mine ? "text-white/75" : "text-muted-foreground")}>
+              {sizeLabel}
+            </div>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={handleDownload}
+        disabled={!url || downloading}
+        aria-label="Download file"
+        title="Download file"
+        className={cn(
+          "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all active:scale-95 disabled:opacity-60",
+          mine
+            ? "bg-white/15 text-white hover:bg-white/25"
+            : "bg-brand-purple/15 text-brand-purple hover:bg-brand-purple/25",
+        )}
+      >
+        {downloading || !url ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="h-4 w-4" />
+        )}
+      </button>
+    </div>
   );
 }
 

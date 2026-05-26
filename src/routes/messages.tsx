@@ -12,17 +12,30 @@ import { signAvatarUrls } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
+  FileText,
+  ImagePlus,
   Loader2,
   MessageCircle,
   MessagesSquare,
+  Paperclip,
   Search,
   Send,
   Sparkles,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
 import { describeViolations, detectViolations } from "@/lib/messageFilter";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  type AttachmentKind,
+  DOCUMENT_ACCEPT,
+  IMAGE_ACCEPT,
+  formatBytes,
+  signAttachmentUrls,
+  uploadMessageAttachment,
+  validateAttachment,
+} from "@/lib/messageAttachments";
 
 export const Route = createFileRoute("/messages")({
   validateSearch: (s: Record<string, unknown>): { u?: string; s?: string } => ({
@@ -49,6 +62,8 @@ type MessagePreview = {
   text: string;
   created_at: string;
   sender_id: string | null;
+  attachment_kind: AttachmentKind | null;
+  attachment_name: string | null;
 };
 
 type MessageRow = {
@@ -58,7 +73,29 @@ type MessageRow = {
   text: string;
   created_at: string;
   edited_at: string | null;
+  attachment_path: string | null;
+  attachment_kind: AttachmentKind | null;
+  attachment_name: string | null;
+  attachment_size: number | null;
+  attachment_mime: string | null;
 };
+
+const MESSAGE_SELECT_COLS =
+  "id, session_id, sender_id, text, created_at, edited_at, attachment_path, attachment_kind, attachment_name, attachment_size, attachment_mime";
+
+type StagedAttachment = {
+  file: File;
+  kind: AttachmentKind;
+  mime: string;
+  previewUrl: string | null;
+};
+
+function previewLabel(msg: MessagePreview): string {
+  if (msg.text && msg.text.trim().length > 0) return msg.text;
+  if (msg.attachment_kind === "image") return "Photo";
+  if (msg.attachment_kind === "document") return msg.attachment_name ?? "Document";
+  return "";
+}
 
 const HIDDEN_MESSAGES_KEY = (userId: string) => `skillswap.hidden_messages.${userId}`;
 const LAST_OPENED_KEY = (userId: string) => `skillswap.last_opened.${userId}`;
@@ -185,6 +222,48 @@ function MessagesIndexPage() {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [reportingMessageId, setReportingMessageId] = useState<string | null>(null);
   const [pendingQuotaUsed, setPendingQuotaUsed] = useState<number | null>(null);
+  const [staged, setStaged] = useState<StagedAttachment | null>(null);
+  const [attachmentUrls, setAttachmentUrls] = useState<Map<string, string>>(new Map());
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+
+  const selectedUserId = search.u ?? null;
+
+  // Release the staged image preview's blob URL whenever it changes or unmounts.
+  useEffect(() => {
+    const url = staged?.previewUrl;
+    if (!url) return;
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [staged?.previewUrl]);
+
+  // Drop the staged file when switching threads so it doesn't leak across chats.
+  useEffect(() => {
+    setStaged(null);
+  }, [selectedUserId]);
+
+  // Sign URLs for any attachments (image or document) visible in the current
+  // thread. Images need the URL up-front to render the <img>; documents need
+  // it so the download anchor is clickable on first render.
+  useEffect(() => {
+    const paths = chatMessages
+      .filter((m) => m.attachment_path)
+      .map((m) => m.attachment_path as string);
+    if (paths.length === 0) return;
+    let alive = true;
+    void signAttachmentUrls(paths).then((map) => {
+      if (!alive) return;
+      setAttachmentUrls((prev) => {
+        const next = new Map(prev);
+        for (const [k, v] of map) next.set(k, v);
+        return next;
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [chatMessages]);
 
   const refreshQuota = useCallback(async () => {
     const { data, error } = await supabase.rpc("my_pending_message_quota");
@@ -200,8 +279,6 @@ function MessagesIndexPage() {
   const allSessionIdsRef = useRef<Set<string>>(new Set());
   const selectedRef = useRef<string | null>(null);
   const selectedSessionIdsRef = useRef<Set<string>>(new Set());
-
-  const selectedUserId = search.u ?? null;
 
   useEffect(() => {
     if (!user) return;
@@ -445,7 +522,9 @@ function MessagesIndexPage() {
           allSessionIds.length
             ? supabase
                 .from("messages")
-                .select("id, session_id, sender_id, text, created_at")
+                .select(
+                  "id, session_id, sender_id, text, created_at, attachment_kind, attachment_name",
+                )
                 .in("session_id", allSessionIds)
                 .order("created_at", { ascending: false })
                 // Sidebar preview cap only — the active thread has its own paginated query.
@@ -467,6 +546,8 @@ function MessagesIndexPage() {
               text: m.text,
               created_at: m.created_at,
               sender_id: m.sender_id,
+              attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
+              attachment_name: m.attachment_name ?? null,
             });
           }
         }
@@ -579,7 +660,7 @@ function MessagesIndexPage() {
       setHasMoreMessages(false);
       const { data, error } = await supabase
         .from("messages")
-        .select("id, session_id, sender_id, text, created_at, edited_at")
+        .select(MESSAGE_SELECT_COLS)
         .in("session_id", sessionIds)
         .order("created_at", { ascending: false })
         .limit(CHAT_MESSAGE_PAGE_SIZE)
@@ -668,6 +749,8 @@ function MessagesIndexPage() {
                   text: msg.text,
                   created_at: msg.created_at,
                   sender_id: msg.sender_id,
+                  attachment_kind: msg.attachment_kind ?? null,
+                  attachment_name: msg.attachment_name ?? null,
                 },
               };
             });
@@ -728,6 +811,8 @@ function MessagesIndexPage() {
                     text: msg.text,
                     created_at: msg.created_at,
                     sender_id: msg.sender_id,
+                    attachment_kind: msg.attachment_kind ?? null,
+                    attachment_name: msg.attachment_name ?? null,
                   },
                 };
               }
@@ -838,23 +923,51 @@ function MessagesIndexPage() {
     return msg?.session_id ?? null;
   }, [reportingMessageId, chatMessages]);
 
+  const handleFilePicked = (kind: AttachmentKind, file: File | null | undefined) => {
+    if (!file) return;
+    const result = validateAttachment(file, kind);
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
+    }
+    setStaged((prev) => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return {
+        file,
+        kind: result.kind,
+        mime: result.mime,
+        previewUrl: result.kind === "image" ? URL.createObjectURL(file) : null,
+      };
+    });
+  };
+
+  const clearStaged = () => {
+    setStaged((prev) => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+    if (imageInputRef.current) imageInputRef.current.value = "";
+    if (documentInputRef.current) documentInputRef.current.value = "";
+  };
+
   const sendMessage = async () => {
-    if (!user || !selectedThread || !text.trim()) return;
+    if (!user || !selectedThread) return;
+    const trimmed = text.trim();
+    if (!trimmed && !staged) return;
     const target = selectedThread.chatSession;
     if (!target) {
       toast.error("No active session. Book one to keep chatting.");
       return;
     }
-    const trimmed = text.trim();
-    const violations = detectViolations(trimmed);
-    if (violations.length > 0) {
-      toast.error(describeViolations(violations));
-      return;
+    if (trimmed) {
+      const violations = detectViolations(trimmed);
+      if (violations.length > 0) {
+        toast.error(describeViolations(violations));
+        return;
+      }
     }
-    // Optimistic insert: paint the bubble before the DB round-trip so the
-    // chat feels instant. The temp id is replaced when the realtime echo
-    // arrives (see the INSERT handler above, which matches temp rows by
-    // session_id + sender_id + text + created_at).
+
+    const stagedSnapshot = staged;
     const tempId = `temp-${
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -868,44 +981,75 @@ function MessagesIndexPage() {
       text: trimmed,
       created_at: optimisticCreatedAt,
       edited_at: null,
+      attachment_path: null,
+      attachment_kind: stagedSnapshot?.kind ?? null,
+      attachment_name: stagedSnapshot?.file.name ?? null,
+      attachment_size: stagedSnapshot?.file.size ?? null,
+      attachment_mime: stagedSnapshot?.mime ?? null,
     };
     setChatMessages((prev) => [...prev, optimisticRow]);
     setText("");
     if (composerRef.current) {
       composerRef.current.style.height = "auto";
     }
+    if (stagedSnapshot) clearStaged();
     setSending(true);
-    const { data, error } = await supabase
-      .from("messages")
-      .insert({
-        session_id: target.id,
-        sender_id: user.id,
-        text: trimmed,
-      })
-      .select("id, session_id, sender_id, text, created_at, edited_at")
-      .single();
-    setSending(false);
-    if (target.status === "pending") {
-      void refreshQuota();
-    }
-    if (error) {
-      // Roll back the optimistic row and restore the composer text so the
-      // user can retry without retyping.
-      setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
-      setText(trimmed);
-      toastError(error);
-      return;
-    }
-    // Server confirmed — replace the temp row with the persisted one if the
-    // realtime echo hasn't already done so.
-    const persisted = (data ?? null) as MessageRow | null;
-    if (persisted) {
-      setChatMessages((prev) => {
-        if (prev.some((m) => m.id === persisted.id)) {
-          return prev.filter((m) => m.id !== tempId);
+
+    try {
+      let attachmentMeta: Awaited<ReturnType<typeof uploadMessageAttachment>> | null = null;
+      if (stagedSnapshot) {
+        try {
+          attachmentMeta = await uploadMessageAttachment({
+            file: stagedSnapshot.file,
+            kind: stagedSnapshot.kind,
+            mime: stagedSnapshot.mime,
+            sessionId: target.id,
+            userId: user.id,
+          });
+        } catch (uploadError) {
+          setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
+          setText(trimmed);
+          setStaged(stagedSnapshot);
+          toastError(uploadError);
+          return;
         }
-        return prev.map((m) => (m.id === tempId ? persisted : m));
-      });
+      }
+
+      const { data, error } = await supabase
+        .from("messages")
+        .insert({
+          session_id: target.id,
+          sender_id: user.id,
+          text: trimmed,
+          attachment_path: attachmentMeta?.path ?? null,
+          attachment_kind: attachmentMeta?.kind ?? null,
+          attachment_name: attachmentMeta?.name ?? null,
+          attachment_size: attachmentMeta?.size ?? null,
+          attachment_mime: attachmentMeta?.mime ?? null,
+        })
+        .select(MESSAGE_SELECT_COLS)
+        .single();
+      if (target.status === "pending") {
+        void refreshQuota();
+      }
+      if (error) {
+        setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setText(trimmed);
+        if (stagedSnapshot) setStaged(stagedSnapshot);
+        toastError(error);
+        return;
+      }
+      const persisted = (data ?? null) as MessageRow | null;
+      if (persisted) {
+        setChatMessages((prev) => {
+          if (prev.some((m) => m.id === persisted.id)) {
+            return prev.filter((m) => m.id !== tempId);
+          }
+          return prev.map((m) => (m.id === tempId ? persisted : m));
+        });
+      }
+    } finally {
+      setSending(false);
     }
   };
 
@@ -1080,7 +1224,7 @@ function MessagesIndexPage() {
                       : `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`;
                   const previewMine = t.lastMessage?.sender_id === user?.id;
                   const messagePreview = t.lastMessage
-                    ? `${previewMine ? "You: " : ""}${t.lastMessage.text}`
+                    ? `${previewMine ? "You: " : ""}${previewLabel(t.lastMessage)}`
                     : `${t.sessions.length} session${t.sessions.length === 1 ? "" : "s"} · no messages yet`;
                   return (
                     <button
@@ -1251,6 +1395,11 @@ function MessagesIndexPage() {
                               otherName={selectedThread.otherName}
                               otherAvatar={selectedThread.otherAvatar}
                               showAvatar={!mine && (isFirstOfRun || showDivider)}
+                              attachmentUrl={
+                                msg.attachment_path
+                                  ? (attachmentUrls.get(msg.attachment_path) ?? null)
+                                  : null
+                              }
                               onEdit={editMessage}
                               onUnsend={unsendMessage}
                               onDeleteForMe={hideMessageForMe}
@@ -1278,13 +1427,90 @@ function MessagesIndexPage() {
                     )}
                     <form
                       data-mobile-message-composer
-                      className="animate-fade-up sticky bottom-0 flex items-end gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
+                      className="animate-fade-up sticky bottom-0 flex flex-col gap-2 border-t border-border/60 bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:p-4 md:bg-background/40"
                       style={{ animationDelay: "80ms" }}
                       onSubmit={(e) => {
                         e.preventDefault();
                         void sendMessage();
                       }}
                     >
+                      {staged && (
+                        <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                          {staged.kind === "image" && staged.previewUrl ? (
+                            <img
+                              src={staged.previewUrl}
+                              alt={staged.file.name}
+                              className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                            />
+                          ) : (
+                            <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-brand-purple/15 text-brand-purple">
+                              <FileText className="h-5 w-5" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium">{staged.file.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {formatBytes(staged.file.size)} ·{" "}
+                              {staged.kind === "image" ? "Image" : "Document"}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 cursor-pointer rounded-full"
+                            onClick={clearStaged}
+                            aria-label="Remove attachment"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                      <input
+                        ref={imageInputRef}
+                        type="file"
+                        accept={IMAGE_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => {
+                          handleFilePicked("image", e.target.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                      <input
+                        ref={documentInputRef}
+                        type="file"
+                        accept={DOCUMENT_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => {
+                          handleFilePicked("document", e.target.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                      <div className="flex items-end gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
+                        onClick={() => imageInputRef.current?.click()}
+                        disabled={sending || Boolean(staged)}
+                        aria-label="Attach image"
+                        title="Attach image (max 5 MB)"
+                      >
+                        <ImagePlus className="h-5 w-5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
+                        onClick={() => documentInputRef.current?.click()}
+                        disabled={sending || Boolean(staged)}
+                        aria-label="Attach document"
+                        title="Attach document (max 5 MB)"
+                      >
+                        <Paperclip className="h-5 w-5" />
+                      </Button>
                       <textarea
                         ref={composerRef}
                         value={text}
@@ -1315,7 +1541,9 @@ function MessagesIndexPage() {
                         size="icon"
                         className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
                         disabled={
-                          sending || !text.trim() || (isPendingChat && pendingQuotaExhausted)
+                          sending ||
+                          (!text.trim() && !staged) ||
+                          (isPendingChat && pendingQuotaExhausted)
                         }
                       >
                         {sending ? (
@@ -1324,6 +1552,7 @@ function MessagesIndexPage() {
                           <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                         )}
                       </Button>
+                      </div>
                     </form>
                   </div>
                 ) : (

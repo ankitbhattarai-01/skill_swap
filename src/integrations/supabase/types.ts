@@ -48,6 +48,11 @@ export type Database = {
       };
       messages: {
         Row: {
+          attachment_kind: string | null;
+          attachment_mime: string | null;
+          attachment_name: string | null;
+          attachment_path: string | null;
+          attachment_size: number | null;
           created_at: string;
           edited_at: string | null;
           id: string;
@@ -56,6 +61,11 @@ export type Database = {
           text: string;
         };
         Insert: {
+          attachment_kind?: string | null;
+          attachment_mime?: string | null;
+          attachment_name?: string | null;
+          attachment_path?: string | null;
+          attachment_size?: number | null;
           created_at?: never;
           edited_at?: never;
           id?: never;
@@ -64,6 +74,11 @@ export type Database = {
           text: string;
         };
         Update: {
+          attachment_kind?: never;
+          attachment_mime?: never;
+          attachment_name?: never;
+          attachment_path?: never;
+          attachment_size?: never;
           created_at?: never;
           edited_at?: never;
           id?: never;
