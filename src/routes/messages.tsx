@@ -1396,30 +1396,33 @@ function MessagesIndexPage() {
 
 function ChatBubbleSkeletons() {
   // Six alternating bubble placeholders so opening a thread never shows a
-  // centered spinner — the chat pane keeps a consistent message-list shape.
+  // centered spinner — sized to match MessageBubble exactly (h-7 avatar,
+  // bubble + timestamp row) so there is no layout shift on load.
   return (
     <>
-      <div className="flex justify-end">
-        <Skeleton className="h-12 w-2/5 rounded-2xl" />
-      </div>
-      <div className="flex items-end gap-2">
-        <Skeleton className="h-8 w-8 rounded-full shrink-0" />
-        <Skeleton className="h-12 w-1/2 rounded-2xl" />
-      </div>
-      <div className="flex justify-end">
-        <Skeleton className="h-16 w-3/5 rounded-2xl" />
-      </div>
-      <div className="flex items-end gap-2">
-        <Skeleton className="h-8 w-8 rounded-full shrink-0" />
-        <Skeleton className="h-14 w-2/5 rounded-2xl" />
-      </div>
-      <div className="flex justify-end">
-        <Skeleton className="h-10 w-1/3 rounded-2xl" />
-      </div>
-      <div className="flex items-end gap-2">
-        <Skeleton className="h-8 w-8 rounded-full shrink-0" />
-        <Skeleton className="h-12 w-1/2 rounded-2xl" />
-      </div>
+      <BubbleSkeleton mine bubbleClass="h-9 w-2/5" />
+      <BubbleSkeleton bubbleClass="h-9 w-1/2" />
+      <BubbleSkeleton mine bubbleClass="h-14 w-3/5" />
+      <BubbleSkeleton bubbleClass="h-12 w-2/5" />
+      <BubbleSkeleton mine bubbleClass="h-9 w-1/3" />
+      <BubbleSkeleton bubbleClass="h-9 w-1/2" />
     </>
+  );
+}
+
+function BubbleSkeleton({ mine, bubbleClass }: { mine?: boolean; bubbleClass: string }) {
+  return (
+    <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
+      {!mine && <Skeleton className="h-7 w-7 shrink-0 rounded-full" />}
+      <div
+        className={cn(
+          "flex max-w-[78%] flex-col sm:max-w-[70%]",
+          mine ? "items-end" : "items-start",
+        )}
+      >
+        <Skeleton className={cn("rounded-[1.35rem]", bubbleClass)} />
+        <Skeleton className="mt-1 h-2.5 w-10 rounded" />
+      </div>
+    </div>
   );
 }
