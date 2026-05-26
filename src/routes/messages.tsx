@@ -925,6 +925,10 @@ function MessagesIndexPage() {
 
   const handleFilePicked = (kind: AttachmentKind, file: File | null | undefined) => {
     if (!file) return;
+    if (selectedThread?.chatSession?.status === "pending") {
+      toast.error("Image and file sharing unlocks after the teacher accepts the session.");
+      return;
+    }
     const result = validateAttachment(file, kind);
     if (!result.ok) {
       toast.error(result.reason);
@@ -1419,10 +1423,10 @@ function MessagesIndexPage() {
                       <div className="border-t border-amber-400/15 bg-amber-400/5 px-4 py-2 text-[11px] text-amber-200/90">
                         <span className="font-semibold">Pre-session chat.</span>{" "}
                         {pendingQuotaRemaining === null
-                          ? `Up to ${PENDING_DAILY_LIMIT} messages/day until they accept.`
+                          ? `Up to ${PENDING_DAILY_LIMIT} messages/day until they accept. Image and file sharing unlocks after acceptance.`
                           : pendingQuotaExhausted
                             ? "Daily limit reached. Resets at midnight UTC."
-                            : `${pendingQuotaRemaining} of ${PENDING_DAILY_LIMIT} messages left today · resets at midnight UTC.`}
+                            : `${pendingQuotaRemaining} of ${PENDING_DAILY_LIMIT} messages left today · resets at midnight UTC. Attachments unlock after acceptance.`}
                       </div>
                     )}
                     <form
@@ -1493,9 +1497,13 @@ function MessagesIndexPage() {
                         size="icon"
                         className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
                         onClick={() => imageInputRef.current?.click()}
-                        disabled={sending || Boolean(staged)}
+                        disabled={sending || Boolean(staged) || isPendingChat}
                         aria-label="Attach image"
-                        title="Attach image (max 5 MB)"
+                        title={
+                          isPendingChat
+                            ? "Image sharing unlocks after the teacher accepts the session"
+                            : "Attach image (max 5 MB)"
+                        }
                       >
                         <ImagePlus className="h-5 w-5" />
                       </Button>
@@ -1505,9 +1513,13 @@ function MessagesIndexPage() {
                         size="icon"
                         className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
                         onClick={() => documentInputRef.current?.click()}
-                        disabled={sending || Boolean(staged)}
+                        disabled={sending || Boolean(staged) || isPendingChat}
                         aria-label="Attach document"
-                        title="Attach document (max 5 MB)"
+                        title={
+                          isPendingChat
+                            ? "File sharing unlocks after the teacher accepts the session"
+                            : "Attach document (max 5 MB)"
+                        }
                       >
                         <Paperclip className="h-5 w-5" />
                       </Button>
