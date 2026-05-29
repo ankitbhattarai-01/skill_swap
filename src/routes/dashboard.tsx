@@ -509,6 +509,12 @@ function DashboardPage() {
     });
   }, []);
 
+  // The Message and Request/Offer buttons on a person card both belong to the
+  // same row id. Without a distinct key the in-flight spinner from one action
+  // would light up the other button too. Suffixing the message action's busy
+  // key keeps the two buttons independent.
+  const messageBusyKey = (id: string) => `${id}:message`;
+
   useEffect(() => {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/dashboard" } });
@@ -999,7 +1005,8 @@ function DashboardPage() {
   const openChatWithTeacher = useCallback(
     async (teacher: TeachOffer) => {
       if (!user) return;
-      markBusy(teacher.id);
+      const busyKey = messageBusyKey(teacher.id);
+      markBusy(busyKey);
       try {
         const { sessionId, error } = await getOrCreateSession({
           learnerId: user.id,
@@ -1016,7 +1023,7 @@ function DashboardPage() {
         }
         if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
       } finally {
-        clearBusy(teacher.id);
+        clearBusy(busyKey);
       }
     },
     [clearBusy, markBusy, navigate, user],
@@ -1025,7 +1032,8 @@ function DashboardPage() {
   const openChatWithSeeker = useCallback(
     async (seeker: Seeker) => {
       if (!user) return;
-      markBusy(seeker.id);
+      const busyKey = messageBusyKey(seeker.id);
+      markBusy(busyKey);
       try {
         const { data: teachingSkill } = await supabase
           .from("user_teaching_skills")
@@ -1048,7 +1056,7 @@ function DashboardPage() {
         }
         if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
       } finally {
-        clearBusy(seeker.id);
+        clearBusy(busyKey);
       }
     },
     [clearBusy, markBusy, navigate, user],
@@ -1395,6 +1403,7 @@ function DashboardPage() {
                     teacher={t}
                     creditsOk={creditsOk}
                     busy={busyIds.has(t.id)}
+                    messageBusy={busyIds.has(messageBusyKey(t.id))}
                     onRequest={() => openRequestDialog(t)}
                     onMessage={() => void openChatWithTeacher(t)}
                   />
@@ -1425,6 +1434,7 @@ function DashboardPage() {
                     seeker={s}
                     matchLabel={deriveMatchLabel(teachingMode, s.learning_mode, "Learner Match")}
                     busy={busyIds.has(s.id)}
+                    messageBusy={busyIds.has(messageBusyKey(s.id))}
                     onOffer={() => void openOfferDialog(s)}
                     onMessage={() => void openChatWithSeeker(s)}
                   />
@@ -1683,13 +1693,18 @@ function NextMoveCard({
         <div className="mt-4 grid gap-4 md:grid-cols-2 md:gap-5">
           {[0, 1].map((i) => (
             <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-4">
-              <div className="flex items-center gap-3">
-                <Skeleton className="h-11 w-11 rounded-full" />
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-4 w-2/3" />
-                  <Skeleton className="h-3 w-1/2" />
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-11 w-11 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
                 </div>
-                <Skeleton className="h-8 w-20 rounded-full" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-8 flex-1 rounded-full" />
+                  <Skeleton className="h-8 flex-1 rounded-full" />
+                </div>
               </div>
             </div>
           ))}
@@ -1713,6 +1728,7 @@ function NextMoveCard({
               key={t.id}
               teacher={t}
               busy={busyIds.has(t.id)}
+              messageBusy={busyIds.has(`${t.id}:message`)}
               onRequest={() => onRequest(t)}
               onMessage={() => onMessageTeacher(t)}
             />
@@ -1794,23 +1810,25 @@ function NextMoveCard({
 function TopMatchTile({
   teacher,
   busy,
+  messageBusy,
   onRequest,
   onMessage,
 }: {
   teacher: TeachOffer;
   busy: boolean;
+  messageBusy: boolean;
   onRequest: () => void;
   onMessage: () => void;
 }) {
   return (
     <div className="group relative overflow-hidden rounded-xl border border-border/40 bg-card/60 p-4 transition-all hover:-translate-y-0.5 hover:border-brand-purple/40 hover:shadow-md hover:shadow-brand-purple/5">
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-gradient-to-br from-brand-purple/10 to-brand-cyan/10 opacity-0 transition-opacity group-hover:opacity-100" />
-      <div className="relative flex items-center gap-3">
+      <div className="relative flex flex-col gap-3">
         <Link
           to="/users/$userId"
           params={{ userId: teacher.user_id }}
           preload="intent"
-          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+          className="flex items-center gap-3 min-w-0 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
         >
           <UserAvatar
             name={teacher.profiles?.full_name}
@@ -1834,26 +1852,26 @@ function TopMatchTile({
             </p>
           </div>
         </Link>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full px-3"
+            className="flex-1 rounded-full"
             onClick={onMessage}
-            disabled={busy}
+            disabled={messageBusy}
             aria-label={`Message ${teacher.profiles?.full_name ?? "this teacher"}`}
           >
-            {busy ? (
+            {messageBusy ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <MessageCircle className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Message</span>
+            Message
           </Button>
           <Button
             variant="hero"
             size="sm"
-            className="rounded-full px-4"
+            className="flex-1 rounded-full"
             onClick={onRequest}
             disabled={busy}
           >
@@ -1862,7 +1880,7 @@ function TopMatchTile({
             ) : (
               <HandHeart className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Request</span>
+            Request
           </Button>
         </div>
       </div>
@@ -2133,6 +2151,7 @@ type TeacherScrollCardProps = {
   teacher: TeachOffer;
   creditsOk: boolean;
   busy: boolean;
+  messageBusy: boolean;
   onRequest: () => void;
   onMessage: () => void;
 };
@@ -2141,17 +2160,18 @@ function TeacherScrollCard({
   teacher,
   creditsOk,
   busy,
+  messageBusy,
   onRequest,
   onMessage,
 }: TeacherScrollCardProps) {
   return (
     <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-3">
         <Link
           to="/users/$userId"
           params={{ userId: teacher.user_id }}
           preload="intent"
-          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+          className="flex items-center gap-3 min-w-0 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
         >
           <UserAvatar
             name={teacher.profiles?.full_name}
@@ -2178,26 +2198,26 @@ function TeacherScrollCard({
             )}
           </div>
         </Link>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full px-3"
+            className="flex-1 rounded-full"
             onClick={onMessage}
-            disabled={busy}
+            disabled={messageBusy}
             aria-label={`Message ${teacher.profiles?.full_name ?? "this teacher"}`}
           >
-            {busy ? (
+            {messageBusy ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <MessageCircle className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Message</span>
+            Message
           </Button>
           <Button
             variant="hero"
             size="sm"
-            className="rounded-full px-3"
+            className="flex-1 rounded-full"
             onClick={onRequest}
             disabled={busy}
           >
@@ -2206,7 +2226,7 @@ function TeacherScrollCard({
             ) : (
               <HandHeart className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Request</span>
+            Request
           </Button>
         </div>
       </div>
@@ -2218,19 +2238,27 @@ type SeekerScrollCardProps = {
   seeker: Seeker;
   matchLabel: string;
   busy: boolean;
+  messageBusy: boolean;
   onOffer: () => void;
   onMessage: () => void;
 };
 
-function SeekerScrollCard({ seeker, matchLabel, busy, onOffer, onMessage }: SeekerScrollCardProps) {
+function SeekerScrollCard({
+  seeker,
+  matchLabel,
+  busy,
+  messageBusy,
+  onOffer,
+  onMessage,
+}: SeekerScrollCardProps) {
   return (
     <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-cyan/40 hover:bg-background/70 hover:shadow-sm">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-3">
         <Link
           to="/users/$userId"
           params={{ userId: seeker.user_id }}
           preload="intent"
-          className="flex items-center gap-3 min-w-0 flex-1 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
+          className="flex items-center gap-3 min-w-0 -m-1 p-1 rounded-xl transition-colors hover:bg-secondary/50"
         >
           <UserAvatar
             name={seeker.profiles?.full_name}
@@ -2250,26 +2278,26 @@ function SeekerScrollCard({ seeker, matchLabel, busy, onOffer, onMessage }: Seek
             </span>
           </div>
         </Link>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full px-3"
+            className="flex-1 rounded-full"
             onClick={onMessage}
-            disabled={busy}
+            disabled={messageBusy}
             aria-label={`Message ${seeker.profiles?.full_name ?? "this learner"}`}
           >
-            {busy ? (
+            {messageBusy ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <MessageCircle className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Message</span>
+            Message
           </Button>
           <Button
             variant="hero"
             size="sm"
-            className="rounded-full px-3"
+            className="flex-1 rounded-full"
             onClick={onOffer}
             disabled={busy}
           >
@@ -2278,7 +2306,7 @@ function SeekerScrollCard({ seeker, matchLabel, busy, onOffer, onMessage }: Seek
             ) : (
               <HandHeart className="h-3.5 w-3.5" />
             )}
-            <span className="hidden sm:inline">Offer</span>
+            Offer
           </Button>
         </div>
       </div>
