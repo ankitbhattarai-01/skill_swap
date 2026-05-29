@@ -328,22 +328,22 @@ function AdminReportsPage() {
           </div>
         </header>
 
-        <div className="flex flex-wrap gap-2">
-          {STATUS_FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs transition-colors",
-                filter === f.key
-                  ? "bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan"
-                  : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {f.label} ({counts[f.key]})
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={filter}
+            onValueChange={(value) => setFilter(value as ReportStatus | "all")}
+          >
+            <SelectTrigger className="w-48" aria-label="Filter by status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTERS.map((f) => (
+                <SelectItem key={f.key} value={f.key}>
+                  {f.label} ({counts[f.key]})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {loading ? (
