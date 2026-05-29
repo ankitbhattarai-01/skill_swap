@@ -640,21 +640,23 @@ function AdminUsersPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                    PII payload
+                    Revealed details
                   </span>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() =>
-                      void copyToClipboard(JSON.stringify(revealed, null, 2), "PII payload")
+                      void copyToClipboard(JSON.stringify(revealed, null, 2), "Revealed details")
                     }
                   >
                     <ClipboardCopy className="h-4 w-4" /> Copy
                   </Button>
                 </div>
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-anywhere rounded-xl bg-muted p-3 text-xs">
-                  {JSON.stringify(revealed, null, 2)}
-                </pre>
+                <div className="grid max-h-72 gap-3 overflow-auto sm:grid-cols-2">
+                  {revealedPiiEntries(revealed).map((entry) => (
+                    <DetailField key={entry.key} label={entry.label} value={entry.value} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -673,6 +675,59 @@ function AdminUsersPage() {
       </Dialog>
     </main>
   );
+}
+
+// Friendly labels + display order for the revealed PII payload so the reveal
+// dialog reads as a labeled record rather than raw JSON. Any key not listed
+// here still renders (using its raw name) so no disclosed field is ever hidden.
+const PII_FIELD_LABELS: Record<string, string> = {
+  full_name: "Full name",
+  email: "Email",
+  phone: "Phone",
+  bio: "Bio",
+  credits: "Credits",
+  classification: "Data classification",
+  created_at: "Account created",
+  last_sign_in_at: "Last sign-in",
+  avatar_url: "Avatar file",
+  id: "User ID",
+};
+const PII_FIELD_ORDER = [
+  "full_name",
+  "email",
+  "phone",
+  "bio",
+  "credits",
+  "classification",
+  "created_at",
+  "last_sign_in_at",
+  "avatar_url",
+  "id",
+];
+const PII_DATE_FIELDS = new Set(["created_at", "last_sign_in_at"]);
+
+function formatPiiValue(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (PII_DATE_FIELDS.has(key)) return formatDate(value as string);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function revealedPiiEntries(revealed: Record<string, unknown>) {
+  const seen = new Set<string>();
+  const entries: Array<{ key: string; label: string; value: string }> = [];
+  const push = (key: string) => {
+    if (seen.has(key) || !(key in revealed)) return;
+    seen.add(key);
+    entries.push({
+      key,
+      label: PII_FIELD_LABELS[key] ?? key,
+      value: formatPiiValue(key, revealed[key]),
+    });
+  };
+  PII_FIELD_ORDER.forEach(push);
+  Object.keys(revealed).forEach(push);
+  return entries;
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
