@@ -67,7 +67,6 @@ const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
 
-const LEVEL_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3 };
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard | SkillSwap" }] }),
@@ -445,8 +444,11 @@ function DashboardPage() {
   const [learning, setLearning] = useState<LearnRow[]>([]);
   const [teachers, setTeachers] = useState<TeachOffer[]>([]);
   // teacher_id → next free slot the teacher offers (or null = no free
-  // `teach` time posted / fully booked in the 7-day horizon).
-  const [teacherAvailability, setTeacherAvailability] = useState<Map<string, string | null>>(
+  // `teach` time posted / fully booked in the 7-day horizon). Value isn't read
+  // on this page anymore (the availability chip was removed); the setter stays
+  // so the availability fetch still feeds match ranking. Prefixed with `_` to
+  // opt out of the unused-vars lint.
+  const [_teacherAvailability, setTeacherAvailability] = useState<Map<string, string | null>>(
     new Map(),
   );
   const [seekers, setSeekers] = useState<Seeker[]>([]);
@@ -1232,12 +1234,6 @@ function DashboardPage() {
   );
   // Build a skill_id → learning row lookup once per render so the teacher
   // tile loop below doesn't run learning.find() on every iteration.
-  const learningBySkillId = useMemo(() => {
-    const map = new Map<string, LearnRow>();
-    for (const row of learning) map.set(row.skill_id, row);
-    return map;
-  }, [learning]);
-
   // Hard auth gate: if we know the user is signed out, render nothing
   // protected. The useEffect above will navigate to /login on the next tick.
   // Without this early return, the skeleton structure (and any cached profile
@@ -1392,18 +1388,12 @@ function DashboardPage() {
               actionSearch={{ match: true }}
             >
               {teachersForRow.slice(0, 6).map((t) => {
-                const learningRow = learningBySkillId.get(t.skill_id);
-                const myLevel = (learningRow?.current_level ?? "basic") as SkillLevel;
-                const nextSlot = teacherAvailability.get(t.user_id);
                 const creditsOk = (liveCreditBalance ?? 0) >= t.credits_per_hour;
-                const levelOk = (LEVEL_RANK[t.level] ?? 0) >= (LEVEL_RANK[myLevel] ?? 0);
                 return (
                   <TeacherScrollCard
                     key={t.id}
                     teacher={t}
-                    nextSlot={nextSlot}
                     creditsOk={creditsOk}
-                    levelOk={levelOk}
                     busy={busyIds.has(t.id)}
                     onRequest={() => openRequestDialog(t)}
                     onMessage={() => void openChatWithTeacher(t)}
@@ -2141,9 +2131,7 @@ function PeopleSection({
 
 type TeacherScrollCardProps = {
   teacher: TeachOffer;
-  nextSlot: string | null | undefined;
   creditsOk: boolean;
-  levelOk: boolean;
   busy: boolean;
   onRequest: () => void;
   onMessage: () => void;
@@ -2151,24 +2139,11 @@ type TeacherScrollCardProps = {
 
 function TeacherScrollCard({
   teacher,
-  nextSlot,
   creditsOk,
-  levelOk,
   busy,
   onRequest,
   onMessage,
 }: TeacherScrollCardProps) {
-  const chip = !creditsOk
-    ? { label: `Need ${teacher.credits_per_hour} cr/hr`, tone: "warn" as const }
-    : nextSlot
-      ? {
-          label: `Free ${new Date(nextSlot).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`,
-          tone: "ok" as const,
-        }
-      : !levelOk
-        ? { label: `Above your level`, tone: "neutral" as const }
-        : { label: `${teacher.credits_per_hour} cr/hr`, tone: "neutral" as const };
-
   return (
     <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm">
       <div className="flex items-start gap-3">
@@ -2190,19 +2165,17 @@ function TeacherScrollCard({
             <div className="text-xs text-muted-foreground truncate mt-0.5">
               {teacher.skills?.name} · <span className="capitalize">{teacher.level}</span>
             </div>
-            <span
-              className={cn(
-                "mt-1.5 inline-flex w-fit items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                chip.tone === "ok"
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                  : chip.tone === "warn"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                    : "border-border bg-secondary text-muted-foreground",
-              )}
-            >
-              {chip.tone === "ok" && <Check className="h-2.5 w-2.5" />}
-              {chip.label}
-            </span>
+            {!creditsOk ? (
+              <span className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                <Coins className="h-3 w-3" />
+                Need {teacher.credits_per_hour} cr/hr
+              </span>
+            ) : (
+              <span className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-brand-cyan">
+                <Sparkles className="h-3 w-3" />
+                Matches your interests
+              </span>
+            )}
           </div>
         </Link>
         <div className="flex shrink-0 items-center gap-1.5">
