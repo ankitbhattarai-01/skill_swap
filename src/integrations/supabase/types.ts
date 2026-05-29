@@ -1004,6 +1004,10 @@ export type Database = {
         };
         Returns: { teacher_id: string; next_slot: string | null }[];
       };
+      completed_session_counts: {
+        Args: { p_user_ids: string[] };
+        Returns: { user_id: string; completed_count: number }[];
+      };
       has_any_intersection: {
         Args: {
           p_learner_id: string;

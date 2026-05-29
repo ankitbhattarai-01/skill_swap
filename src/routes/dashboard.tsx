@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { Children, Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { Children, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
@@ -247,12 +247,15 @@ async function loadProfiles(ids: string[]) {
   // dashboard (top-match tiles, active sessions strip, seeker cards). Without
   // the transform, every avatar downloaded at its 400-800px upload size -
   // the Lighthouse report flagged ~88 KB per tile for ~55px circles.
-  const signedUrlMap = await signAvatarUrls(rows.map((r) => r.avatar_url), {
-    width: 128,
-    height: 128,
-    quality: 75,
-    resize: "cover",
-  });
+  const signedUrlMap = await signAvatarUrls(
+    rows.map((r) => r.avatar_url),
+    {
+      width: 128,
+      height: 128,
+      quality: 75,
+      resize: "cover",
+    },
+  );
   for (const person of rows) {
     profileMap.set(person.id, {
       full_name: person.full_name ?? "Student",
@@ -297,6 +300,25 @@ async function loadCandidateTeachingSkillIds(userIds: string[]) {
 async function loadCompletedSessionCounts(userIds: string[]) {
   const counts = new Map<string, number>();
   if (!userIds.length) return counts;
+
+  // Preferred path: one grouped RPC that counts in Postgres and returns just
+  // (user_id, completed_count) instead of streaming back every completed-session
+  // row for every candidate across two queries. SECURITY INVOKER, so it sees the
+  // exact same rows the fallback queries below would — the ranking signal is
+  // unchanged, only the round trips and payload shrink.
+  const { data, error } = await supabase.rpc("completed_session_counts", {
+    p_user_ids: userIds,
+  });
+  if (!error && data) {
+    for (const row of data) {
+      if (row.user_id) counts.set(row.user_id, Number(row.completed_count) || 0);
+    }
+    return counts;
+  }
+
+  // Fallback: original two-query client-side tally. Keeps the dashboard working
+  // if the RPC hasn't been applied to the DB yet (or errors), so deploying the
+  // client and running the migration don't have to be perfectly in lockstep.
   const [{ data: asTeacher }, { data: asLearner }] = await Promise.all([
     supabase
       .from("sessions")
@@ -410,6 +432,15 @@ function DashboardPage() {
   // credit_transactions keeps this fresh without any manual fetch.
   const { data: liveCreditBalance } = useMyCreditBalance();
   const aiSuggestionsEnabled = useFeatureEnabled("features.ai_suggestions.enabled", true);
+  // Mirror the two query-derived values into refs so loadDashboard can read the
+  // latest without listing them as deps. Adding them to the useCallback deps
+  // would change its identity when the credit query / feature flags resolve,
+  // which the useEffect(loadDashboard) below would interpret as a reason to
+  // re-run the entire dashboard load.
+  const liveCreditBalanceRef = useRef(liveCreditBalance);
+  liveCreditBalanceRef.current = liveCreditBalance;
+  const aiSuggestionsEnabledRef = useRef(aiSuggestionsEnabled);
+  aiSuggestionsEnabledRef.current = aiSuggestionsEnabled;
   const [profile, setProfile] = useState<Profile | null>(null);
   const [learning, setLearning] = useState<LearnRow[]>([]);
   const [teachers, setTeachers] = useState<TeachOffer[]>([]);
@@ -532,7 +563,10 @@ function DashboardPage() {
         .select("id, full_name, bio, onboarded, learning_mode")
         .eq("id", user.id)
         .maybeSingle();
-      const creditBalancePromise = supabase.rpc("my_credit_balance");
+      // Credit balance is no longer fetched here — useMyCreditBalance() already
+      // owns that RPC (shared with the header, kept fresh via realtime). We read
+      // its cached value off liveCreditBalanceRef when ranking below, dropping
+      // one redundant my_credit_balance() call per dashboard load.
       const learnPromise = loadMyLearningSkills(user.id);
       const myTeachPromise = loadMyTeachingSkills(user.id);
       const sessionsPromise = queryDashboardSessionRows(user.id);
@@ -588,9 +622,12 @@ function DashboardPage() {
       setOnboardingGateReady(true);
 
       // The phase-2 reads we kicked off above should be resolved or near it.
-      const [{ data: creditBalance }, learn, myTeach, rawSessions, streakCount] = await Promise.all(
-        [creditBalancePromise, learnPromise, myTeachPromise, sessionsPromise, streakPromise],
-      );
+      const [learn, myTeach, rawSessions, streakCount] = await Promise.all([
+        learnPromise,
+        myTeachPromise,
+        sessionsPromise,
+        streakPromise,
+      ]);
       setStreak(streakCount);
 
       const learnRows = learn ?? [];
@@ -601,7 +638,7 @@ function DashboardPage() {
       // Phase 3: teachers, seekers, session-participant names. These three
       // share no data — running them in Promise.all means the slowest leg
       // dominates instead of all three summing.
-      const myCredits = creditBalance ?? null;
+      const myCredits = liveCreditBalanceRef.current ?? null;
       const learnSkillIds = learnRows.map((l) => l.skill_id);
       const teachSkillIds = myTeachRows.map((s) => s.skill_id);
 
@@ -884,9 +921,14 @@ function DashboardPage() {
 
       setLoading(false);
 
-      void fetchAiSuggestions()
-        .then((r) => setRecs(r.suggestions))
-        .catch(() => setRecs([]));
+      // Only hit the AI suggestions endpoint when the feature is actually on —
+      // the AiInsightCard is gated on the same flag, so fetching while disabled
+      // was a wasted function call whose result was never rendered.
+      if (aiSuggestionsEnabledRef.current) {
+        void fetchAiSuggestions()
+          .then((r) => setRecs(r.suggestions))
+          .catch(() => setRecs([]));
+      }
     } catch (error) {
       setLoading(false);
       setRecs([]);
@@ -2207,13 +2249,7 @@ type SeekerScrollCardProps = {
   onMessage: () => void;
 };
 
-function SeekerScrollCard({
-  seeker,
-  matchLabel,
-  busy,
-  onOffer,
-  onMessage,
-}: SeekerScrollCardProps) {
+function SeekerScrollCard({ seeker, matchLabel, busy, onOffer, onMessage }: SeekerScrollCardProps) {
   return (
     <div className="group rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 transition-all hover:border-brand-cyan/40 hover:bg-background/70 hover:shadow-sm">
       <div className="flex items-start gap-3">
