@@ -569,28 +569,22 @@ function ExplorePage() {
       try {
         const { data, error } = await supabase
           .from("user_learning_skills")
-          .select("id, user_id, current_level, created_at, skills:skill_id(id, name, category)")
+          .select(
+            "id, user_id, current_level, created_at, skills:skill_id(id, name, category), profiles:user_id(id, full_name, bio, avatar_url)",
+          )
           .limit(60)
           .abortSignal(controller.signal);
         if (error) throw error;
         if (!alive) return;
         const learningRows = (data ?? []) as unknown as LearningSkillRow[];
-        const userIds = Array.from(new Set(learningRows.map((row) => row.user_id)));
+        // Dedupe profiles by id (a seeker with several wanted skills repeats).
         const profileMap = new Map<string, ExploreProfile>();
-        if (userIds.length) {
-          const { data: profiles, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, full_name, bio, avatar_url")
-            .in("id", userIds)
-            .abortSignal(controller.signal);
-          if (profileError) throw profileError;
-          for (const profile of profiles ?? []) profileMap.set(profile.id, profile);
+        for (const row of learningRows) {
+          if (row.profiles) profileMap.set(row.profiles.id, row.profiles);
         }
         const initial = learningRows.map((row) => ({
           ...row,
-          profiles: profileMap.get(row.user_id)
-            ? { ...profileMap.get(row.user_id)!, avatar_url: null }
-            : null,
+          profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
         }));
         setLearnerRows(initial);
         setLoading(false);
@@ -606,7 +600,7 @@ function ExplorePage() {
         if (!alive) return;
         setLearnerRows(
           learningRows.map((row) => {
-            const profile = profileMap.get(row.user_id);
+            const profile = row.profiles;
             return {
               ...row,
               profiles: profile
@@ -645,10 +639,13 @@ function ExplorePage() {
     const loadExplore = async () => {
       if (!cached) setLoading(true);
       try {
+        // profiles is embedded via the user_id → profiles FK so the names/bios
+        // arrive in the same round trip as the skills. Avatars are still signed
+        // separately below (they're storage paths, not display URLs).
         const { data, error } = await supabase
           .from("user_teaching_skills")
           .select(
-            "id, user_id, level, credits_per_hour, created_at, skills:skill_id(id, name, category)",
+            "id, user_id, level, credits_per_hour, created_at, skills:skill_id(id, name, category), profiles:user_id(id, full_name, bio, avatar_url)",
           )
           .limit(60)
           .abortSignal(controller.signal);
@@ -658,26 +655,18 @@ function ExplorePage() {
 
         const teachingRows = data as unknown as TeachingSkillRow[];
         const userIds = Array.from(new Set(teachingRows.map((row) => row.user_id)));
+        // Dedupe profiles by id (a teacher with several skills repeats here) so
+        // the avatar signer only sees each path once.
         const profileMap = new Map<string, ExploreProfile>();
-
-        if (userIds.length) {
-          const { data: profiles, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, full_name, bio, avatar_url")
-            .in("id", userIds)
-            .abortSignal(controller.signal);
-          if (profileError) throw profileError;
-
-          for (const profile of profiles ?? []) {
-            profileMap.set(profile.id, profile);
-          }
+        for (const row of teachingRows) {
+          if (row.profiles) profileMap.set(row.profiles.id, row.profiles);
         }
 
+        // First paint without avatars (initials only) so cards show instantly;
+        // signed avatar URLs are merged in once they resolve.
         const initialRows = teachingRows.map((row) => ({
           ...row,
-          profiles: profileMap.get(row.user_id)
-            ? { ...profileMap.get(row.user_id)!, avatar_url: null }
-            : null,
+          profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
         }));
 
         setRows(initialRows);
@@ -707,7 +696,7 @@ function ExplorePage() {
           avatarResult.status === "fulfilled" ? avatarResult.value : new Map<string, string>();
 
         const finalRows = teachingRows.map((row) => {
-          const profile = profileMap.get(row.user_id);
+          const profile = row.profiles;
           return {
             ...row,
             profiles: profile
@@ -827,12 +816,14 @@ function ExplorePage() {
           if (sortOption === "newest") {
             return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
           }
-          // default: availability boost > skill match > rating > recency
-          const aSlot = intersectionSlotMs(a.user_id);
-          const bSlot = intersectionSlotMs(b.user_id);
-          const aAvail = aSlot != null ? 1 : 0;
-          const bAvail = bSlot != null ? 1 : 0;
-          if (aAvail !== bAvail) return bAvail - aAvail;
+          // default: skill match > rating > recency.
+          //
+          // Availability is deliberately NOT a ranking factor here even though
+          // it's shown as a badge and drives the explicit "Available soonest"
+          // sort. teachers_free_time_status resolves a second or two after
+          // first paint, and ranking on it made the whole grid visibly
+          // reshuffle once it landed. Match + rating come from much faster
+          // lookups, keeping the order stable.
           const aMatch = isMatchForUser(a) ? 1 : 0;
           const bMatch = isMatchForUser(b) ? 1 : 0;
           if (aMatch !== bMatch) return bMatch - aMatch;
