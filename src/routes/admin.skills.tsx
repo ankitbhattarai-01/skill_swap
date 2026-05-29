@@ -171,6 +171,9 @@ function AdminSkillsPage() {
     0,
   );
 
+  const canSubmitCreate = name.trim().length >= 2 && justification.trim().length >= 8;
+  const canSubmitDelete = justification.trim().length >= 8;
+
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6">
       <section className="glass rounded-2xl p-5">
@@ -231,6 +234,7 @@ function AdminSkillsPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
               placeholder="Search name or category"
+              aria-label="Search skills by name or category"
             />
           </div>
           {catalogQuery.isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -365,7 +369,7 @@ function AdminSkillsPage() {
             <Button variant="ghost" onClick={closeCreate}>
               Cancel
             </Button>
-            <Button disabled={busy} onClick={() => void createSkill()}>
+            <Button disabled={busy || !canSubmitCreate} onClick={() => void createSkill()}>
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               Add
             </Button>
@@ -411,7 +415,11 @@ function AdminSkillsPage() {
             <Button variant="ghost" onClick={closeDelete}>
               Cancel
             </Button>
-            <Button variant="destructive" disabled={busy} onClick={() => void deleteSkill()}>
+            <Button
+              variant="destructive"
+              disabled={busy || !canSubmitDelete}
+              onClick={() => void deleteSkill()}
+            >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               Delete
             </Button>
