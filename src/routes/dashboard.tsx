@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
-import { fetchAiSuggestions, type AiSuggestion } from "@/lib/ai-suggestions";
+import { fetchAiSuggestions, inferExploreMode, type AiSuggestion } from "@/lib/ai-suggestions";
 import { useFeatureEnabled } from "@/lib/feature-flags";
 // Jitsi helpers are only needed on the accept-session path and to rewrite
 // already-accepted meet links — both rare on a typical dashboard load. Lazy
@@ -2045,7 +2045,11 @@ function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
   if (action.kind === "explore") {
     const search: { q?: string; mode?: "learners" } = {};
     if (action.q) search.q = action.q;
-    if (action.mode === "learners") search.mode = "learners";
+    // Honor an explicit learner mode from the server; otherwise infer it from
+    // the message so teach-oriented tips cached before this fix still route to
+    // Find-a-learner instead of the default Find-a-teacher.
+    const mode = action.mode ?? inferExploreMode(suggestion.message);
+    if (mode === "learners") search.mode = "learners";
     return (
       <Link to="/explore" search={search} preload="intent" className={tileClass}>
         {inner}

@@ -74,6 +74,20 @@ function tidySuggestion(s: AiSuggestion): AiSuggestion {
   return { ...s, message: tidyMessage(s.message) };
 }
 
+// Generic "explore" tips don't carry a skill, and the Explore page defaults to
+// teacher mode ("Find a teacher"). But a tip whose intent is to TEACH ("you
+// might spot something to teach", "offer a session") should land the user on
+// learner mode ("Find a learner") instead — that's where people seeking skills
+// are. Infer that direction from the message so a teach-oriented tip doesn't
+// dump the user on Find-a-teacher. Returns undefined to leave the default.
+//
+// Mirror of inferExploreMode in supabase/functions/generate-suggestions/index.ts.
+// `\bteach\b` matches "teach" but not "teacher"/"teaches", so learn-oriented
+// tips ("find a teacher") are left alone.
+export function inferExploreMode(message: string): "learners" | undefined {
+  return /\b(teach|offer)\b/i.test(message) ? "learners" : undefined;
+}
+
 // Mirror of the same fn in supabase/functions/generate-suggestions/index.ts.
 // Converts em/en dashes used as sentence separators into periods, bare dashes
 // into commas, and collapses the leftover whitespace. Also rewrites messages

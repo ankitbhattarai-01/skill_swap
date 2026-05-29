@@ -603,7 +603,11 @@ Each suggestion must include a "ref" string that identifies WHICH entity in the 
 - "progress:N"  where N is the 1-based index in SKILL PROGRESSION HINTS
 - "profile"     for any profile/bio/teaching-skill improvement suggestion
 - "momentum"    for engagement/streak suggestions (no specific entity)
+- "explore:learners"  for a generic tip that points the user to TEACH / find learners ("explore the skill list, you might spot something to teach")
+- "explore:teachers"  for a generic tip that points the user to LEARN / find a teacher to book
 - null          ONLY if truly nothing in the data above matches
+
+When a general tip sends the user to Explore, ALWAYS pick "explore:learners" (teach intent) or "explore:teachers" (learn intent) over null, so the tile opens the correct Explore tab.
 
 The ref MUST point to an entity referenced in the message. If the message mentions a person by name, the ref must point to that exact entity in the list above. Do NOT invent indexes that don't exist in the data.`;
 }
@@ -719,6 +723,15 @@ async function callGroq(apiKey: string, prompt: string): Promise<LlmSuggestion[]
 // malformed, or points to an index that wasn't in the data we passed in, we
 // fall back to a type-based generic destination so the tile is still clickable.
 // This is the Option 3 safety net under the Option 1 deep-link primary path.
+// Mirror of inferExploreMode in src/lib/ai-suggestions.ts. A generic explore
+// tip whose intent is to TEACH ("spot something to teach", "offer a session")
+// should land on learner mode ("Find a learner"), not the default teacher mode.
+// `\bteach\b` matches "teach" but not "teacher"/"teaches", so learn-oriented
+// tips are left on the teacher default.
+function inferExploreMode(message: string): "learners" | undefined {
+  return /\b(teach|offer)\b/i.test(message) ? "learners" : undefined;
+}
+
 function resolveAction(
   llm: LlmSuggestion,
   signals: GroundingSignals,
@@ -748,6 +761,10 @@ function resolveAction(
   } else if (ref === "profile") {
     return { kind: "profile" };
   } else if (ref === "momentum") {
+    return { kind: "explore" };
+  } else if (ref === "explore:learners") {
+    return { kind: "explore", mode: "learners" };
+  } else if (ref === "explore" || ref === "explore:teachers") {
     return { kind: "explore" };
   }
 
@@ -783,7 +800,7 @@ function resolveAction(
       return { kind: "explore" };
     case "general":
     default:
-      return { kind: "explore" };
+      return { kind: "explore", mode: inferExploreMode(llm.message) };
   }
 }
 
