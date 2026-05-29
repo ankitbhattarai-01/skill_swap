@@ -10,11 +10,21 @@
 // secret. Set it as a comma-separated list in the Supabase dashboard:
 //   CORS_ALLOWED_ORIGINS=https://skillswap.example.com,https://staging.example.com
 
+// Vite is configured for port 8080 but does NOT use strictPort, so when 8080 is
+// already taken it silently falls back to 8081, 8082, ... Allow that small range
+// (plus the usual 5173/3000) so a port bump doesn't break CORS — which surfaced
+// as the dashboard's AI Suggestions card silently vanishing on :8081.
 const DEFAULT_ALLOWED = [
   "http://127.0.0.1:3000",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:8080",
+  "http://127.0.0.1:8081",
+  "http://127.0.0.1:8082",
+  "http://127.0.0.1:8083",
   "http://localhost:8080",
+  "http://localhost:8081",
+  "http://localhost:8082",
+  "http://localhost:8083",
   "http://localhost:5173",
   "http://localhost:3000",
 ];
