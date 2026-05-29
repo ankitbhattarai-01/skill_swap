@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
-import { AvailabilityEditor } from "@/components/AvailabilityEditor";
+import { AvailabilityEditor, type AvailabilityEditorHandle } from "@/components/AvailabilityEditor";
 import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 import { completeOnboarding } from "@/lib/onboarding";
 
@@ -155,6 +155,7 @@ function OnboardingPage() {
   const [teachMode, setTeachMode] = useState<LearningMode | "">("");
   const [learnMode, setLearnMode] = useState<LearningMode | "">("");
   const [hydrated, setHydrated] = useState(false);
+  const availabilityRef = useRef<AvailabilityEditorHandle>(null);
   const [emailRedirectPending, setEmailRedirectPending] = useState(() => hasAuthRedirectParams());
 
   useEffect(() => {
@@ -434,6 +435,14 @@ function OnboardingPage() {
       }
     }
 
+    // "Finish setup" doubles as the availability "Save changes" button, so
+    // persist whatever windows the user set on this step before finishing.
+    const availabilitySaved = await availabilityRef.current?.save();
+    if (availabilitySaved === false) {
+      setSaving(false);
+      return;
+    }
+
     // complete_onboarding() flips the flag only if full_name + at least
     // one teaching/learning skill exist server-side. The column itself is
     // no longer writable from the authenticated role.
@@ -633,7 +642,7 @@ function OnboardingPage() {
                   that work for both you and the other party. You can skip this and set it up later
                   in your profile.
                 </p>
-                <AvailabilityEditor defaultMode="teach" />
+                <AvailabilityEditor ref={availabilityRef} defaultMode="teach" hideSaveButton />
               </div>
             )}
           </div>

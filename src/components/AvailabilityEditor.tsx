@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { AlertCircle, BookOpen, GraduationCap, Loader2, Plus, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -175,6 +175,7 @@ type ModePanelProps = {
   saving: boolean;
   onSave: () => void;
   compact: boolean;
+  hideSaveButton: boolean;
 };
 
 function ModePanel({
@@ -186,6 +187,7 @@ function ModePanel({
   saving,
   onSave,
   compact,
+  hideSaveButton,
 }: ModePanelProps) {
   const modeContent = MODE_CONTENT[mode];
   const ModeIcon = modeContent.icon;
@@ -427,27 +429,36 @@ function ModePanel({
               } day${stats.activeDays === 1 ? "" : "s"}.`
             : "No windows set yet."}
         </p>
-        <Button
-          variant="hero"
-          onClick={onSave}
-          disabled={!canSave}
-          className="h-11 min-w-32 rounded-full"
-        >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saving ? "Saving" : dirty ? "Save changes" : "Saved"}
-        </Button>
+        {!hideSaveButton && (
+          <Button
+            variant="hero"
+            onClick={onSave}
+            disabled={!canSave}
+            className="h-11 min-w-32 rounded-full"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {saving ? "Saving" : dirty ? "Save changes" : "Saved"}
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-export function AvailabilityEditor({
-  defaultMode = "teach",
-  compact = false,
-}: {
-  defaultMode?: Mode;
-  compact?: boolean;
-}) {
+export type AvailabilityEditorHandle = {
+  /** Validate and persist both teaching and learning windows. Returns true on success. */
+  save: () => Promise<boolean>;
+};
+
+export const AvailabilityEditor = forwardRef<
+  AvailabilityEditorHandle,
+  {
+    defaultMode?: Mode;
+    compact?: boolean;
+    /** Hide the per-mode "Save changes" button (the parent drives saving via ref). */
+    hideSaveButton?: boolean;
+  }
+>(function AvailabilityEditor({ defaultMode = "teach", compact = false, hideSaveButton = false }, ref) {
   const [mode, setMode] = useState<Mode>(defaultMode);
   const [teachWindows, setTeachWindows] = useState<LocalWindow[]>([]);
   const [learnWindows, setLearnWindows] = useState<LocalWindow[]>([]);
@@ -497,6 +508,34 @@ export function AvailabilityEditor({
     setDirty((d) => ({ ...d, [m]: false }));
   };
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      async save() {
+        for (const ws of [teachWindows, learnWindows]) {
+          for (const w of ws) {
+            if (w.endMin <= w.startMin) {
+              toast.error("Each availability window's end must be after its start");
+              return false;
+            }
+          }
+        }
+        const [teachRes, learnRes] = await Promise.all([
+          saveMode("teach", teachWindows),
+          saveMode("learn", learnWindows),
+        ]);
+        const error = teachRes.error || learnRes.error;
+        if (error) {
+          toast.error(error.message);
+          return false;
+        }
+        setDirty({ teach: false, learn: false });
+        return true;
+      },
+    }),
+    [teachWindows, learnWindows],
+  );
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-background/60 px-4 py-6 text-sm text-muted-foreground">
@@ -539,6 +578,7 @@ export function AvailabilityEditor({
             saving={savingMode === "teach"}
             onSave={() => saveFor("teach")}
             compact={compact}
+            hideSaveButton={hideSaveButton}
           />
         </TabsContent>
 
@@ -552,6 +592,7 @@ export function AvailabilityEditor({
             saving={savingMode === "learn"}
             onSave={() => saveFor("learn")}
             compact={compact}
+            hideSaveButton={hideSaveButton}
           />
         </TabsContent>
       </Tabs>
@@ -559,4 +600,4 @@ export function AvailabilityEditor({
       {firstTimeHint}
     </div>
   );
-}
+});
