@@ -74,6 +74,12 @@ function VideoCallPage() {
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loading, setLoading] = useState(true);
   const [callReady, setCallReady] = useState(false);
+  // The scrim only hides Jitsi's initial near-black loading flash. It must
+  // lift the moment the iframe paints *any* interactive UI — the prejoin/join
+  // controls or the moderator Google login — not wait for `callReady`
+  // (videoConferenceJoined), which never fires while the user is still sitting
+  // on those pre-join screens, leaving the scrim covering the controls.
+  const [connecting, setConnecting] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [showModHint, setShowModHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -296,6 +302,7 @@ function VideoCallPage() {
     const handleJoined = () => {
       if (cancelled) return;
       setCallReady(true);
+      setConnecting(false);
       setShowModHint(false);
       if (modHintTimer != null) window.clearTimeout(modHintTimer);
       if (viewer.avatarUrl && api) {
@@ -382,6 +389,20 @@ function VideoCallPage() {
       api.addListener("videoConferenceLeft", handleLeft);
       api.addListener("readyToClose", handleLeft);
       api.addListener("screenSharingStatusChanged", handleScreenShare);
+      // Lift the scrim once the iframe has painted its UI (prejoin/join
+      // controls, moderator login, or the conference itself), rather than
+      // waiting on videoConferenceJoined — otherwise the scrim covers the
+      // very controls the user needs to tap to get into the call.
+      const iframe = api.getIFrame();
+      if (iframe) {
+        iframe.addEventListener(
+          "load",
+          () => {
+            if (!cancelled) setConnecting(false);
+          },
+          { once: true },
+        );
+      }
     };
 
     void start().catch((error: unknown) => {
@@ -409,6 +430,7 @@ function VideoCallPage() {
       }
       apiRef.current = null;
       setCallReady(false);
+      setConnecting(true);
       setSharing(false);
       setShowModHint(false);
     };
@@ -520,7 +542,7 @@ function VideoCallPage() {
 
       <section className="relative min-h-0 flex-1 overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
         <div ref={containerRef} className="h-full w-full" />
-        {!callReady && (
+        {connecting && (
           // Scrim sits on top of whatever Jitsi has painted into the iframe
           // (often a near-black backdrop), so we tint it with a theme-aware
           // wash and lift the text to foreground/80 instead of muted —
