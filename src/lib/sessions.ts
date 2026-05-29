@@ -11,6 +11,22 @@ export function computeSessionCredits(creditsPerHour: number, durationMinutes: S
   return Math.max(1, Math.ceil((creditsPerHour * durationMinutes) / 60));
 }
 
+// Raw database errors (RLS policy violations, check constraints) leak the
+// table/policy name and Postgres jargon into the UI toast. Translate the ones
+// a normal learner can actually trigger into plain language. Anything we don't
+// recognise falls through unchanged.
+function friendlyRequestError<E extends { message?: string }>(error: E | null): E | Error | null {
+  if (!error) return null;
+  const message = error.message ?? "";
+  if (message.includes("Suspended users cannot create sessions")) {
+    return new Error(
+      "Your account is currently suspended, so you can't request new sessions. " +
+        "Please contact support if you think this is a mistake.",
+    );
+  }
+  return error;
+}
+
 // Join window must match the server-side check in
 // supabase/functions/mint-jitsi-token. Previously the client gated at
 // 2 minutes before scheduled_at while the edge function minted tokens
@@ -272,5 +288,5 @@ export async function getOrCreateSession({
   // (open-session badges, request buttons), so drop their cached snapshots.
   if (data?.id) invalidatePageCaches(initiatorId);
 
-  return { sessionId: data?.id ?? null, error, created: Boolean(data?.id) };
+  return { sessionId: data?.id ?? null, error: friendlyRequestError(error), created: Boolean(data?.id) };
 }

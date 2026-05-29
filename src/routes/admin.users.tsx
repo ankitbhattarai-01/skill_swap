@@ -652,7 +652,7 @@ function AdminUsersPage() {
                     <ClipboardCopy className="h-4 w-4" /> Copy
                   </Button>
                 </div>
-                <pre className="max-h-56 overflow-auto rounded-xl bg-muted p-3 text-xs">
+                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-anywhere rounded-xl bg-muted p-3 text-xs">
                   {JSON.stringify(revealed, null, 2)}
                 </pre>
               </div>
