@@ -12,10 +12,17 @@ import {
   getOrCreateSession,
   canJoinSession,
   describeJoinWindow,
-  buildSessionIcsFile,
-  downloadSessionIcs,
+  buildGoogleCalendarUrl,
+  buildOutlookCalendarUrl,
+  type SessionCalendarDetails,
   type SessionDuration,
 } from "@/lib/sessions";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { playRequestSentChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
 import { ReviewDialog } from "@/components/ReviewDialog";
@@ -33,6 +40,7 @@ import {
   CalendarClock,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Eye,
   Loader2,
@@ -676,18 +684,19 @@ function SessionCard({
   const displayDate = new Date(session.scheduled_at ?? session.created_at);
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
   const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
-  const handleAddToCalendar = () => {
-    if (!session.scheduled_at) return;
-    const ics = buildSessionIcsFile({
-      sessionId: session.id,
-      skillName: session.skills?.name ?? "Skill session",
-      scheduledAt: session.scheduled_at,
-      durationMinutes: session.duration_minutes,
-      meetLink: roomLink || null,
-      organizerName: session.teacherName,
-      attendeeName: session.learnerName,
-    });
-    downloadSessionIcs(`skillswap-${session.id}.ics`, ics);
+  const calendarDetails: SessionCalendarDetails | null = session.scheduled_at
+    ? {
+        sessionId: session.id,
+        skillName: session.skills?.name ?? "Skill session",
+        scheduledAt: session.scheduled_at,
+        durationMinutes: session.duration_minutes,
+        meetLink: roomLink || null,
+        organizerName: session.teacherName,
+        attendeeName: session.learnerName,
+      }
+    : null;
+  const openCalendarLink = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const hoverAccent =
@@ -785,11 +794,28 @@ function SessionCard({
                   {joinHint ?? "Join"}
                 </Button>
               )}
-              {session.scheduled_at && (
-                <Button variant="outline" size="sm" onClick={handleAddToCalendar}>
-                  <Calendar className="h-4 w-4" />
-                  Add to Calendar
-                </Button>
+              {calendarDetails && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <Calendar className="h-4 w-4" />
+                      Add to Calendar
+                      <ChevronDown className="h-4 w-4 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem
+                      onSelect={() => openCalendarLink(buildGoogleCalendarUrl(calendarDetails))}
+                    >
+                      Google Calendar
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => openCalendarLink(buildOutlookCalendarUrl(calendarDetails))}
+                    >
+                      Outlook
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </>
           )}

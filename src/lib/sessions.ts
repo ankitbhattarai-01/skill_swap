@@ -61,6 +61,65 @@ export function describeJoinWindow(
   return null;
 }
 
+export type SessionCalendarDetails = {
+  sessionId: string;
+  skillName: string;
+  scheduledAt: string;
+  durationMinutes: number;
+  meetLink: string | null;
+  organizerName: string;
+  attendeeName: string;
+};
+
+// Compact UTC stamp shared by the .ics file and the web-calendar deep links:
+// YYYYMMDDTHHMMSSZ.
+function formatCalendarUtc(d: Date) {
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}${String(d.getUTCMinutes()).padStart(2, "0")}${String(d.getUTCSeconds()).padStart(2, "0")}Z`;
+}
+
+function sessionWindow({ scheduledAt, durationMinutes }: SessionCalendarDetails) {
+  const start = new Date(scheduledAt);
+  const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  return { start, end };
+}
+
+function sessionTitleAndDetails({ skillName, meetLink, organizerName, attendeeName }: SessionCalendarDetails) {
+  const title = `SkillSwap: ${skillName}`;
+  const details = `${organizerName} teaching ${skillName} to ${attendeeName}.${meetLink ? `\nJoin: ${meetLink}` : ""}`;
+  return { title, details };
+}
+
+// Opens Google Calendar with a pre-filled "new event" form in a new tab.
+// https://calendar.google.com/calendar/render?action=TEMPLATE&...
+export function buildGoogleCalendarUrl(details: SessionCalendarDetails) {
+  const { start, end } = sessionWindow(details);
+  const { title, details: description } = sessionTitleAndDetails(details);
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title,
+    dates: `${formatCalendarUtc(start)}/${formatCalendarUtc(end)}`,
+    details: description,
+  });
+  if (details.meetLink) params.set("location", details.meetLink);
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+// Opens Outlook on the web with a pre-filled "new event" form in a new tab.
+export function buildOutlookCalendarUrl(details: SessionCalendarDetails) {
+  const { start, end } = sessionWindow(details);
+  const { title, details: description } = sessionTitleAndDetails(details);
+  const params = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: title,
+    startdt: start.toISOString(),
+    enddt: end.toISOString(),
+    body: description,
+  });
+  if (details.meetLink) params.set("location", details.meetLink);
+  return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
 export function buildSessionIcsFile({
   sessionId,
   skillName,
@@ -69,19 +128,10 @@ export function buildSessionIcsFile({
   meetLink,
   organizerName,
   attendeeName,
-}: {
-  sessionId: string;
-  skillName: string;
-  scheduledAt: string;
-  durationMinutes: number;
-  meetLink: string | null;
-  organizerName: string;
-  attendeeName: string;
-}) {
+}: SessionCalendarDetails) {
   const start = new Date(scheduledAt);
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}${String(d.getUTCMinutes()).padStart(2, "0")}${String(d.getUTCSeconds()).padStart(2, "0")}Z`;
+  const fmt = formatCalendarUtc;
   const escape = (text: string) => text.replace(/[\\;,]/g, (m) => `\\${m}`).replace(/\n/g, "\\n");
   const lines = [
     "BEGIN:VCALENDAR",
