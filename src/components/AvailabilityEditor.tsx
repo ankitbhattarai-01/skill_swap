@@ -1,17 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertCircle,
-  BookOpen,
-  Check,
-  Clock,
-  Copy,
-  GraduationCap,
-  Loader2,
-  Plus,
-  Save,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { AlertCircle, BookOpen, GraduationCap, Loader2, Plus, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -33,7 +21,6 @@ type LocalWindow = {
   endMin: number;
 };
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const MODE_CONTENT = {
@@ -133,20 +120,6 @@ function utcToLocal(utcDay: number, utcMinutes: number) {
   };
 }
 
-function formatTime(mins: number) {
-  const h = Math.floor(mins / 60) % 24;
-  const m = mins % 60;
-  const period = h < 12 ? "AM" : "PM";
-  const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${hh}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-function formatHours(hours: number) {
-  if (hours === 0) return "0h";
-  if (Number.isInteger(hours)) return `${hours}h`;
-  return `${hours.toFixed(1)}h`;
-}
-
 function cloneWindows(windows: LocalWindow[]) {
   return windows.map((window) => ({ ...window }));
 }
@@ -197,7 +170,6 @@ type ModePanelProps = {
   mode: Mode;
   windows: LocalWindow[];
   setWindows: React.Dispatch<React.SetStateAction<LocalWindow[]>>;
-  otherWindows: LocalWindow[];
   dirty: boolean;
   setDirty: (v: boolean) => void;
   saving: boolean;
@@ -209,7 +181,6 @@ function ModePanel({
   mode,
   windows,
   setWindows,
-  otherWindows,
   dirty,
   setDirty,
   saving,
@@ -230,12 +201,8 @@ function ModePanel({
 
   const stats = useMemo(() => {
     const activeDays = groupedByDay.filter((day) => day.length > 0).length;
-    const totalHours = windows.reduce(
-      (sum, window) => sum + Math.max(0, window.endMin - window.startMin) / 60,
-      0,
-    );
     const invalidCount = windows.filter((window) => window.endMin <= window.startMin).length;
-    return { activeDays, totalHours, invalidCount };
+    return { activeDays, invalidCount };
   }, [groupedByDay, windows]);
 
   const markDirty = () => setDirty(true);
@@ -287,57 +254,29 @@ function ModePanel({
     markDirty();
   };
 
-  const copyFromOther = () => {
-    setWindows(cloneWindows(otherWindows));
-    markDirty();
-  };
-
   const canSave = dirty && !saving && stats.invalidCount === 0;
 
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border border-border/70 bg-background/60 p-4 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-              <ModeIcon className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-foreground">{modeContent.title}</h3>
-                <span
-                  className={cn(
-                    "rounded-full px-2.5 py-1 text-xs font-medium",
-                    dirty
-                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-300"
-                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
-                  )}
-                >
-                  {dirty ? "Unsaved" : "Saved"}
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">{modeContent.subtitle}</p>
-              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Clock className="h-3.5 w-3.5" />
-                {getBrowserTz()}
-              </p>
-            </div>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <ModeIcon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-foreground">{modeContent.title}</h3>
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium",
+                dirty
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-300"
+                  : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+              )}
+            >
+              {dirty ? "Unsaved" : "Saved"}
+            </span>
           </div>
-
-          <div className="grid grid-cols-3 gap-2 sm:min-w-[330px]">
-            <div className="rounded-xl border border-border/70 bg-card/70 px-3 py-2">
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Windows</p>
-              <p className="mt-1 text-lg font-semibold">{windows.length}</p>
-            </div>
-            <div className="rounded-xl border border-border/70 bg-card/70 px-3 py-2">
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Days</p>
-              <p className="mt-1 text-lg font-semibold">{stats.activeDays}</p>
-            </div>
-            <div className="rounded-xl border border-border/70 bg-card/70 px-3 py-2">
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Weekly</p>
-              <p className="mt-1 text-lg font-semibold">{formatHours(stats.totalHours)}</p>
-            </div>
-          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{modeContent.subtitle}</p>
         </div>
       </div>
 
@@ -359,18 +298,6 @@ function ModePanel({
               {p.label}
             </Button>
           ))}
-          {otherWindows.length > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={copyFromOther}
-              className="h-9 rounded-full border-primary/30 bg-primary/10 px-3 text-xs text-primary hover:bg-primary/15 hover:text-primary"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {modeContent.copyLabel}
-            </Button>
-          )}
         </div>
       </div>
 
@@ -387,7 +314,7 @@ function ModePanel({
           compact ? "sm:grid-cols-2" : "md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4",
         )}
       >
-        {DAY_NAMES.map((dayName, d) => {
+        {DAY_FULL.map((dayFull, d) => {
           const dayWindows = groupedByDay[d];
           const isActive = dayWindows.length > 0;
 
@@ -395,17 +322,12 @@ function ModePanel({
             <section
               key={d}
               className={cn(
-                "flex min-h-[164px] flex-col rounded-2xl border bg-card/80 p-3 shadow-sm transition-colors",
+                "flex min-h-[128px] flex-col rounded-2xl border bg-card/80 p-3 shadow-sm transition-colors",
                 isActive ? "border-primary/25" : "border-border/70",
               )}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold text-foreground">{dayName}</div>
-                  <div className="text-[11px] font-medium uppercase text-muted-foreground">
-                    {DAY_FULL[d]}
-                  </div>
-                </div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-foreground">{dayFull}</div>
                 <Button
                   type="button"
                   size="icon"
@@ -511,37 +433,10 @@ function ModePanel({
           disabled={!canSave}
           className="h-11 min-w-32 rounded-full"
         >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : dirty ? (
-            <Save className="h-4 w-4" />
-          ) : (
-            <Check className="h-4 w-4" />
-          )}
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
           {saving ? "Saving" : dirty ? "Save changes" : "Saved"}
         </Button>
       </div>
-
-      {!compact && windows.length > 0 && (
-        <details className="rounded-2xl border border-border/70 bg-background/50 px-4 py-3 text-sm">
-          <summary className="cursor-pointer text-muted-foreground">View as text</summary>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {DAY_NAMES.map((d, idx) =>
-              groupedByDay[idx].length === 0 ? null : (
-                <li key={idx} className="rounded-xl bg-muted/40 px-3 py-2">
-                  <span className="font-medium">{d}:</span>{" "}
-                  {groupedByDay[idx].map((w, i) => (
-                    <span key={i}>
-                      {i > 0 && ", "}
-                      {formatTime(w.startMin)} to {formatTime(w.endMin)}
-                    </span>
-                  ))}
-                </li>
-              ),
-            )}
-          </ul>
-        </details>
-      )}
     </div>
   );
 }
@@ -632,16 +527,6 @@ export function AvailabilityEditor({
               Learn
             </TabsTrigger>
           </TabsList>
-
-          <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground sm:justify-end">
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="h-4 w-4" />
-              Local time
-            </span>
-            <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">
-              {getBrowserTz()}
-            </span>
-          </div>
         </div>
 
         <TabsContent value="teach" className="m-0">
@@ -649,7 +534,6 @@ export function AvailabilityEditor({
             mode="teach"
             windows={teachWindows}
             setWindows={setTeachWindows}
-            otherWindows={learnWindows}
             dirty={dirty.teach}
             setDirty={(v) => setDirty((d) => ({ ...d, teach: v }))}
             saving={savingMode === "teach"}
@@ -663,7 +547,6 @@ export function AvailabilityEditor({
             mode="learn"
             windows={learnWindows}
             setWindows={setLearnWindows}
-            otherWindows={teachWindows}
             dirty={dirty.learn}
             setDirty={(v) => setDirty((d) => ({ ...d, learn: v }))}
             saving={savingMode === "learn"}
