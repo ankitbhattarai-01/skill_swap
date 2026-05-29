@@ -691,7 +691,7 @@ function AdminFinancePage() {
         open={requestOpen}
         onOpenChange={(open) => (open ? setRequestOpen(true) : closeRequest())}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Request finance action</DialogTitle>
             <DialogDescription>Finance overrides require a separate approver.</DialogDescription>
@@ -752,7 +752,7 @@ function AdminFinancePage() {
         open={Boolean(detailRequest)}
         onOpenChange={(open) => !open && setDetailRequest(null)}
       >
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Finance request</DialogTitle>
             <DialogDescription>
@@ -919,7 +919,7 @@ function AdminFinancePage() {
         open={manifestOpen}
         onOpenChange={(open) => (open ? setManifestOpen(true) : closeManifest())}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Finance report manifest</DialogTitle>
             <DialogDescription>
