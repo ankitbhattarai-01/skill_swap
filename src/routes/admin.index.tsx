@@ -205,9 +205,27 @@ function AdminHomePage() {
       </section>
 
       <section className="mt-5 grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <KpiTile icon={Users} label="Users" value={snapshot?.users?.total} hint="onboarded" />
-        <KpiTile icon={Activity} label="Active sessions" value={activeSessions} hint="now" />
-        <KpiTile icon={FileText} label="Open reports" value={openReports} hint="needs review" />
+        <KpiTile
+          icon={Users}
+          label="Users"
+          value={snapshot?.users?.total}
+          hint="onboarded"
+          to="/admin/users"
+        />
+        <KpiTile
+          icon={Activity}
+          label="Active sessions"
+          value={activeSessions}
+          hint="now"
+          to="/admin/sessions"
+        />
+        <KpiTile
+          icon={FileText}
+          label="Open reports"
+          value={openReports}
+          hint="needs review"
+          to="/admin/reports"
+        />
         <KpiTile
           icon={KeyRound}
           label="Pending approvals"

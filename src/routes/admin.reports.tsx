@@ -1,14 +1,6 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowRight,
-  CheckCircle2,
-  Eye,
-  Info,
-  Loader2,
-  ShieldCheck,
-  X as XIcon,
-} from "lucide-react";
+import { CheckCircle2, Eye, Loader2, ShieldCheck, X as XIcon } from "lucide-react";
 import { PageLoading } from "@/components/PageLoading";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -335,18 +327,6 @@ function AdminReportsPage() {
             </p>
           </div>
         </header>
-
-        <div className="glass flex flex-wrap items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
-          <Info className="h-4 w-4 text-primary" />
-          <span className="text-muted-foreground">
-            Looking for SLA, assignment, escalation, and notes? Use the case workflow.
-          </span>
-          <Button asChild size="sm" variant="outline">
-            <Link to="/admin/cases">
-              Open Cases <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
-        </div>
 
         <div className="flex flex-wrap gap-2">
           {STATUS_FILTERS.map((f) => (
