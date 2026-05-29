@@ -164,7 +164,11 @@ function ForgotPasswordPage() {
 
           <p className="text-sm text-muted-foreground text-center mt-6">
             Remembered it?{" "}
-            <Link to="/login" className="text-foreground font-medium hover:underline">
+            <Link
+              to="/login"
+              search={{ redirect: "/dashboard" }}
+              className="text-foreground font-medium hover:underline"
+            >
               Log in
             </Link>
           </p>

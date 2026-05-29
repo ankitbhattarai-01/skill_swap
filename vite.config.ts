@@ -14,14 +14,14 @@ import tsConfigPaths from "vite-tsconfig-paths";
 
 type DevLogLevel = "info" | "warn" | "error";
 type DevLogFile = "app.log" | "error.log" | "access.log";
-type DevLogEvent = {
-  timestamp: string;
+type DevLogEventInput = {
   level: DevLogLevel;
   event: string;
   requestId?: string;
   message?: string;
   [key: string]: unknown;
 };
+type DevLogEvent = DevLogEventInput & { timestamp: string };
 
 const DEV_LOG_ENDPOINT_PATH = "/api/logs/client";
 const DEV_LOG_DIR = join(cwd(), "logs");
@@ -122,7 +122,7 @@ function appendDevLog(fileName: DevLogFile, event: DevLogEvent) {
   }
 }
 
-function writeDevAppLog(event: Omit<DevLogEvent, "timestamp">) {
+function writeDevAppLog(event: DevLogEventInput) {
   const normalizedEvent: DevLogEvent = { timestamp: new Date().toISOString(), ...event };
 
   appendDevLog("app.log", normalizedEvent);
@@ -306,20 +306,13 @@ function getClientEnvDefines(mode: string): Record<string, string> {
 }
 
 function getPlugins(env: ConfigEnv): PluginOption[] {
-  const plugins: PluginOption[] = [
-    tailwindcss(),
-    tsConfigPaths({ projects: ["./tsconfig.json"] }),
-  ];
+  const plugins: PluginOption[] = [tailwindcss(), tsConfigPaths({ projects: ["./tsconfig.json"] })];
 
   if (env.command === "build") {
     plugins.push(...cloudflare({ viteEnvironment: { name: "ssr" } }));
   }
 
-  plugins.push(
-    ...tanstackStart({ router: { autoCodeSplitting: true } }),
-    viteReact(),
-    skillswapDevLoggingPlugin(),
-  );
+  plugins.push(...tanstackStart(), viteReact(), skillswapDevLoggingPlugin());
 
   return plugins;
 }
