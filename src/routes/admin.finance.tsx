@@ -27,7 +27,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReasonFields } from "@/components/admin/ReasonFields";
-import { formatDate } from "@/lib/admin-format";
+import { formatDate, metricValue } from "@/lib/admin-format";
 import { Metric } from "@/components/admin/KpiTile";
 import {
   Select,
@@ -482,31 +482,8 @@ function AdminFinancePage() {
             {dashboardQuery.isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
           </div>
 
-          <div className="mb-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { value: "pending", label: `Pending (${statusCounts.pending ?? 0})` },
-                { value: "approved", label: `Approved (${statusCounts.approved ?? 0})` },
-                { value: "executed", label: `Executed (${statusCounts.executed ?? 0})` },
-                { value: "rejected", label: `Rejected (${statusCounts.rejected ?? 0})` },
-                { value: "all", label: `All (${requests.length})` },
-              ].map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setStatusFilter(option.value as typeof statusFilter)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs transition-colors",
-                    statusFilter === option.value
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-card text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div className="relative w-full">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchTerm}
@@ -515,6 +492,21 @@ function AdminFinancePage() {
                 placeholder="Search maker email, ticket, target id"
               />
             </div>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}
+            >
+              <SelectTrigger className="sm:w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">Pending ({statusCounts.pending ?? 0})</SelectItem>
+                <SelectItem value="approved">Approved ({statusCounts.approved ?? 0})</SelectItem>
+                <SelectItem value="executed">Executed ({statusCounts.executed ?? 0})</SelectItem>
+                <SelectItem value="rejected">Rejected ({statusCounts.rejected ?? 0})</SelectItem>
+                <SelectItem value="all">All ({requests.length})</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {requests.length === 0 ? (
@@ -798,10 +790,28 @@ function AdminFinancePage() {
                 </p>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">Payload</div>
-                <pre className="mt-1 max-h-48 overflow-auto rounded-xl bg-muted p-3 text-xs">
-                  {JSON.stringify(detailRequest.payload, null, 2)}
-                </pre>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Request details
+                </div>
+                <div className="mt-1 grid gap-3 sm:grid-cols-2">
+                  {payloadText(detailRequest.payload, "action_type") === "manual_adjustment" ? (
+                    <>
+                      <DetailField
+                        label="Target user"
+                        value={payloadText(detailRequest.payload, "target_user_id")}
+                      />
+                      <DetailField
+                        label="Credit change"
+                        value={formatCreditDelta(detailRequest.payload?.amount)}
+                      />
+                    </>
+                  ) : (
+                    <DetailField
+                      label="Session"
+                      value={payloadText(detailRequest.payload, "session_id")}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -945,11 +955,7 @@ function AdminFinancePage() {
               ticketPlaceholder="FIN- or INC- reference"
               justificationPlaceholder="Finance reason, evidence, and approval context."
             />
-            {manifest && (
-              <pre className="max-h-48 overflow-auto rounded-xl bg-muted p-3 text-xs">
-                {JSON.stringify(manifest, null, 2)}
-              </pre>
-            )}
+            {manifest && <ManifestSummary manifest={manifest} />}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={closeManifest}>
@@ -963,6 +969,58 @@ function AdminFinancePage() {
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+// Render a credit amount as a signed, human-readable string ("+5 credits").
+// Falls back to "-" for anything that isn't a finite number so a malformed
+// payload never prints "NaN credits" in the admin UI.
+function formatCreditDelta(value: unknown): string {
+  const amount = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(amount)) return "-";
+  const sign = amount > 0 ? "+" : "";
+  const unit = Math.abs(amount) === 1 ? "credit" : "credits";
+  return `${sign}${amount.toLocaleString()} ${unit}`;
+}
+
+// The report manifest RPC returns a small JSONB object (range, counts, and a
+// SHA-256 integrity hash). Rather than dump raw JSON at the admin, present it
+// as labeled fields with the hash called out for copy/verify.
+function ManifestSummary({ manifest }: { manifest: Record<string, unknown> }) {
+  const hash = typeof manifest.manifestHash === "string" ? manifest.manifestHash : "";
+  return (
+    <div className="space-y-3 rounded-xl border border-border/60 bg-background/40 p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DetailField label="From" value={formatDate(manifest.from as string)} />
+        <DetailField label="To" value={formatDate(manifest.to as string)} />
+        <DetailField label="Transactions" value={metricValue(manifest.transactionCount)} />
+        <DetailField label="Credits moved" value={metricValue(manifest.creditsMoved)} />
+        <DetailField label="Generated" value={formatDate(manifest.generatedAt as string)} />
+      </div>
+      {hash && (
+        <div className="rounded-xl border border-border/60 bg-background/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              Integrity hash (SHA-256)
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(hash)
+                  .then(() => toast.success("Hash copied."))
+                  .catch(() => toast.error("Could not copy hash."));
+              }}
+            >
+              Copy
+            </Button>
+          </div>
+          <div className="mt-1 break-all font-mono text-xs">{hash}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
