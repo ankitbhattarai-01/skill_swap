@@ -133,6 +133,7 @@ export type JitsiExternalApiInstance = {
   addListener: (event: string, listener: (payload: unknown) => void) => void;
   removeListener: (event: string, listener: (payload: unknown) => void) => void;
   getIFrame: () => HTMLIFrameElement | null;
+  getNumberOfParticipants: () => number;
   dispose: () => void;
 };
 
