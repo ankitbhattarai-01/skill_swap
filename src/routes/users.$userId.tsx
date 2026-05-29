@@ -8,7 +8,8 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
 import { isUuid } from "@/lib/uuid";
-import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -241,22 +242,15 @@ function PublicUserPage() {
       return;
     }
 
-    const firstSkill = teaching.find((skill) => skill.skills?.id);
-    if (!firstSkill?.skills?.id) {
-      toast.error("This student has not listed a teaching skill yet.");
-      return;
-    }
-
+    // Chat is decoupled from sessions: open (or lazily create) the
+    // conversation with this user. No session request is created — that
+    // stays an explicit action via the "Request session" button.
     setOpeningChat(true);
-    const { data, error } = await findAcceptedSession(user.id, userId, firstSkill.skills.id);
+    const { error } = await getOrCreateConversation(userId);
     setOpeningChat(false);
 
     if (error) return toast.error(error.message);
-    if (!data?.id) {
-      toast.error("You can message after your session request is accepted.");
-      return;
-    }
-    navigate({ to: "/messages", search: { s: data.id } });
+    navigate({ to: "/messages", search: { u: userId } });
   };
 
   const primaryTeachingSkill = teaching.find((skill) => skill.skills?.id) ?? null;

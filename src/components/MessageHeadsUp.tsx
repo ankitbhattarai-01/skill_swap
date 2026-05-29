@@ -8,26 +8,24 @@ import { cn } from "@/lib/utils";
 
 type IncomingMessage = {
   messageId: string;
-  sessionId: string;
   senderId: string;
   text: string;
   senderName: string;
-  skillName: string | null;
 };
 
 type MessageRow = {
   id: string;
-  session_id: string;
+  conversation_id: string;
+  session_id: string | null;
   sender_id: string;
   text: string;
   created_at: string;
 };
 
-type SessionPreview = {
+type ConversationPreview = {
   id: string;
-  learner_id: string;
-  teacher_id: string;
-  skills: { name: string } | null;
+  user_low: string;
+  user_high: string;
 };
 
 const AUTO_DISMISS_MS = 6000;
@@ -65,16 +63,17 @@ export function MessageHeadsUp() {
     const enqueueMessage = async (msg: MessageRow) => {
       if (!alive || msg.sender_id === userId || seenRef.current.has(msg.id)) return;
       seenRef.current.add(msg.id);
+      if (!msg.conversation_id) return;
 
-      // Parallel: session lookup gates participation but doesn't depend on
-      // the sender lookup. Run both at once — discarding the in-flight
-      // sender response if the participation check fails is cheap compared
-      // to a sequential second round-trip.
-      const [{ data: session }, { data: sender }] = await Promise.all([
+      // Parallel: conversation lookup gates participation (chat is decoupled
+      // from sessions now) but doesn't depend on the sender lookup. Run both
+      // at once — discarding the in-flight sender response if the membership
+      // check fails is cheap compared to a sequential second round-trip.
+      const [{ data: conversation }, { data: sender }] = await Promise.all([
         supabase
-          .from("sessions")
-          .select("id, learner_id, teacher_id, skills:skill_id(name)")
-          .eq("id", msg.session_id)
+          .from("conversations")
+          .select("id, user_low, user_high")
+          .eq("id", msg.conversation_id)
           .abortSignal(controller.signal)
           .maybeSingle(),
         supabase
@@ -84,20 +83,18 @@ export function MessageHeadsUp() {
           .abortSignal(controller.signal)
           .maybeSingle(),
       ]);
-      if (!alive || !session) return;
+      if (!alive || !conversation) return;
 
-      const sess = session as unknown as SessionPreview;
-      if (sess.learner_id !== userId && sess.teacher_id !== userId) return;
+      const conv = conversation as ConversationPreview;
+      if (conv.user_low !== userId && conv.user_high !== userId) return;
 
       setQueue((rs) => [
         ...rs,
         {
           messageId: msg.id,
-          sessionId: msg.session_id,
           senderId: msg.sender_id,
           text: msg.text,
           senderName: sender?.full_name ?? "Someone",
-          skillName: sess.skills?.name ?? null,
         },
       ]);
     };
@@ -159,7 +156,7 @@ export function MessageHeadsUp() {
 
   const onOpenChat = () => {
     setVisible(false);
-    navigate({ to: "/messages", search: { s: active.sessionId } });
+    navigate({ to: "/messages", search: { u: active.senderId } });
   };
 
   const onDismiss = (e: React.MouseEvent) => {

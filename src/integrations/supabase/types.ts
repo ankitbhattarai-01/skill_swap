@@ -53,11 +53,12 @@ export type Database = {
           attachment_name: string | null;
           attachment_path: string | null;
           attachment_size: number | null;
+          conversation_id: string;
           created_at: string;
           edited_at: string | null;
           id: string;
           sender_id: string | null;
-          session_id: string;
+          session_id: string | null;
           text: string;
         };
         Insert: {
@@ -66,11 +67,12 @@ export type Database = {
           attachment_name?: string | null;
           attachment_path?: string | null;
           attachment_size?: number | null;
+          conversation_id: string;
           created_at?: never;
           edited_at?: never;
           id?: never;
           sender_id: string;
-          session_id: string;
+          session_id?: string | null;
           text: string;
         };
         Update: {
@@ -94,7 +96,38 @@ export type Database = {
             referencedRelation: "sessions";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "messages_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
         ];
+      };
+      conversations: {
+        Row: {
+          created_at: string;
+          id: string;
+          last_message_at: string | null;
+          user_high: string;
+          user_low: string;
+        };
+        Insert: {
+          created_at?: never;
+          id?: never;
+          last_message_at?: never;
+          user_high: string;
+          user_low: string;
+        };
+        Update: {
+          created_at?: never;
+          id?: never;
+          last_message_at?: never;
+          user_high?: never;
+          user_low?: never;
+        };
+        Relationships: [];
       };
       notifications: {
         Row: {
@@ -1546,6 +1579,10 @@ export type Database = {
       my_credit_balance: {
         Args: Record<string, never>;
         Returns: number;
+      };
+      get_or_create_conversation: {
+        Args: { other_user: string };
+        Returns: string;
       };
       my_pending_message_quota: {
         Args: Record<string, never>;

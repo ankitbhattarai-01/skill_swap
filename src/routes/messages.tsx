@@ -8,6 +8,7 @@ import { MessageBubble } from "@/components/MessageBubble";
 import { ReportDialog } from "@/components/ReportDialog";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
+import { getOrCreateConversation } from "@/lib/conversations";
 import { signAvatarUrls } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
 import {
@@ -68,7 +69,8 @@ type MessagePreview = {
 
 type MessageRow = {
   id: string;
-  session_id: string;
+  conversation_id: string;
+  session_id: string | null;
   sender_id: string | null;
   text: string;
   created_at: string;
@@ -81,7 +83,7 @@ type MessageRow = {
 };
 
 const MESSAGE_SELECT_COLS =
-  "id, session_id, sender_id, text, created_at, edited_at, attachment_path, attachment_kind, attachment_name, attachment_size, attachment_mime";
+  "id, conversation_id, session_id, sender_id, text, created_at, edited_at, attachment_path, attachment_kind, attachment_name, attachment_size, attachment_mime";
 
 type StagedAttachment = {
   file: File;
@@ -145,24 +147,27 @@ function persistLastOpened(userId: string, map: Record<string, string>) {
 }
 
 const OPEN_STATUSES = new Set(["accepted", "active"]);
-// Pre-acceptance messaging is allowed on pending sessions (subject to the
-// 15/day + 5-unanswered server caps in migration 20260526010000). The
-// chatSession on a thread is the one the composer targets; we prefer an
-// accepted/active session when present so the UX of an already-booked
-// thread is unchanged, and fall back to the most recent pending session.
-const CHAT_STATUSES = new Set(["pending", "accepted", "active"]);
-const PENDING_DAILY_LIMIT = 15;
+// Chat is decoupled from sessions: a thread is a conversation (one row per
+// user pair). Sessions are attached for context only — they drive the session
+// dividers, the Teaching/Learning split, and attachment gating. `activeSession`
+// (accepted/active) unlocks attachments and lifts the pre-acceptance caps;
+// `chatSession` prefers it, falling back to the most recent pending session for
+// header/skill labelling. Sending always targets the conversation, with the
+// active session's id stamped on for context when one exists.
+const PENDING_DAILY_LIMIT = 40;
 const CHAT_MESSAGE_PAGE_SIZE = 50;
 
 type ThreadItem = {
+  conversationId: string | null; // null = session(s) exist but no chat opened yet
   otherUserId: string;
   otherName: string;
   otherAvatar: string | null;
   sessions: SessionRow[]; // ascending by created_at — chronological so Session 1 is oldest
   activeSession: SessionRow | null;
   chatSession: SessionRow | null;
-  latestSession: SessionRow;
+  latestSession: SessionRow | null; // null = chat-only conversation, no session
   lastMessage: MessagePreview | null;
+  lastActivityAt: string; // last_message_at | latest session | conversation created — for sorting
 };
 
 type FilterKey = "all" | "active" | "closed";
@@ -276,9 +281,9 @@ function MessagesIndexPage() {
   const messageScrollerRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const allSessionIdsRef = useRef<Set<string>>(new Set());
+  const allConversationIdsRef = useRef<Set<string>>(new Set());
   const selectedRef = useRef<string | null>(null);
-  const selectedSessionIdsRef = useRef<Set<string>>(new Set());
+  const selectedConversationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -358,8 +363,8 @@ function MessagesIndexPage() {
   // Keep refs in sync with state for realtime handlers.
   useEffect(() => {
     const all = new Set<string>();
-    for (const t of threads) for (const s of t.sessions) all.add(s.id);
-    allSessionIdsRef.current = all;
+    for (const t of threads) if (t.conversationId) all.add(t.conversationId);
+    allConversationIdsRef.current = all;
   }, [threads]);
 
   useEffect(() => {
@@ -421,15 +426,27 @@ function MessagesIndexPage() {
       setLoadingList(true);
 
       try {
-        const { data: sessionsData } = await supabase
-          .from("sessions")
-          .select(
-            "id, learner_id, teacher_id, status, credits, duration_minutes, created_at, scheduled_at, skills:skill_id(name)",
-          )
-          .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`)
-          .order("updated_at", { ascending: false })
-          .limit(100)
-          .abortSignal(controller.signal);
+        // Threads are conversations now. We still load the user's sessions to
+        // attach session context (dividers, role, attachment gating) onto the
+        // matching conversation. A pair may have sessions but no conversation
+        // yet (a freshly requested session with no chat) — those still show,
+        // with conversationId null until the first message lazily creates one.
+        const [{ data: sessionsData }, { data: conversationsData }] = await Promise.all([
+          supabase
+            .from("sessions")
+            .select(
+              "id, learner_id, teacher_id, status, credits, duration_minutes, created_at, scheduled_at, skills:skill_id(name)",
+            )
+            .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`)
+            .order("updated_at", { ascending: false })
+            .limit(100)
+            .abortSignal(controller.signal),
+          supabase
+            .from("conversations")
+            .select("id, user_low, user_high, created_at, last_message_at")
+            .or(`user_low.eq.${user.id},user_high.eq.${user.id}`)
+            .abortSignal(controller.signal),
+        ]);
 
         if (!alive) return;
 
@@ -464,7 +481,23 @@ function MessagesIndexPage() {
           sessionsByOther.set(otherUserId, arr);
         }
 
-        const otherUserIds = Array.from(sessionsByOther.keys());
+        const conversationByOther = new Map<
+          string,
+          { id: string; created_at: string; last_message_at: string | null }
+        >();
+        for (const c of conversationsData ?? []) {
+          const otherUserId = c.user_low === user.id ? c.user_high : c.user_low;
+          if (!otherUserId) continue;
+          conversationByOther.set(otherUserId, {
+            id: c.id,
+            created_at: c.created_at,
+            last_message_at: c.last_message_at,
+          });
+        }
+
+        const otherUserIds = Array.from(
+          new Set([...sessionsByOther.keys(), ...conversationByOther.keys()]),
+        );
         const profileMap = new Map<
           string,
           { full_name: string | null; avatar_url: string | null }
@@ -488,14 +521,21 @@ function MessagesIndexPage() {
           const activeSession = reversed.find((s) => OPEN_STATUSES.has(s.status)) ?? null;
           const chatSession =
             activeSession ?? reversed.find((s) => s.status === "pending") ?? null;
-          const latestSession = sessions[sessions.length - 1];
+          const latestSession = sessions.length ? sessions[sessions.length - 1] : null;
+          const conv = conversationByOther.get(otherUserId) ?? null;
           const profile = profileMap.get(otherUserId);
           const trimmedName = profile?.full_name?.trim();
           const idFragment =
             typeof otherUserId === "string" && otherUserId.length > 0
               ? otherUserId.slice(0, 4)
               : "anon";
+          const lastActivityAt =
+            conv?.last_message_at ??
+            latestSession?.created_at ??
+            conv?.created_at ??
+            new Date(0).toISOString();
           return {
+            conversationId: conv?.id ?? null,
             otherUserId,
             otherName: trimmedName || `User ${idFragment}`,
             otherAvatar: null,
@@ -504,6 +544,7 @@ function MessagesIndexPage() {
             chatSession,
             latestSession,
             lastMessage: null,
+            lastActivityAt,
           };
         });
 
@@ -511,7 +552,9 @@ function MessagesIndexPage() {
         setThreads(baseThreads);
         setLoadingList(false);
 
-        const allSessionIds = rawSessions.map((s) => s.id);
+        const conversationIds = baseThreads
+          .map((t) => t.conversationId)
+          .filter((id): id is string => Boolean(id));
         const [avatarResult, messageResult] = await Promise.allSettled([
           signAvatarUrls(avatarPaths, {
             width: 128,
@@ -519,16 +562,16 @@ function MessagesIndexPage() {
             quality: 75,
             resize: "cover",
           }),
-          allSessionIds.length
+          conversationIds.length
             ? supabase
                 .from("messages")
                 .select(
-                  "id, session_id, sender_id, text, created_at, attachment_kind, attachment_name",
+                  "id, conversation_id, sender_id, text, created_at, attachment_kind, attachment_name",
                 )
-                .in("session_id", allSessionIds)
+                .in("conversation_id", conversationIds)
                 .order("created_at", { ascending: false })
                 // Sidebar preview cap only — the active thread has its own paginated query.
-                .limit(Math.min(allSessionIds.length * 5, 200))
+                .limit(Math.min(conversationIds.length * 5, 200))
                 .abortSignal(controller.signal)
             : Promise.resolve({ data: [] }),
         ]);
@@ -537,12 +580,12 @@ function MessagesIndexPage() {
         const signedAvatarMap =
           avatarResult.status === "fulfilled" ? avatarResult.value : new Map<string, string>();
 
-        // Map: sessionId → latest message (used to find each thread's last message).
-        const lastMsgBySession = new Map<string, MessagePreview>();
+        // Map: conversationId → latest message (each thread's last message).
+        const lastMsgByConversation = new Map<string, MessagePreview>();
         const msgs = messageResult.status === "fulfilled" ? (messageResult.value.data ?? []) : [];
         for (const m of msgs) {
-          if (!lastMsgBySession.has(m.session_id)) {
-            lastMsgBySession.set(m.session_id, {
+          if (!lastMsgByConversation.has(m.conversation_id)) {
+            lastMsgByConversation.set(m.conversation_id, {
               text: m.text,
               created_at: m.created_at,
               sender_id: m.sender_id,
@@ -554,25 +597,20 @@ function MessagesIndexPage() {
 
         const hydrated = baseThreads.map((t) => {
           const profile = profileMap.get(t.otherUserId);
-          let last: MessagePreview | null = null;
-          for (const s of t.sessions) {
-            const m = lastMsgBySession.get(s.id);
-            if (m && (!last || m.created_at > last.created_at)) last = m;
-          }
+          const last = t.conversationId
+            ? (lastMsgByConversation.get(t.conversationId) ?? null)
+            : null;
           return {
             ...t,
             otherAvatar: profile?.avatar_url
               ? (signedAvatarMap.get(profile.avatar_url) ?? null)
               : null,
             lastMessage: last,
+            lastActivityAt: last?.created_at ?? t.lastActivityAt,
           };
         });
 
-        hydrated.sort((a, b) =>
-          (b.lastMessage?.created_at ?? b.latestSession.created_at).localeCompare(
-            a.lastMessage?.created_at ?? a.latestSession.created_at,
-          ),
-        );
+        hydrated.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
         setThreads(hydrated);
       } catch (error) {
         if (!alive) return;
@@ -608,14 +646,15 @@ function MessagesIndexPage() {
     [threads, selectedUserId],
   );
 
-  // Track session IDs of selected thread for realtime routing.
+  // Track the selected thread's conversation id for realtime routing.
   useEffect(() => {
-    selectedSessionIdsRef.current = new Set(selectedThread?.sessions.map((s) => s.id) ?? []);
+    selectedConversationIdRef.current = selectedThread?.conversationId ?? null;
   }, [selectedThread]);
 
-  // Auto-switch tab to where the selected thread lives.
+  // Auto-switch tab to where the selected thread lives. A chat-only
+  // conversation (no session) has no fixed role, so leave the tab as-is.
   useEffect(() => {
-    if (!selectedThread || !user) return;
+    if (!selectedThread || !user || !selectedThread.latestSession) return;
     const tab: RoleTab =
       selectedThread.latestSession.teacher_id === user.id ? "teaching" : "learning";
     setRoleTab((prev) => (prev === tab ? prev : tab));
@@ -627,31 +666,28 @@ function MessagesIndexPage() {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
 
-  // Stable key over the selected thread's session IDs. Depending on this
-  // (instead of the whole `selectedThread` object) keeps the chat-load effect
-  // from refiring when only `lastMessage` updates — otherwise every realtime
-  // INSERT would re-sort threads, hand us a new `selectedThread` reference,
-  // and trigger a skeleton-flicker + scroll-reset on every send.
-  const selectedSessionIdsKey = useMemo(() => {
-    if (!selectedThread) return "";
-    return selectedThread.sessions.map((s) => s.id).join(",");
-  }, [selectedThread]);
+  // The selected thread's conversation id. Depending on this (instead of the
+  // whole `selectedThread` object) keeps the chat-load effect from refiring
+  // when only `lastMessage` updates — otherwise every realtime INSERT would
+  // re-sort threads, hand us a new `selectedThread` reference, and trigger a
+  // skeleton-flicker + scroll-reset on every send.
+  const selectedConversationId = selectedThread?.conversationId ?? null;
 
-  // Load chat: most-recent page of messages across all sessions in the
-  // selected thread. Older pages arrive via loadEarlierMessages below.
+  // Load chat: most-recent page of messages in the selected conversation.
+  // Older pages arrive via loadEarlierMessages below. A thread with no
+  // conversation yet (session requested, no chat) has no messages to load.
   useEffect(() => {
     if (!selectedUserId || !user) {
       setChatMessages([]);
       setHasMoreMessages(false);
       return;
     }
-    const sessionIds = selectedSessionIdsKey ? selectedSessionIdsKey.split(",") : [];
-    if (sessionIds.length === 0) {
+    markOpened(selectedUserId);
+    if (!selectedConversationId) {
       setChatMessages([]);
       setHasMoreMessages(false);
       return;
     }
-    markOpened(selectedUserId);
     let alive = true;
     const controller = new AbortController();
 
@@ -661,7 +697,7 @@ function MessagesIndexPage() {
       const { data, error } = await supabase
         .from("messages")
         .select(MESSAGE_SELECT_COLS)
-        .in("session_id", sessionIds)
+        .eq("conversation_id", selectedConversationId)
         .order("created_at", { ascending: false })
         .limit(CHAT_MESSAGE_PAGE_SIZE)
         .abortSignal(controller.signal);
@@ -684,7 +720,7 @@ function MessagesIndexPage() {
       alive = false;
       controller.abort();
     };
-  }, [selectedUserId, selectedSessionIdsKey, user, markOpened]);
+  }, [selectedUserId, selectedConversationId, user, markOpened]);
 
   // Cursor-paginated fetch for older messages. Uses the oldest currently-
   // loaded created_at as the cursor and prepends the returned page. Dedup
@@ -692,15 +728,15 @@ function MessagesIndexPage() {
   // older-page fetch on the boundary.
   const loadEarlierMessages = useCallback(async () => {
     if (!selectedThread || !user || loadingEarlier || !hasMoreMessages) return;
-    const sessionIds = selectedThread.sessions.map((s) => s.id);
-    if (sessionIds.length === 0) return;
+    const conversationId = selectedThread.conversationId;
+    if (!conversationId) return;
     const oldest = chatMessages[0];
     if (!oldest) return;
     setLoadingEarlier(true);
     const { data, error } = await supabase
       .from("messages")
-      .select("id, session_id, sender_id, text, created_at, edited_at")
-      .in("session_id", sessionIds)
+      .select(MESSAGE_SELECT_COLS)
+      .eq("conversation_id", conversationId)
       .lt("created_at", oldest.created_at)
       .order("created_at", { ascending: false })
       .limit(CHAT_MESSAGE_PAGE_SIZE);
@@ -720,17 +756,17 @@ function MessagesIndexPage() {
     });
   }, [chatMessages, hasMoreMessages, loadingEarlier, selectedThread, user]);
 
-  // Stable key over the user's session IDs. Drives realtime channel resub.
-  const sessionIdsKey = useMemo(() => {
+  // Stable key over the user's conversation IDs. Drives realtime channel resub.
+  const conversationIdsKey = useMemo(() => {
     const all: string[] = [];
-    for (const t of threads) for (const s of t.sessions) all.push(s.id);
+    for (const t of threads) if (t.conversationId) all.push(t.conversationId);
     return all.sort().join(",");
   }, [threads]);
 
   useEffect(() => {
     if (!user) return;
-    if (!sessionIdsKey) return;
-    const filter = `session_id=in.(${sessionIdsKey})`;
+    if (!conversationIdsKey) return;
+    const filter = `conversation_id=in.(${conversationIdsKey})`;
     const channel = supabase
       .channel(`user-messages-${user.id}`)
       .on(
@@ -738,11 +774,11 @@ function MessagesIndexPage() {
         { event: "INSERT", schema: "public", table: "messages", filter },
         (payload) => {
           const msg = payload.new as MessageRow;
-          if (!allSessionIdsRef.current.has(msg.session_id)) return;
+          if (!allConversationIdsRef.current.has(msg.conversation_id)) return;
 
           setThreads((prev) => {
             const next = prev.map((t) => {
-              if (!t.sessions.some((s) => s.id === msg.session_id)) return t;
+              if (t.conversationId !== msg.conversation_id) return t;
               return {
                 ...t,
                 lastMessage: {
@@ -752,29 +788,26 @@ function MessagesIndexPage() {
                   attachment_kind: msg.attachment_kind ?? null,
                   attachment_name: msg.attachment_name ?? null,
                 },
+                lastActivityAt: msg.created_at,
               };
             });
-            next.sort((a, b) =>
-              (b.lastMessage?.created_at ?? b.latestSession.created_at).localeCompare(
-                a.lastMessage?.created_at ?? a.latestSession.created_at,
-              ),
-            );
+            next.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
             return next;
           });
 
-          if (selectedSessionIdsRef.current.has(msg.session_id)) {
+          if (selectedConversationIdRef.current === msg.conversation_id) {
             setChatMessages((prev) => {
               // Already present by real id → echo is a duplicate, no-op.
               if (prev.some((m) => m.id === msg.id)) return prev;
-              // Locate an optimistic temp- row for the same session/sender/text
-              // within a 30-second window of the echo. If present, replace it
-              // so the bubble's id flips from temp- → real and any subsequent
+              // Locate an optimistic temp- row for the same conversation/sender/
+              // text within a 30-second window of the echo. If present, replace
+              // it so the bubble's id flips from temp- → real and any subsequent
               // edit/unsend actions hit the right row.
               const echoMs = Date.parse(msg.created_at);
               const tempIndex = prev.findIndex(
                 (m) =>
                   m.id.startsWith("temp-") &&
-                  m.session_id === msg.session_id &&
+                  m.conversation_id === msg.conversation_id &&
                   m.sender_id === msg.sender_id &&
                   m.text === msg.text &&
                   Math.abs(Date.parse(m.created_at) - echoMs) < 30_000,
@@ -795,15 +828,15 @@ function MessagesIndexPage() {
         { event: "UPDATE", schema: "public", table: "messages", filter },
         (payload) => {
           const msg = payload.new as MessageRow;
-          if (!allSessionIdsRef.current.has(msg.session_id)) return;
+          if (!allConversationIdsRef.current.has(msg.conversation_id)) return;
 
-          if (selectedSessionIdsRef.current.has(msg.session_id)) {
+          if (selectedConversationIdRef.current === msg.conversation_id) {
             setChatMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m)));
           }
 
           setThreads((prev) =>
             prev.map((t) => {
-              if (!t.sessions.some((s) => s.id === msg.session_id)) return t;
+              if (t.conversationId !== msg.conversation_id) return t;
               if (t.lastMessage && t.lastMessage.created_at === msg.created_at) {
                 return {
                   ...t,
@@ -827,8 +860,8 @@ function MessagesIndexPage() {
         (payload) => {
           const old = payload.old as Partial<MessageRow>;
           if (!old.id) return;
-          if (old.session_id && !allSessionIdsRef.current.has(old.session_id)) return;
-          if (old.session_id && selectedSessionIdsRef.current.has(old.session_id)) {
+          if (old.conversation_id && !allConversationIdsRef.current.has(old.conversation_id)) return;
+          if (old.conversation_id && selectedConversationIdRef.current === old.conversation_id) {
             setChatMessages((prev) => prev.filter((m) => m.id !== old.id));
           }
         },
@@ -838,7 +871,7 @@ function MessagesIndexPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [user?.id, sessionIdsKey, markOpened]);
+  }, [user?.id, conversationIdsKey, markOpened]);
 
   useEffect(() => {
     const scroller = messageScrollerRef.current;
@@ -865,12 +898,15 @@ function MessagesIndexPage() {
     [lastOpened, user],
   );
 
+  // Role is derived from the latest session with that person. A chat-only
+  // conversation (no session yet) has no fixed role, so it shows under both
+  // tabs and stays reachable however the user is browsing.
   const teachingThreads = useMemo(
-    () => threads.filter((t) => t.latestSession.teacher_id === user?.id),
+    () => threads.filter((t) => !t.latestSession || t.latestSession.teacher_id === user?.id),
     [threads, user],
   );
   const learningThreads = useMemo(
-    () => threads.filter((t) => t.latestSession.learner_id === user?.id),
+    () => threads.filter((t) => !t.latestSession || t.latestSession.learner_id === user?.id),
     [threads, user],
   );
 
@@ -925,7 +961,9 @@ function MessagesIndexPage() {
 
   const handleFilePicked = (kind: AttachmentKind, file: File | null | undefined) => {
     if (!file) return;
-    if (selectedThread?.chatSession?.status === "pending") {
+    // Attachments are gated behind an accepted/active session; plain pre-
+    // acceptance and chat-only conversations are text-only.
+    if (!selectedThread?.activeSession) {
       toast.error("Image and file sharing unlocks after the teacher accepts the session.");
       return;
     }
@@ -958,11 +996,6 @@ function MessagesIndexPage() {
     if (!user || !selectedThread) return;
     const trimmed = text.trim();
     if (!trimmed && !staged) return;
-    const target = selectedThread.chatSession;
-    if (!target) {
-      toast.error("No active session. Book one to keep chatting.");
-      return;
-    }
     if (trimmed) {
       const violations = detectViolations(trimmed);
       if (violations.length > 0) {
@@ -970,6 +1003,33 @@ function MessagesIndexPage() {
         return;
       }
     }
+
+    // An accepted/active session unlocks attachments and stamps session
+    // context onto the message; otherwise this is a plain chat message.
+    const sessionForContext = selectedThread.activeSession;
+    if (staged && !sessionForContext) {
+      toast.error("Image and file sharing unlocks after the teacher accepts the session.");
+      return;
+    }
+
+    // Resolve the conversation, lazily creating it for a chat-only thread
+    // (e.g. a session was requested but no message has been sent yet).
+    let conversationId = selectedThread.conversationId;
+    if (!conversationId) {
+      const created = await getOrCreateConversation(selectedThread.otherUserId);
+      if (created.error || !created.conversationId) {
+        toastError(created.error ?? new Error("Could not open this conversation."));
+        return;
+      }
+      conversationId = created.conversationId;
+      const newId = conversationId;
+      const otherId = selectedThread.otherUserId;
+      setThreads((prev) =>
+        prev.map((t) => (t.otherUserId === otherId ? { ...t, conversationId: newId } : t)),
+      );
+      selectedConversationIdRef.current = newId;
+    }
+    if (!conversationId) return; // unreachable — narrows the type to string
 
     const stagedSnapshot = staged;
     const tempId = `temp-${
@@ -980,7 +1040,8 @@ function MessagesIndexPage() {
     const optimisticCreatedAt = new Date().toISOString();
     const optimisticRow: MessageRow = {
       id: tempId,
-      session_id: target.id,
+      conversation_id: conversationId,
+      session_id: sessionForContext?.id ?? null,
       sender_id: user.id,
       text: trimmed,
       created_at: optimisticCreatedAt,
@@ -1001,13 +1062,13 @@ function MessagesIndexPage() {
 
     try {
       let attachmentMeta: Awaited<ReturnType<typeof uploadMessageAttachment>> | null = null;
-      if (stagedSnapshot) {
+      if (stagedSnapshot && sessionForContext) {
         try {
           attachmentMeta = await uploadMessageAttachment({
             file: stagedSnapshot.file,
             kind: stagedSnapshot.kind,
             mime: stagedSnapshot.mime,
-            sessionId: target.id,
+            sessionId: sessionForContext.id,
             userId: user.id,
           });
         } catch (uploadError) {
@@ -1022,7 +1083,8 @@ function MessagesIndexPage() {
       const { data, error } = await supabase
         .from("messages")
         .insert({
-          session_id: target.id,
+          conversation_id: conversationId,
+          session_id: sessionForContext?.id ?? null,
           sender_id: user.id,
           text: trimmed,
           attachment_path: attachmentMeta?.path ?? null,
@@ -1033,7 +1095,7 @@ function MessagesIndexPage() {
         })
         .select(MESSAGE_SELECT_COLS)
         .single();
-      if (target.status === "pending") {
+      if (!sessionForContext) {
         void refreshQuota();
       }
       if (error) {
@@ -1070,7 +1132,9 @@ function MessagesIndexPage() {
   if (!user) return null;
 
   const chatSession = selectedThread?.chatSession ?? null;
-  const isPendingChat = chatSession?.status === "pending";
+  // Pre-acceptance = the thread has no accepted/active session (a cold direct
+  // message OR a pending request). Caps apply and attachments stay locked.
+  const preAcceptance = Boolean(selectedThread) && !selectedThread?.activeSession;
   const headerSession = chatSession ?? selectedThread?.latestSession ?? null;
   const headerTeaching = headerSession?.teacher_id === user?.id;
   const pendingQuotaRemaining =
@@ -1212,7 +1276,7 @@ function MessagesIndexPage() {
                       </div>
                       <div>No conversations yet.</div>
                       <div className="mt-1 text-xs">
-                        Accept a session request to start chatting.
+                        Message someone from Explore or a profile to start chatting.
                       </div>
                     </>
                   )}
@@ -1225,11 +1289,15 @@ function MessagesIndexPage() {
                     ? `Active: ${t.activeSession.skill_name ?? "skill"} · ${t.activeSession.duration_minutes} min`
                     : t.chatSession?.status === "pending"
                       ? `Pending: ${t.chatSession.skill_name ?? "skill"} · pre-session chat`
-                      : `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`;
+                      : t.latestSession
+                        ? `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`
+                        : "Direct message";
                   const previewMine = t.lastMessage?.sender_id === user?.id;
                   const messagePreview = t.lastMessage
                     ? `${previewMine ? "You: " : ""}${previewLabel(t.lastMessage)}`
-                    : `${t.sessions.length} session${t.sessions.length === 1 ? "" : "s"} · no messages yet`;
+                    : t.sessions.length
+                      ? `${t.sessions.length} session${t.sessions.length === 1 ? "" : "s"} · no messages yet`
+                      : "No messages yet";
                   return (
                     <button
                       key={t.otherUserId}
@@ -1341,7 +1409,9 @@ function MessagesIndexPage() {
                     <div className="truncate text-xs text-muted-foreground">
                       {chatSession
                         ? `${chatSession.skill_name ?? "Skill"} · ${chatSession.duration_minutes} min · ${statusLabel(chatSession.status)}`
-                        : `${selectedThread.sessions.length} session${selectedThread.sessions.length === 1 ? "" : "s"} · no active session`}
+                        : selectedThread.sessions.length
+                          ? `${selectedThread.sessions.length} session${selectedThread.sessions.length === 1 ? "" : "s"} · no active session`
+                          : "Direct message"}
                     </div>
                   </div>
                 </div>
@@ -1378,8 +1448,10 @@ function MessagesIndexPage() {
                         const prev = visibleChatMessages[idx - 1];
                         const isFirstOfRun = !prev || prev.sender_id !== msg.sender_id;
                         const showDivider = !prev || prev.session_id !== msg.session_id;
-                        const session = sessionById.get(msg.session_id);
-                        const sessionIdx = sessionIndexMap.get(msg.session_id);
+                        const session = msg.session_id ? sessionById.get(msg.session_id) : undefined;
+                        const sessionIdx = msg.session_id
+                          ? sessionIndexMap.get(msg.session_id)
+                          : undefined;
                         return (
                           <Fragment key={msg.id}>
                             {showDivider && session && (
@@ -1417,9 +1489,9 @@ function MessagesIndexPage() {
                   <div ref={bottomRef} />
                 </div>
 
-                {chatSession ? (
+                {(
                   <div className="flex shrink-0 flex-col">
-                    {isPendingChat && (
+                    {preAcceptance && (
                       <div className="border-t border-amber-400/15 bg-amber-400/5 px-4 py-2 text-[11px] text-amber-200/90">
                         <span className="font-semibold">Pre-session chat.</span>{" "}
                         {pendingQuotaRemaining === null
@@ -1497,10 +1569,10 @@ function MessagesIndexPage() {
                         size="icon"
                         className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
                         onClick={() => imageInputRef.current?.click()}
-                        disabled={sending || Boolean(staged) || isPendingChat}
+                        disabled={sending || Boolean(staged) || preAcceptance}
                         aria-label="Attach image"
                         title={
-                          isPendingChat
+                          preAcceptance
                             ? "Image sharing unlocks after the teacher accepts the session"
                             : "Attach image (max 5 MB)"
                         }
@@ -1513,10 +1585,10 @@ function MessagesIndexPage() {
                         size="icon"
                         className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
                         onClick={() => documentInputRef.current?.click()}
-                        disabled={sending || Boolean(staged) || isPendingChat}
+                        disabled={sending || Boolean(staged) || preAcceptance}
                         aria-label="Attach document"
                         title={
-                          isPendingChat
+                          preAcceptance
                             ? "File sharing unlocks after the teacher accepts the session"
                             : "Attach document (max 5 MB)"
                         }
@@ -1539,12 +1611,14 @@ function MessagesIndexPage() {
                           }
                         }}
                         placeholder={
-                          isPendingChat && pendingQuotaExhausted
+                          preAcceptance && pendingQuotaExhausted
                             ? "Daily limit reached. Resets at midnight UTC."
-                            : `Message about ${chatSession.skill_name ?? "the session"}...`
+                            : chatSession
+                              ? `Message about ${chatSession.skill_name ?? "the session"}...`
+                              : `Message ${selectedThread.otherName}...`
                         }
                         rows={1}
-                        disabled={isPendingChat && pendingQuotaExhausted}
+                        disabled={preAcceptance && pendingQuotaExhausted}
                         className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30 disabled:opacity-60"
                       />
                       <Button
@@ -1555,7 +1629,7 @@ function MessagesIndexPage() {
                         disabled={
                           sending ||
                           (!text.trim() && !staged) ||
-                          (isPendingChat && pendingQuotaExhausted)
+                          (preAcceptance && pendingQuotaExhausted)
                         }
                       >
                         {sending ? (
@@ -1566,23 +1640,6 @@ function MessagesIndexPage() {
                       </Button>
                       </div>
                     </form>
-                  </div>
-                ) : (
-                  <div
-                    data-mobile-message-composer
-                    className="animate-fade-up sticky bottom-0 shrink-0 border-t border-white/10 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-muted-foreground backdrop-blur-xl md:bg-background/40"
-                    style={{ animationDelay: "80ms" }}
-                  >
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-medium text-amber-400">
-                      Read-only
-                    </span>
-                    <span className="ml-2">
-                      No active session. Book another session with{" "}
-                      <span className="font-medium text-foreground/80">
-                        {selectedThread.otherName}
-                      </span>{" "}
-                      to keep the conversation going.
-                    </span>
                   </div>
                 )}
               </>
@@ -1604,8 +1661,8 @@ function MessagesIndexPage() {
                     className="animate-fade-up mx-auto mt-2 max-w-sm text-sm text-muted-foreground"
                     style={{ animationDelay: "160ms" }}
                   >
-                    Pick a chat from the inbox to keep your skill swaps moving. Conversations appear
-                    here once a session request is accepted.
+                    Pick a chat from the inbox to keep your skill swaps moving, or message
+                    someone from Explore or their profile to start a new one.
                   </p>
                   <div
                     className="animate-fade-up mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground"
@@ -1627,7 +1684,7 @@ function MessagesIndexPage() {
             if (!next) setReportingMessageId(null);
           }}
           messageId={reportingMessageId}
-          sessionId={reportingSessionId ?? selectedThread.latestSession.id}
+          sessionId={reportingSessionId}
           reportedUserId={selectedThread.otherUserId}
         />
       )}

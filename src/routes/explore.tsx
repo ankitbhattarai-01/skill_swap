@@ -13,7 +13,8 @@ import { ReportDialog } from "@/components/ReportDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthGate } from "@/lib/auth-gate";
 import { useAuth } from "@/lib/auth-context";
-import { findAcceptedSession, getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { TeacherRatingBadge } from "@/components/TeacherRatingBadge";
@@ -300,8 +301,8 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             variant="outline"
             size="icon"
             aria-label="Message"
-            disabled={messageBusy || hasOpenSession}
-            title={hasOpenSession ? "Chat opens after the teacher accepts" : "Message"}
+            disabled={messageBusy}
+            title="Message"
             onClick={() => onOpenChat(r)}
           >
             {messageBusy ? (
@@ -940,37 +941,18 @@ function ExplorePage() {
     (row: TeachingSkillRow) => {
       requireAuth(() => {
         void (async () => {
-          if (!user || !row.skills) return;
+          if (!user) return;
           setBusyAction(`message-${row.id}`);
-          const { data: accepted } = await findAcceptedSession(
-            user.id,
-            row.user_id,
-            row.skills.id,
-          );
-          if (accepted?.id) {
-            setBusyAction(null);
-            navigate({ to: "/messages", search: { s: accepted.id } });
-            return;
-          }
-          // No accepted session — open (or create) a pending one for
-          // pre-acceptance chat. getOrCreateSession returns the existing
-          // open session if one is already pending, otherwise creates a
-          // new pending row with a default 30-min duration.
-          const { sessionId, error } = await getOrCreateSession({
-            learnerId: user.id,
-            teacherId: row.user_id,
-            initiatorId: user.id,
-            skillId: row.skills.id,
-            creditsPerHour: row.credits_per_hour,
-            durationMinutes: 30,
-            scheduledAt: null,
-          });
+          // Chat is decoupled from sessions: open (or lazily create) the
+          // conversation with this user. No session request is created — that
+          // stays an explicit action via the "Request session" button.
+          const { conversationId, error } = await getOrCreateConversation(row.user_id);
           setBusyAction(null);
           if (error) {
             toast.error(error.message);
             return;
           }
-          if (sessionId) navigate({ to: "/messages", search: { s: sessionId } });
+          if (conversationId) navigate({ to: "/messages", search: { u: row.user_id } });
         })();
       }, "Sign in to message this student.");
     },
