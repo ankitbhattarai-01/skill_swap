@@ -270,81 +270,70 @@ function AdminSessionsPage() {
       </section>
 
       <section className="mt-5 rounded-2xl border border-border/70 bg-card/80 p-4">
-        <div className="mb-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {STATUS_TABS.map((option) => {
-              const label =
-                option === "all"
-                  ? `All (${dashboard?.totalSessions ?? 0})`
-                  : `${option}${counts[option] !== undefined ? ` (${counts[option]})` : ""}`;
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setStatus(option)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs capitalize transition-colors",
-                    status === option
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-card text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {label}
-                </button>
-              );
-            })}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="pl-9"
+              placeholder="Search id, skill, or email"
+            />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                className="pl-9"
-                placeholder="Search id, skill, or email"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setOnlyEscrow(!onlyEscrow)}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors",
-                onlyEscrow
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
-                  : "border-border bg-card text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Coins className="h-3 w-3" />
-              Escrow held
-            </button>
-            <button
-              type="button"
-              onClick={() => setOnlyReports(!onlyReports)}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors",
-                onlyReports
-                  ? "border-destructive/40 bg-destructive/10 text-destructive"
-                  : "border-border bg-card text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <TriangleAlert className="h-3 w-3" />
-              Has reports
-            </button>
-            <div className="ml-auto w-44">
-              <Select value={sort} onValueChange={(value) => setSort(value as SortKey)}>
-                <SelectTrigger aria-label="Sort">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SORT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <Select value={status} onValueChange={(value) => setStatus(value as StatusFilter)}>
+            <SelectTrigger className="w-40" aria-label="Status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_TABS.map((option) => {
+                const count =
+                  option === "all" ? (dashboard?.totalSessions ?? 0) : (counts[option] ?? 0);
+                return (
+                  <SelectItem key={option} value={option} className="capitalize">
+                    {option === "all" ? "All" : option} ({count})
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+          <button
+            type="button"
+            onClick={() => setOnlyEscrow(!onlyEscrow)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors",
+              onlyEscrow
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
+                : "border-border bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Coins className="h-3 w-3" />
+            Escrow held
+          </button>
+          <button
+            type="button"
+            onClick={() => setOnlyReports(!onlyReports)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors",
+              onlyReports
+                ? "border-destructive/40 bg-destructive/10 text-destructive"
+                : "border-border bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <TriangleAlert className="h-3 w-3" />
+            Has reports
+          </button>
+          <Select value={sort} onValueChange={(value) => setSort(value as SortKey)}>
+            <SelectTrigger className="w-44" aria-label="Sort">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
