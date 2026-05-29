@@ -18,6 +18,7 @@ import { isUuid } from "@/lib/uuid";
 import { useTheme } from "@/lib/theme-context";
 import { querySessionById } from "@/lib/session-queries";
 import { sendCallRinging } from "@/lib/call-signals";
+import { startRingback, stopRingback } from "@/lib/sounds";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useFeatureEnabled } from "@/lib/feature-flags";
 import type { Enums } from "@/integrations/supabase/types";
@@ -201,14 +202,20 @@ function VideoCallPage() {
     return getApiRoomName(session.id, session.skills?.name);
   }, [session]);
 
-  // Ring the other party once when the caller joins. Skipped if the other
-  // party is already in the room (the route will load again when they
-  // navigate in, but only the first caller actually issues a ring).
+  // Ring the other party once when we join, and play a ringback ("calling…")
+  // tone to ourselves while we wait for them to pick up. The ringback is
+  // stopped as soon as another participant is detected in the room (see the
+  // Jitsi effect's participant handlers), on decline, on timeout, or unmount —
+  // so the answerer, who joins to an already-present caller, hears at most a
+  // single burst.
   const ringedRef = useRef(false);
   useEffect(() => {
     if (!session || !user || !viewer || ringedRef.current) return;
     ringedRef.current = true;
     const otherPartyId = session.teacher_id === user.id ? session.learner_id : session.teacher_id;
+    startRingback();
+    // Don't ring out forever if nobody answers.
+    const ringbackTimeout = window.setTimeout(stopRingback, 30000);
     void sendCallRinging(otherPartyId, {
       sessionId: session.id,
       callerId: user.id,
@@ -218,6 +225,10 @@ function VideoCallPage() {
       // Realtime not available — silently skip; the other party can still
       // open the call from the dashboard "Join" button.
     });
+    return () => {
+      window.clearTimeout(ringbackTimeout);
+      stopRingback();
+    };
   }, [session, user, viewer]);
 
   // Listen for a decline coming back from the other party so the caller
@@ -244,6 +255,7 @@ function VideoCallPage() {
         (msg) => {
           const row = msg.new as { decliner_id?: string };
           if (row?.decliner_id !== otherId) return;
+          stopRingback();
           const otherName =
             session.teacher_id === user.id ? session.learnerName : session.teacherName;
           toast.error(`${otherName} declined the call`);
@@ -299,11 +311,21 @@ function VideoCallPage() {
       );
       setSharing(on);
     };
+    // The other party is here — stop ringing out to ourselves.
+    const handleParticipantJoined = () => {
+      stopRingback();
+    };
     const handleJoined = () => {
       if (cancelled) return;
       setCallReady(true);
       setConnecting(false);
       setShowModHint(false);
+      // If we joined to an already-occupied room (e.g. we're answering), there
+      // won't be a participantJoined event for the person already inside, so
+      // silence the ringback up front.
+      if (api?.getNumberOfParticipants && api.getNumberOfParticipants() > 1) {
+        stopRingback();
+      }
       if (modHintTimer != null) window.clearTimeout(modHintTimer);
       if (viewer.avatarUrl && api) {
         api.executeCommand("avatarUrl", viewer.avatarUrl);
@@ -389,6 +411,7 @@ function VideoCallPage() {
       api.addListener("videoConferenceLeft", handleLeft);
       api.addListener("readyToClose", handleLeft);
       api.addListener("screenSharingStatusChanged", handleScreenShare);
+      api.addListener("participantJoined", handleParticipantJoined);
       // Lift the scrim once the iframe has painted its UI (prejoin/join
       // controls, moderator login, or the conference itself), rather than
       // waiting on videoConferenceJoined — otherwise the scrim covers the
@@ -414,6 +437,7 @@ function VideoCallPage() {
       cancelled = true;
       if (modHintTimer != null) window.clearTimeout(modHintTimer);
       stopHeartbeat();
+      stopRingback();
       // Safety net for "user navigated away without Jitsi emitting a leave"
       // (browser back button, route change). The 30-min grace clamp in
       // session_attended_seconds() handles the worst case where this also
@@ -424,6 +448,7 @@ function VideoCallPage() {
         api?.removeListener("videoConferenceLeft", handleLeft);
         api?.removeListener("readyToClose", handleLeft);
         api?.removeListener("screenSharingStatusChanged", handleScreenShare);
+        api?.removeListener("participantJoined", handleParticipantJoined);
         api?.dispose();
       } catch {
         // ignore — disposed iframe may already be detached

@@ -61,3 +61,32 @@ export function playCancelChime() {
     { freq: 392, offset: 0.12, dur: 0.28 },
   ]);
 }
+
+// Outbound ringback ("calling…") tone played to the *caller* while they wait
+// for the other party to pick up. Mirrors a real phone: a short dual-tone
+// burst repeating on an interval until stopRingback() is called. Like the
+// other cues, it no-ops while the AudioContext is suspended (no interaction).
+let ringbackInterval: ReturnType<typeof setInterval> | null = null;
+
+function playRingbackBurst() {
+  // Classic ringback pair (440 Hz + 480 Hz), a touch quieter than the
+  // incoming-call ring so the caller's own tone isn't startling.
+  playTones([
+    { freq: 440, offset: 0, dur: 0.9, gain: 0.1 },
+    { freq: 480, offset: 0, dur: 0.9, gain: 0.1 },
+  ]);
+}
+
+export function startRingback() {
+  if (ringbackInterval) return;
+  playRingbackBurst();
+  // ~1s tone + ~3s silence ≈ 4s cadence.
+  ringbackInterval = setInterval(playRingbackBurst, 4000);
+}
+
+export function stopRingback() {
+  if (ringbackInterval) {
+    clearInterval(ringbackInterval);
+    ringbackInterval = null;
+  }
+}

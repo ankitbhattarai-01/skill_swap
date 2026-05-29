@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Phone, PhoneOff, Video } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
@@ -71,6 +71,15 @@ export function IncomingCallToast() {
   const [visible, setVisible] = useState(false);
   const teardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the current route so we can suppress the toast when the user is
+  // already inside the video room for the ringing session. Without this, when
+  // the callee answers and their video page rings the original caller back,
+  // the caller — already in the room — sees a spurious "incoming call" popup
+  // for the call they themselves started. A ref keeps the latest value
+  // readable from inside the broadcast handler's async closure.
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   useEffect(() => {
     if (!user) return;
@@ -107,6 +116,9 @@ export function IncomingCallToast() {
           ) {
             return;
           }
+          // Already in this session's video room — don't pop a call toast at
+          // ourselves (this is the answerer's ring-back reaching the caller).
+          if (pathnameRef.current === `/video/${payload.sessionId}`) return;
           setCall(payload);
           requestAnimationFrame(() => setVisible(true));
         })();
