@@ -317,6 +317,24 @@ function getPlugins(env: ConfigEnv): PluginOption[] {
   return plugins;
 }
 
+// Split the big shared vendors out of the single eager entry chunk so they get
+// their own long-lived cache entries. App code changes between deploys no longer
+// invalidate React/Supabase/TanStack/Radix for returning visitors, and it keeps
+// any one chunk under Rollup's 500 kB warning threshold. Scoped to the client
+// build only (see `environments.client`) so the Cloudflare worker bundle that
+// the @cloudflare/vite-plugin produces is left untouched.
+function vendorChunk(id: string): string | undefined {
+  if (!id.includes("node_modules")) return undefined;
+  // Supabase is independent of the React tree, so it gets its own cache entry.
+  if (id.includes("@supabase")) return "vendor-supabase";
+  // React core (react / react-dom / scheduler) is a leaf the rest of the tree
+  // imports one-directionally, so it splits cleanly. TanStack/Radix are NOT
+  // split out: TanStack Start's generated route tree creates a mutual cycle
+  // between them and the app entry, so Rollup would just merge them back.
+  if (/[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "vendor-react";
+  return undefined;
+}
+
 export default defineConfig((env) => ({
   define: getClientEnvDefines(env.mode),
   resolve: {
@@ -333,6 +351,17 @@ export default defineConfig((env) => ({
     ],
   },
   plugins: getPlugins(env),
+  environments: {
+    client: {
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: vendorChunk,
+          },
+        },
+      },
+    },
+  },
   server: {
     host: "::",
     port: 8080,
