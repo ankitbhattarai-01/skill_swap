@@ -473,6 +473,8 @@ function SessionPage() {
                   <RescheduleSection
                     sessionId={session.id}
                     currentUserId={user.id}
+                    teacherId={session.teacher_id}
+                    durationMinutes={session.duration_minutes}
                     onScheduleChanged={() => void loadSession()}
                   />
                 </div>

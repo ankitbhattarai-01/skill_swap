@@ -13,8 +13,15 @@ export const LEARNING_MODE_LABELS: Record<LearningMode, string> = {
   hands_on: "Hands-on practice",
 };
 
-export function formatLearningMode(mode: LearningMode | null | undefined): string {
-  return mode ? LEARNING_MODE_LABELS[mode] : "Flexible";
+export function formatLearningMode(
+  mode: LearningMode | null | undefined,
+  kind?: "teaching" | "learning",
+): string {
+  if (!mode) return "Flexible";
+  // The `teaching` enum is the shared "direct 1:1" mode; label it from the
+  // viewer's side so a learner sees "Direct learning", a teacher "Direct teaching".
+  if (kind === "learning" && mode === "teaching") return "Direct learning";
+  return LEARNING_MODE_LABELS[mode];
 }
 
 export function modeCompatibilityScore(

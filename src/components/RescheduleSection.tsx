@@ -1,16 +1,7 @@
 import { useEffect, useState } from "react";
-import { Calendar, Check, Clock, Loader2, X } from "lucide-react";
+import { Check, Clock, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ProposeRescheduleDialog } from "@/components/ProposeRescheduleDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -30,17 +21,21 @@ type Proposal = {
 export function RescheduleSection({
   sessionId,
   currentUserId,
+  teacherId,
+  durationMinutes,
   onScheduleChanged,
 }: {
   sessionId: string;
   currentUserId: string;
+  // The session's teacher. The new time is constrained to the teacher's free
+  // `teach` windows (minus their bookings) regardless of who proposes — the
+  // same rule the original booking flow uses.
+  teacherId: string;
+  durationMinutes: number;
   onScheduleChanged: () => void;
 }) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(true);
-  const [proposeOpen, setProposeOpen] = useState(false);
-  const [proposeDraft, setProposeDraft] = useState("");
-  const [proposeNote, setProposeNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   const loadProposal = async () => {
@@ -63,42 +58,6 @@ export function RescheduleSection({
     void loadProposal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
-
-  const submitPropose = async () => {
-    if (!proposeDraft) {
-      toast.error("Pick a new date and time");
-      return;
-    }
-    // Match SessionRequestDialog's future-date check. The DB-side RPC will
-    // also reject past times, but catching this client-side gives a clearer
-    // message and avoids a round-trip. 60s buffer accounts for the user
-    // typing the current minute exactly.
-    const newScheduledAt = new Date(proposeDraft);
-    if (Number.isNaN(newScheduledAt.getTime())) {
-      toast.error("Invalid date and time");
-      return;
-    }
-    if (newScheduledAt.getTime() < Date.now() - 60_000) {
-      toast.error("The new time has to be in the future");
-      return;
-    }
-    setBusy("propose");
-    const { error } = await supabase.rpc("propose_reschedule", {
-      p_session_id: sessionId,
-      p_new_scheduled_at: newScheduledAt.toISOString(),
-      p_note: proposeNote.trim() || null,
-    });
-    setBusy(null);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Reschedule proposed. Waiting for the other party to accept.");
-    setProposeOpen(false);
-    setProposeDraft("");
-    setProposeNote("");
-    await loadProposal();
-  };
 
   const accept = async () => {
     if (!proposal) return;
@@ -200,66 +159,12 @@ export function RescheduleSection({
 
   // No active proposal — offer a "Propose reschedule" button.
   return (
-    <>
-      <Button variant="outline" className="w-full" onClick={() => setProposeOpen(true)}>
-        <Calendar className="h-4 w-4" />
-        Propose reschedule
-      </Button>
-      <Dialog open={proposeOpen} onOpenChange={setProposeOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Propose a new time</DialogTitle>
-            <DialogDescription>
-              The other party has to accept before the session time changes. Either side can
-              propose; both sides have to agree.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="text-sm font-medium" htmlFor="reschedule-time">
-                New date and time
-              </label>
-              <Input
-                id="reschedule-time"
-                type="datetime-local"
-                value={proposeDraft}
-                onChange={(e) => setProposeDraft(e.target.value)}
-                // `min` is the browser-side guard; submitPropose enforces it
-                // again because users can edit the field manually past `min`.
-                min={(() => {
-                  const now = new Date();
-                  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-                  return now.toISOString().slice(0, 16);
-                })()}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium" htmlFor="reschedule-note">
-                Reason (optional)
-              </label>
-              <Textarea
-                id="reschedule-note"
-                value={proposeNote}
-                onChange={(e) => setProposeNote(e.target.value.slice(0, 280))}
-                placeholder="e.g. conflict with another meeting"
-                rows={3}
-                className="mt-1"
-              />
-              <p className="mt-1 text-xs text-muted-foreground">{proposeNote.length}/280</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setProposeOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="hero" onClick={submitPropose} disabled={busy === "propose"}>
-              {busy === "propose" && <Loader2 className="h-4 w-4 animate-spin" />}
-              Send proposal
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    <ProposeRescheduleDialog
+      sessionId={sessionId}
+      teacherId={teacherId}
+      durationMinutes={durationMinutes}
+      onProposed={loadProposal}
+      buttonClassName="w-full"
+    />
   );
 }

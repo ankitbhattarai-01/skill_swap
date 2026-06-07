@@ -44,10 +44,11 @@ import {
   describeJoinWindow,
   type SessionDuration,
 } from "@/lib/sessions";
-import { playRequestSentChime } from "@/lib/sounds";
+import { playRequestSentChime, playCancelChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
 import { ConfirmAction } from "@/components/ConfirmAction";
+import { UpNextRescheduleActions } from "@/components/UpNextRescheduleActions";
 import { UserAvatar } from "@/components/UserAvatar";
 import { PageLoading } from "@/components/PageLoading";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,7 +67,6 @@ import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
-
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard | SkillSwap" }] }),
@@ -1184,6 +1184,21 @@ function DashboardPage() {
     }
   };
 
+  const cancelSession = async (session: SessionRow) => {
+    markBusy(session.id);
+    try {
+      const { error } = await supabase.rpc("cancel_session", { p_session_id: session.id });
+      if (error) return toastError(error);
+      markSelfAction(session.id, ["session_cancelled"]);
+      playCancelChime();
+      toast.success("Session cancelled. Credits refunded.");
+      void invalidateCreditBalance();
+      await loadDashboard();
+    } finally {
+      clearBusy(session.id);
+    }
+  };
+
   const completeSession = async (session: SessionRow) => {
     markBusy(session.id);
     try {
@@ -1368,8 +1383,10 @@ function DashboardPage() {
               matchesHydrated={matchesHydrated}
               onAccept={acceptSession}
               onReject={rejectSession}
+              onCancel={cancelSession}
               onRequest={openRequestDialog}
               onMessageTeacher={(t) => void openChatWithTeacher(t)}
+              onScheduleChanged={() => loadDashboard()}
             />
           ))}
         </div>
@@ -1583,8 +1600,10 @@ type NextMoveCardProps = {
   matchesHydrated: boolean;
   onAccept: (s: SessionRow) => void;
   onReject: (s: SessionRow) => void;
+  onCancel: (s: SessionRow) => void;
   onRequest: (t: TeachOffer) => void;
   onMessageTeacher: (t: TeachOffer) => void;
+  onScheduleChanged: () => void | Promise<void>;
 };
 
 function NextMoveCard({
@@ -1594,8 +1613,10 @@ function NextMoveCard({
   matchesHydrated,
   onAccept,
   onReject,
+  onCancel,
   onRequest,
   onMessageTeacher,
+  onScheduleChanged,
 }: NextMoveCardProps) {
   if (next.kind === "incoming") {
     const s = next.session;
@@ -1650,32 +1671,72 @@ function NextMoveCard({
     const joinable = canJoinSession(s.scheduled_at, s.duration_minutes);
     return (
       <section className="rounded-3xl border border-brand-cyan/25 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
-        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-cyan font-semibold">
-          <Clock className="h-3.5 w-3.5" /> Up next
-        </div>
-        <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
-          {s.skills?.name ?? "Session"} with {otherName}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Starts {startsIn} · {s.duration_minutes} min
-        </p>
-        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-          {joinable ? (
-            <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
-              <Link to="/video/$sessionId" preload="intent" params={{ sessionId: s.id }}>
-                <Video className="h-4 w-4" /> Join now
-              </Link>
-            </Button>
-          ) : (
-            <Button variant="hero" size="lg" className="w-full sm:w-auto" disabled>
-              <Video className="h-4 w-4" /> Join {startsIn}
-            </Button>
-          )}
-          <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
-            <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
-              <Eye className="h-4 w-4" /> Details
-            </Link>
-          </Button>
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-cyan font-semibold">
+              <Clock className="h-3.5 w-3.5" /> Up next
+            </div>
+            <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
+              {s.skills?.name ?? "Session"} with {otherName}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Starts {startsIn} · {s.duration_minutes} min
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              {joinable ? (
+                <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
+                  <Link to="/video/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+                    <Video className="h-4 w-4" /> Join now
+                  </Link>
+                </Button>
+              ) : (
+                <Button variant="hero" size="lg" className="w-full sm:w-auto" disabled>
+                  <Video className="h-4 w-4" /> Join {startsIn}
+                </Button>
+              )}
+              <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
+                <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+                  <Eye className="h-4 w-4" /> Details
+                </Link>
+              </Button>
+            </div>
+          </div>
+          <div className="flex w-full flex-col gap-2.5 lg:w-80 lg:shrink-0">
+            <UpNextRescheduleActions
+              sessionId={s.id}
+              currentUserId={userId}
+              teacherId={s.teacher_id}
+              durationMinutes={s.duration_minutes}
+              onResolved={onScheduleChanged}
+              className="w-full"
+            />
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" asChild>
+                <Link to="/messages" search={{ s: s.id }}>
+                  <MessageCircle className="h-4 w-4" /> Message
+                </Link>
+              </Button>
+              <ConfirmAction
+                title="Cancel this session?"
+                description={`Cancelling refunds the ${s.credits} credit${
+                  s.credits === 1 ? "" : "s"
+                } held in escrow. You can re-request later if plans change.`}
+                confirmLabel="Cancel session"
+                cancelLabel="Keep it"
+                destructive
+                onConfirm={() => onCancel(s)}
+              >
+                <Button variant="outline" className="flex-1" disabled={busyIds.has(s.id)}>
+                  {busyIds.has(s.id) ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <X className="h-4 w-4" />
+                  )}
+                  Cancel session
+                </Button>
+              </ConfirmAction>
+            </div>
+          </div>
         </div>
       </section>
     );

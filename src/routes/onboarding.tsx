@@ -21,6 +21,7 @@ import { formatLearningMode, type LearningMode } from "@/lib/match";
 import { AvailabilityEditor, type AvailabilityEditorHandle } from "@/components/AvailabilityEditor";
 import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 import { completeOnboarding } from "@/lib/onboarding";
+import { SkillCombobox } from "@/components/SkillCombobox";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({ meta: [{ title: "Onboarding | SkillSwap" }] }),
@@ -276,7 +277,7 @@ function OnboardingPage() {
       ...teaching,
       {
         skill,
-        level: (teachLevel || "intermediate") as SkillLevel,
+        level: (teachLevel || "basic") as SkillLevel,
         focus: teachFocus.trim(),
         mode: (teachMode || "teaching") as LearningMode,
       },
@@ -298,7 +299,7 @@ function OnboardingPage() {
         skill,
         level: (learnLevel || "basic") as SkillLevel,
         focus: learnFocus.trim(),
-        mode: (learnMode || "mentorship") as LearningMode,
+        mode: (learnMode || "teaching") as LearningMode,
       },
     ]);
     setLearnInput("");
@@ -558,8 +559,8 @@ function OnboardingPage() {
                     kind="teaching"
                     placeholder="Add a skill you teach…"
                     focusPlaceholder="Focus, e.g. Python loops"
-                    modePlaceholder="Method: Teaching"
-                    levelPlaceholder="Level: Intermediate"
+                    modePlaceholder="Method: Direct teaching"
+                    levelPlaceholder="Level: Basic"
                     input={teachInput}
                     setInput={setTeachInput}
                     focus={teachFocus}
@@ -593,7 +594,7 @@ function OnboardingPage() {
                     kind="learning"
                     placeholder="Add a skill you want to learn…"
                     focusPlaceholder="Focus, e.g. mobile layouts"
-                    modePlaceholder="Method: Mentorship"
+                    modePlaceholder="Method: Direct learning"
                     levelPlaceholder="Level: Basic"
                     input={learnInput}
                     setInput={setLearnInput}
@@ -732,11 +733,6 @@ function SkillPicker({
     kind === "teaching"
       ? "No skills yet. Add one you can teach."
       : "No skills yet. Add one you want help with.";
-  const suggestions = allSkills
-    .filter((s) => input && s.name.toLowerCase().includes(input.toLowerCase()))
-    .filter((s) => !entries.find((e) => e.skill.id === s.id))
-    .slice(0, 5);
-
   return (
     <div className="space-y-3">
       {entries.length === 0 ? (
@@ -791,7 +787,7 @@ function SkillPicker({
                     <SelectContent className="max-h-56 overflow-y-auto">
                       {LEARNING_METHODS.map((m) => (
                         <SelectItem key={m} value={m}>
-                          {formatLearningMode(m)}
+                          {formatLearningMode(m, kind)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -820,12 +816,12 @@ function SkillPicker({
 
       <div className="space-y-2 border-t border-white/[0.06] pt-3">
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <Input
+          <SkillCombobox
+            skills={allSkills}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), onAdd())}
+            onChange={setInput}
+            excludeIds={entries.map((e) => e.skill.id)}
             placeholder={placeholder}
-            className="glass h-10 border-white/10"
           />
           <Button
             variant={input.trim() ? "hero" : "outline"}
@@ -838,21 +834,6 @@ function SkillPicker({
             Add
           </Button>
         </div>
-
-        {suggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {suggestions.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setInput(s.name)}
-                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-              >
-                {s.name}
-              </button>
-            ))}
-          </div>
-        )}
 
         <details className="group">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
@@ -896,7 +877,7 @@ function SkillPicker({
               <SelectContent className="max-h-56 overflow-y-auto">
                 {LEARNING_METHODS.map((m) => (
                   <SelectItem key={m} value={m}>
-                    {formatLearningMode(m)}
+                    {formatLearningMode(m, kind)}
                   </SelectItem>
                 ))}
               </SelectContent>

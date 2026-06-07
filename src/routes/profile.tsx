@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/ConfirmAction";
+import { SkillCombobox } from "@/components/SkillCombobox";
 import { AvailabilityEditor } from "@/components/AvailabilityEditor";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
@@ -576,7 +577,7 @@ function ProfilePage() {
   const addTeach = async () => {
     if (!user) return;
     const selectedTeachMode = teachMode || "teaching";
-    const selectedTeachLevel = teachLevel || "intermediate";
+    const selectedTeachLevel = teachLevel || "basic";
     const skill = await findOrCreate(teachInput, teachCategory || "Other");
     if (!skill) return;
     const existing = teaching.find((t) => t.skill.id === skill.id);
@@ -631,7 +632,7 @@ function ProfilePage() {
 
   const addLearn = async () => {
     if (!user) return;
-    const selectedLearnMode = learnMode || "mentorship";
+    const selectedLearnMode = learnMode || "teaching";
     const selectedLearnLevel = learnLevel || "basic";
     const skill = await findOrCreate(learnInput, learnCategory || "Other");
     if (!skill) return;
@@ -1019,19 +1020,17 @@ function ProfilePage() {
 
             <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <Input
-                  name="teach-skill"
-                  autoComplete="off"
+                <SkillCombobox
+                  skills={allSkills}
                   value={teachInput}
-                  onChange={(e) => setTeachInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTeach())}
+                  onChange={setTeachInput}
+                  excludeIds={teaching.map((t) => t.skill.id)}
                   placeholder="Add a skill you teach…"
-                  className="glass h-10 border-white/10"
                 />
                 <Button
                   variant={teachInput.trim() ? "hero" : "outline"}
                   className="h-10 px-4"
-                  onClick={addTeach}
+                  onClick={() => addTeach()}
                   disabled={!teachInput.trim()}
                   title="Add teaching skill"
                 >
@@ -1060,7 +1059,7 @@ function ProfilePage() {
                     onValueChange={(v) => setTeachLevel(v as typeof teachLevel)}
                   >
                     <SelectTrigger className="glass h-10 border-white/10">
-                      <SelectValue placeholder="Level: Intermediate" />
+                      <SelectValue placeholder="Level: Basic" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="basic">Basic</SelectItem>
@@ -1085,7 +1084,7 @@ function ProfilePage() {
                     onValueChange={(value) => setTeachMode(value as LearningMode)}
                   >
                     <SelectTrigger className="glass h-10 border-white/10">
-                      <SelectValue placeholder="Method: Teaching" />
+                      <SelectValue placeholder="Method: Direct teaching" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
                       {LEARNING_METHODS.map((mode) => (
@@ -1158,7 +1157,7 @@ function ProfilePage() {
                           <SelectContent className="max-h-56 overflow-y-auto">
                             {LEARNING_METHODS.map((mode) => (
                               <SelectItem key={mode} value={mode}>
-                                {formatLearningMode(mode)}
+                                {formatLearningMode(mode, "learning")}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1193,19 +1192,17 @@ function ProfilePage() {
 
             <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <Input
-                  name="learn-skill"
-                  autoComplete="off"
+                <SkillCombobox
+                  skills={allSkills}
                   value={learnInput}
-                  onChange={(e) => setLearnInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addLearn())}
+                  onChange={setLearnInput}
+                  excludeIds={learning.map((l) => l.skill.id)}
                   placeholder="Add a skill you want to learn…"
-                  className="glass h-10 border-white/10"
                 />
                 <Button
                   variant={learnInput.trim() ? "hero" : "outline"}
                   className="h-10 px-4"
-                  onClick={addLearn}
+                  onClick={() => addLearn()}
                   disabled={!learnInput.trim()}
                   title="Add learning skill"
                 >
@@ -1259,12 +1256,12 @@ function ProfilePage() {
                     onValueChange={(value) => setLearnMode(value as LearningMode)}
                   >
                     <SelectTrigger className="glass h-10 border-white/10">
-                      <SelectValue placeholder="Method: Mentorship" />
+                      <SelectValue placeholder="Method: Direct learning" />
                     </SelectTrigger>
                     <SelectContent className="max-h-56 overflow-y-auto">
                       {LEARNING_METHODS.map((mode) => (
                         <SelectItem key={mode} value={mode}>
-                          {formatLearningMode(mode)}
+                          {formatLearningMode(mode, "learning")}
                         </SelectItem>
                       ))}
                     </SelectContent>
