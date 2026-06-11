@@ -456,6 +456,7 @@ export type Database = {
       };
       sessions: {
         Row: {
+          batch_id: string | null;
           created_at: string;
           credits: number;
           duration_minutes: number;
@@ -471,6 +472,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          batch_id?: string | null;
           created_at?: never;
           credits?: number;
           duration_minutes?: number;
@@ -486,6 +488,7 @@ export type Database = {
           updated_at?: never;
         };
         Update: {
+          batch_id?: string | null;
           created_at?: never;
           credits?: never;
           duration_minutes?: never;

@@ -8,7 +8,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useAuth } from "@/lib/auth-context";
 import { isUuid } from "@/lib/uuid";
-import { getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateSession, requestSessionsForSlots, type SessionDuration } from "@/lib/sessions";
 import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,20 +22,17 @@ import {
   Star,
   Sparkles,
   MessageSquareQuote,
-  GitBranch,
   ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// Lazy: both dialogs pull in react-day-picker via the Calendar UI. Keeping
-// them out of the route chunk strips ~40–60kb from first paint — neither
-// dialog is open on initial render.
+// Lazy: the dialog pulls in react-day-picker via the Calendar UI. Keeping it
+// out of the route chunk strips ~40–60kb from first paint — it isn't open on
+// initial render. It handles both single and multi-session requests.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
-const TrackProposalDialog = lazy(() =>
-  import("@/components/TrackProposalDialog").then((m) => ({ default: m.TrackProposalDialog })),
-);
+import type { MultiSessionParams } from "@/components/SessionRequestDialog";
 
 export const Route = createFileRoute("/users/$userId")({
   head: () => ({ meta: [{ title: "Profile - SkillSwap" }] }),
@@ -76,9 +73,13 @@ function PublicUserPage() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [teaching, setTeaching] = useState<TeachingSkill[]>([]);
-  const [trackDialog, setTrackDialog] = useState<{ skillId: string; skillName: string } | null>(
-    null,
-  );
+  // The skill the request dialog is currently targeting. Carries the rate so
+  // the dialog can price either a single session or a multi-session request.
+  const [requestSkill, setRequestSkill] = useState<{
+    id: string;
+    name: string;
+    creditsPerHour: number;
+  } | null>(null);
   const [learning, setLearning] = useState<LearningSkill[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
@@ -255,28 +256,37 @@ function PublicUserPage() {
 
   const primaryTeachingSkill = teaching.find((skill) => skill.skills?.id) ?? null;
 
-  const openRequest = () => {
+  // Opens the request dialog for a specific teaching skill. Defaults to the
+  // teacher's primary skill (used by the hero "Request session" button); each
+  // skill card passes its own skill so the learner can request that one.
+  const openRequest = (skill?: TeachingSkill) => {
     if (!user) {
       navigate({ to: "/login", search: { redirect: `/users/${userId}` } });
       return;
     }
-    if (!primaryTeachingSkill?.skills?.id) {
+    const target = skill ?? primaryTeachingSkill;
+    if (!target?.skills?.id) {
       toast.error("This student has not listed a teaching skill yet.");
       return;
     }
+    setRequestSkill({
+      id: target.skills.id,
+      name: target.skills.name,
+      creditsPerHour: target.credits_per_hour,
+    });
     setRequestOpen(true);
   };
 
   const confirmRequest = async (duration: SessionDuration, scheduledAt: string): Promise<void> => {
-    if (!user || !primaryTeachingSkill?.skills?.id) return;
+    if (!user || !requestSkill) return;
     setRequesting(true);
     try {
       const { sessionId, error } = await getOrCreateSession({
         learnerId: user.id,
         teacherId: userId,
         initiatorId: user.id,
-        skillId: primaryTeachingSkill.skills.id,
-        creditsPerHour: primaryTeachingSkill.credits_per_hour,
+        skillId: requestSkill.id,
+        creditsPerHour: requestSkill.creditsPerHour,
         durationMinutes: duration,
         scheduledAt,
       });
@@ -287,6 +297,37 @@ function PublicUserPage() {
       if (sessionId) {
         playRequestSentChime();
         toast.success("Session requested. You can message after it is accepted.");
+        setRequestOpen(false);
+      }
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  // Multi-session path: book one ordinary pending session per chosen slot. Each
+  // shows up for the teacher to accept individually, exactly like a single
+  // request — credits are only escrowed as each session is accepted.
+  const requestMultiple = async (params: MultiSessionParams): Promise<void> => {
+    if (!user || !requestSkill) return;
+    setRequesting(true);
+    try {
+      const { created, error } = await requestSessionsForSlots({
+        learnerId: user.id,
+        teacherId: userId,
+        skillId: requestSkill.id,
+        creditsPerHour: requestSkill.creditsPerHour,
+        durationMinutes: params.durationMinutes,
+        startTimes: params.startTimes,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      if (created > 0) {
+        playRequestSentChime();
+        toast.success(
+          `Requested ${created} ${created === 1 ? "session" : "sessions"}. ${profile?.full_name ?? "The teacher"} accepts each one.`,
+        );
         setRequestOpen(false);
       }
     } finally {
@@ -357,7 +398,12 @@ function PublicUserPage() {
               {user?.id !== userId && (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-end">
                   {primaryTeachingSkill && (
-                    <Button variant="hero" size="lg" onClick={openRequest} disabled={requesting}>
+                    <Button
+                      variant="hero"
+                      size="lg"
+                      onClick={() => openRequest()}
+                      disabled={requesting}
+                    >
                       {requesting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
@@ -412,17 +458,12 @@ function PublicUserPage() {
                   <div className="mt-3 border-t border-white/5 pt-3">
                     <button
                       type="button"
-                      onClick={() =>
-                        setTrackDialog({
-                          skillId: skill.skills!.id,
-                          skillName: skill.skills!.name,
-                        })
-                      }
+                      onClick={() => openRequest(skill)}
                       className="group/track inline-flex w-full items-center justify-between gap-2 rounded-xl border border-brand-cyan/25 bg-brand-cyan/[0.06] px-3 py-2 text-xs font-medium text-brand-cyan transition-all hover:border-brand-cyan/50 hover:bg-brand-cyan/[0.12] hover:shadow-glow-blue"
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        <GitBranch className="h-3.5 w-3.5" />
-                        Propose a learning track
+                        <CalendarPlus className="h-3.5 w-3.5" />
+                        Request a session
                       </span>
                       <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover/track:translate-x-0.5" />
                     </button>
@@ -502,31 +543,22 @@ function PublicUserPage() {
           )}
         </section>
       </main>
-      {requestOpen && primaryTeachingSkill?.skills && (
+      {requestOpen && requestSkill && (
         <Suspense fallback={null}>
           <SessionRequestDialog
             open={requestOpen}
             onOpenChange={setRequestOpen}
             title="Request a session"
-            skillName={primaryTeachingSkill.skills.name}
-            creditsPerHour={primaryTeachingSkill.credits_per_hour}
+            skillName={requestSkill.name}
+            creditsPerHour={requestSkill.creditsPerHour}
             availableCredits={myCredits}
             busy={requesting}
             learnerId={user?.id}
             teacherId={userId}
             onConfirm={confirmRequest}
-          />
-        </Suspense>
-      )}
-      {trackDialog && (
-        <Suspense fallback={null}>
-          <TrackProposalDialog
-            open={trackDialog !== null}
-            onOpenChange={(open) => !open && setTrackDialog(null)}
-            teacherId={userId}
+            allowMultiSession
             teacherName={profile?.full_name ?? "Teacher"}
-            skillId={trackDialog.skillId}
-            skillName={trackDialog.skillName}
+            onConfirmMulti={requestMultiple}
           />
         </Suspense>
       )}

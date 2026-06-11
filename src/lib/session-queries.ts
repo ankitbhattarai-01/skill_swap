@@ -28,6 +28,7 @@ export type RawSessionRow = {
   meet_link: string | null;
   created_at: string;
   updated_at?: string;
+  batch_id?: string | null;
   skills: { id: string; name: string; category?: string | null } | null;
 };
 
@@ -41,7 +42,7 @@ export function isSessionSchemaMismatch(error: SessionQueryError | null | undefi
   const raw = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
   return (
     (error?.code === "PGRST204" || error?.code === "42703" || raw.includes("schema cache")) &&
-    (raw.includes("initiator_id") || raw.includes("duration_minutes"))
+    (raw.includes("initiator_id") || raw.includes("duration_minutes") || raw.includes("batch_id"))
   );
 }
 
@@ -72,16 +73,21 @@ export function buildSessionSelects(opts: SessionSelectOptions = {}): string[] {
   const tail = `${opts.includeUpdatedAt ? ", updated_at" : ""}, skills:skill_id(${skillsCols})`;
   const base =
     "id, learner_id, teacher_id, skill_id, status, credits, scheduled_at, meet_link, created_at";
-  return [
+
+  // `batch` is the optional grouping column (added 20260611000000). We prefer
+  // SELECTs that include it, then fall back to ones that don't so the pages
+  // still load against an older schema where the column is absent.
+  const variants = (batch: string) => [
     // Current schema: both initiator_id and duration_minutes present.
-    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits, duration_minutes, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits, duration_minutes${batch}, scheduled_at, meet_link, created_at${tail}`,
     // No initiator_id, has duration_minutes.
-    `id, learner_id, teacher_id, skill_id, status, credits, duration_minutes, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, skill_id, status, credits, duration_minutes${batch}, scheduled_at, meet_link, created_at${tail}`,
     // Has initiator_id, no duration_minutes.
-    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits${batch}, scheduled_at, meet_link, created_at${tail}`,
     // Legacy: neither column.
-    `${base}${tail}`,
+    `${base}${batch}${tail}`,
   ];
+  return [...variants(", batch_id"), ...variants("")];
 }
 
 // Try each SELECT in order until one succeeds. Re-throws any non-schema error

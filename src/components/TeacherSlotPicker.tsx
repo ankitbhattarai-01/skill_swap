@@ -36,6 +36,9 @@ type Props = {
   // Re-fetch trigger: pass the dialog's `open` so windows reload each time it
   // opens. Defaults to true (always fetch) for always-mounted usage.
   active?: boolean;
+  // Local-timestamps (Date.getTime()) to hide from the choices — used when
+  // building a multi-session plan so the same slot can't be picked twice.
+  excludeTimes?: number[];
 };
 
 export function TeacherSlotPicker({
@@ -45,11 +48,31 @@ export function TeacherSlotPicker({
   onChange,
   onValidityChange,
   active = true,
+  excludeTimes,
 }: Props) {
   const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>([]);
   const [windowsLoading, setWindowsLoading] = useState(false);
 
   const constrainPicker = Boolean(teacherId);
+
+  // Days already claimed by a picked slot. A plan books at most one session per
+  // calendar day, so once a day has a slot the whole day is off-limits for the
+  // next pick — this also rules out same-day overlaps by construction.
+  const excludeKey = (excludeTimes ?? []).join(",");
+  const isDayBlocked = useMemo(() => {
+    const days = new Set<number>();
+    for (const t of excludeTimes ?? []) {
+      const d = new Date(t);
+      d.setHours(0, 0, 0, 0);
+      days.add(d.getTime());
+    }
+    return (timeMs: number) => {
+      const d = new Date(timeMs);
+      d.setHours(0, 0, 0, 0);
+      return days.has(d.getTime());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludeKey]);
 
   // Fetch the teacher's free windows for the next horizon. One fetch per
   // (teacher, active) — duration filtering happens per-render on the client.
@@ -100,13 +123,14 @@ export function TeacherSlotPicker({
     while (cursor <= horizonEnd && out.length < SUGGESTED_COUNT) {
       const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
       for (const s of starts) {
+        if (isDayBlocked(s.getTime())) continue;
         out.push(s);
         if (out.length >= SUGGESTED_COUNT) break;
       }
       cursor.setDate(cursor.getDate() + 1);
     }
     return out;
-  }, [constrainPicker, teacherWindows, durationMinutes]);
+  }, [constrainPicker, teacherWindows, durationMinutes, isDayBlocked]);
 
   const scheduleDate = value;
   const scheduleInPast =
@@ -118,8 +142,10 @@ export function TeacherSlotPicker({
   const validStarts = useMemo<Date[]>(() => {
     if (!constrainPicker) return [];
     if (!scheduleDate || Number.isNaN(scheduleDate.getTime())) return [];
-    return computeValidStartsForDay(teacherWindows, scheduleDate, durationMinutes);
-  }, [constrainPicker, teacherWindows, scheduleDate, durationMinutes]);
+    return computeValidStartsForDay(teacherWindows, scheduleDate, durationMinutes).filter(
+      (s) => !isDayBlocked(s.getTime()),
+    );
+  }, [constrainPicker, teacherWindows, scheduleDate, durationMinutes, isDayBlocked]);
 
   // Set of local-day timestamps within the horizon that have at least one
   // valid start. Used to gray out dead days in the calendar.
@@ -132,11 +158,11 @@ export function TeacherSlotPicker({
     cursor.setHours(0, 0, 0, 0);
     while (cursor <= horizonEnd) {
       const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
-      if (starts.length > 0) keys.add(cursor.getTime());
+      if (starts.some((s) => !isDayBlocked(s.getTime()))) keys.add(cursor.getTime());
       cursor.setDate(cursor.getDate() + 1);
     }
     return keys;
-  }, [constrainPicker, teacherWindows, durationMinutes]);
+  }, [constrainPicker, teacherWindows, durationMinutes, isDayBlocked]);
 
   const selectedStartMatchesValid =
     !constrainPicker ||
@@ -246,7 +272,11 @@ export function TeacherSlotPicker({
                 if (constrainPicker) {
                   // Snap time to the first valid start on the chosen day so the
                   // time field never holds an invalid value.
-                  const starts = computeValidStartsForDay(teacherWindows, merged, durationMinutes);
+                  const starts = computeValidStartsForDay(
+                    teacherWindows,
+                    merged,
+                    durationMinutes,
+                  ).filter((s) => !isDayBlocked(s.getTime()));
                   if (starts.length > 0) {
                     merged.setHours(starts[0].getHours(), starts[0].getMinutes(), 0, 0);
                   } else {

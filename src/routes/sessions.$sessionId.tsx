@@ -20,6 +20,7 @@ import {
   Clock,
   Coins,
   GraduationCap,
+  Layers,
   Loader2,
   MessageCircle,
   ShieldAlert,
@@ -56,12 +57,21 @@ type SessionRow = {
   meet_link: string | null;
   scheduled_at: string | null;
   created_at: string;
+  batch_id: string | null;
   skills: { id: string; name: string; category: string | null } | null;
   learnerName: string;
   teacherName: string;
 };
 
 type RawSessionRow = Omit<SessionRow, "learnerName" | "teacherName"> & SharedRawSessionRow;
+
+// Lightweight sibling rows for the "Learning plan" card (sessions sharing this
+// one's batch_id).
+type PlanSibling = {
+  id: string;
+  scheduled_at: string | null;
+  status: SessionStatus;
+};
 
 async function querySessionRow(sessionId: string) {
   const row = await querySessionById({
@@ -77,6 +87,7 @@ function SessionPage() {
   const navigate = useNavigate();
   const invalidateCreditBalance = useInvalidateMyCreditBalance();
   const [session, setSession] = useState<SessionRow | null>(null);
+  const [planSiblings, setPlanSiblings] = useState<PlanSibling[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [scheduleDraft, setScheduleDraft] = useState("");
@@ -135,10 +146,23 @@ function SessionPage() {
 
       setSession({
         ...row,
+        batch_id: row.batch_id ?? null,
         meet_link: derivedLink,
         learnerName: names.get(row.learner_id) ?? "Student",
         teacherName: names.get(row.teacher_id) ?? "Student",
       });
+
+      // Sibling sessions in the same booking plan, for the progress card.
+      if (row.batch_id) {
+        const { data: siblings } = await supabase
+          .from("sessions")
+          .select("id, scheduled_at, status")
+          .eq("batch_id", row.batch_id)
+          .order("scheduled_at", { ascending: true });
+        setPlanSiblings((siblings ?? []) as PlanSibling[]);
+      } else {
+        setPlanSiblings([]);
+      }
       setLoading(false);
     } catch (error) {
       toastError(error, "Could not load session");
@@ -317,6 +341,9 @@ function SessionPage() {
         minute: "2-digit",
       })
     : null;
+  const isPlan = planSiblings.length > 1;
+  const planCompleted = planSiblings.filter((s) => s.status === "completed").length;
+  const planPct = isPlan ? Math.round((planCompleted / planSiblings.length) * 100) : 0;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -363,6 +390,12 @@ function SessionPage() {
                     <Coins className="h-3.5 w-3.5 text-amber-400" />
                     {session.credits} credits
                   </span>
+                  {isPlan && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-purple/25 bg-brand-purple/10 px-2.5 py-1 text-brand-purple">
+                      <Layers className="h-3.5 w-3.5" />
+                      Plan · {planCompleted}/{planSiblings.length} done
+                    </span>
+                  )}
                 </div>
               </div>
               <Badge
@@ -385,6 +418,75 @@ function SessionPage() {
 
         <div className="grid lg:grid-cols-3 gap-4">
           <section className="lg:col-span-2 space-y-4">
+            {isPlan && (
+              <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
+                    <Layers className="h-4 w-4 text-brand-purple" />
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="text-lg font-semibold leading-tight">Learning plan</h2>
+                    <span className="text-xs text-muted-foreground">
+                      {planCompleted}/{planSiblings.length} completed
+                    </span>
+                  </div>
+                </div>
+                <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan transition-all"
+                    style={{ width: `${planPct}%` }}
+                  />
+                </div>
+                <ul className="divide-y divide-white/5 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+                  {planSiblings.map((sibling, index) => {
+                    const isCurrent = sibling.id === session.id;
+                    const when = sibling.scheduled_at ? new Date(sibling.scheduled_at) : null;
+                    return (
+                      <li
+                        key={sibling.id}
+                        className={cn(
+                          "flex items-center justify-between gap-3 px-3 py-2.5",
+                          isCurrent && "bg-brand-purple/10",
+                        )}
+                      >
+                        <Link
+                          to="/sessions/$sessionId"
+                          params={{ sessionId: sibling.id }}
+                          preload="intent"
+                          className="flex min-w-0 items-center gap-3 transition-colors hover:text-primary"
+                        >
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-muted-foreground">
+                            {index + 1}
+                          </span>
+                          <span className="truncate text-sm font-medium">
+                            {when
+                              ? when.toLocaleString(undefined, {
+                                  weekday: "short",
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })
+                              : "Unscheduled"}
+                            {isCurrent && (
+                              <span className="ml-1.5 text-xs text-brand-purple">· this one</span>
+                            )}
+                          </span>
+                        </Link>
+                        <Badge
+                          className={cn(
+                            "shrink-0 rounded-full border-0 px-2.5 py-0.5 text-xs font-medium capitalize",
+                            sessionStatusTone(sibling.status),
+                          )}
+                        >
+                          {sibling.status === "active" ? "accepted" : sibling.status}
+                        </Badge>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
               <div className="mb-5 flex items-center gap-3">
                 <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">

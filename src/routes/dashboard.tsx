@@ -1243,7 +1243,11 @@ function DashboardPage() {
     () =>
       new Set(
         nextMoves.flatMap((m) =>
-          m.kind === "incoming" || m.kind === "upcoming" ? [m.session.id] : [],
+          m.kind === "incoming"
+            ? [m.session.id]
+            : m.kind === "upcoming"
+              ? m.sessions.map((s) => s.id)
+              : [],
         ),
       ),
     [nextMoves],
@@ -1373,9 +1377,11 @@ function DashboardPage() {
           {nextMoves.map((move, i) => (
             <NextMoveCard
               key={
-                move.kind === "incoming" || move.kind === "upcoming"
+                move.kind === "incoming"
                   ? `${move.kind}-${move.session.id}`
-                  : `${move.kind}-${i}`
+                  : move.kind === "upcoming"
+                    ? `upcoming-${move.sessions.map((s) => s.id).join("-")}`
+                    : `${move.kind}-${i}`
               }
               next={move}
               userId={user.id}
@@ -1557,14 +1563,15 @@ function formatTimeUntil(iso: string): string {
 
 type NextMove =
   | { kind: "incoming"; session: SessionRow }
-  | { kind: "upcoming"; session: SessionRow }
+  | { kind: "upcoming"; sessions: SessionRow[] }
   | { kind: "match"; teachers: TeachOffer[] }
   | { kind: "empty"; hasLearning: boolean };
 
 // Returns every move worth surfacing in the Next Move area, in priority order:
 // each pending incoming request (so the user can accept/decline without scrolling),
-// then the next upcoming accepted session. Falls back to a single match/empty card
-// if there are no actionable sessions at all.
+// then a single "Up next" card stacking every upcoming accepted/active session
+// (soonest first). Falls back to a single match/empty card if there are no
+// actionable sessions at all.
 function pickNextMoves(
   userId: string,
   sessions: SessionRow[],
@@ -1584,8 +1591,9 @@ function pickNextMoves(
     .filter((s) => (s.status === "accepted" || s.status === "active") && s.scheduled_at)
     .map((s) => ({ s, t: Date.parse(s.scheduled_at!) }))
     .filter(({ t }) => !Number.isNaN(t) && t + 60 * 60 * 1000 > now)
-    .sort((a, b) => a.t - b.t)[0];
-  if (upcoming) moves.push({ kind: "upcoming", session: upcoming.s });
+    .sort((a, b) => a.t - b.t)
+    .map(({ s }) => s);
+  if (upcoming.length > 0) moves.push({ kind: "upcoming", sessions: upcoming });
 
   if (moves.length > 0) return moves;
 
@@ -1664,79 +1672,92 @@ function NextMoveCard({
   }
 
   if (next.kind === "upcoming") {
-    const s = next.session;
-    const isTeacher = s.teacher_id === userId;
-    const otherName = isTeacher ? s.learnerName : s.teacherName;
-    const startsIn = formatTimeUntil(s.scheduled_at!);
-    const joinable = canJoinSession(s.scheduled_at, s.duration_minutes);
+    const sessions = next.sessions;
     return (
       <section className="rounded-3xl border border-brand-cyan/25 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-          <div className="min-w-0 flex-1">
-            <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-cyan font-semibold">
-              <Clock className="h-3.5 w-3.5" /> Up next
-            </div>
-            <h2 className="mt-2 text-xl md:text-2xl font-bold leading-tight">
-              {s.skills?.name ?? "Session"} with {otherName}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Starts {startsIn} · {s.duration_minutes} min
-            </p>
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-              {joinable ? (
-                <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
-                  <Link to="/video/$sessionId" preload="intent" params={{ sessionId: s.id }}>
-                    <Video className="h-4 w-4" /> Join now
-                  </Link>
-                </Button>
-              ) : (
-                <Button variant="hero" size="lg" className="w-full sm:w-auto" disabled>
-                  <Video className="h-4 w-4" /> Join {startsIn}
-                </Button>
-              )}
-              <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
-                <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
-                  <Eye className="h-4 w-4" /> Details
-                </Link>
-              </Button>
-            </div>
-          </div>
-          <div className="flex w-full flex-col gap-2.5 lg:w-80 lg:shrink-0">
-            <UpNextRescheduleActions
-              sessionId={s.id}
-              currentUserId={userId}
-              teacherId={s.teacher_id}
-              durationMinutes={s.duration_minutes}
-              onResolved={onScheduleChanged}
-              className="w-full"
-            />
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" asChild>
-                <Link to="/messages" search={{ s: s.id }}>
-                  <MessageCircle className="h-4 w-4" /> Message
-                </Link>
-              </Button>
-              <ConfirmAction
-                title="Cancel this session?"
-                description={`Cancelling refunds the ${s.credits} credit${
-                  s.credits === 1 ? "" : "s"
-                } held in escrow. You can re-request later if plans change.`}
-                confirmLabel="Cancel session"
-                cancelLabel="Keep it"
-                destructive
-                onConfirm={() => onCancel(s)}
+        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-cyan font-semibold">
+          <Clock className="h-3.5 w-3.5" /> Up next
+        </div>
+        <div className="mt-4 flex flex-col divide-y divide-border/60">
+          {sessions.map((s, idx) => {
+            const isTeacher = s.teacher_id === userId;
+            const otherName = isTeacher ? s.learnerName : s.teacherName;
+            const startsIn = formatTimeUntil(s.scheduled_at!);
+            const joinable = canJoinSession(s.scheduled_at, s.duration_minutes);
+            return (
+              <div
+                key={s.id}
+                className={cn(
+                  "flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6",
+                  idx > 0 && "pt-5",
+                  idx < sessions.length - 1 && "pb-5",
+                )}
               >
-                <Button variant="outline" className="flex-1" disabled={busyIds.has(s.id)}>
-                  {busyIds.has(s.id) ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <X className="h-4 w-4" />
-                  )}
-                  Cancel session
-                </Button>
-              </ConfirmAction>
-            </div>
-          </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xl md:text-2xl font-bold leading-tight">
+                    {s.skills?.name ?? "Session"} with {otherName}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Starts {startsIn} · {s.duration_minutes} min
+                  </p>
+                  <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                    {joinable ? (
+                      <Button variant="hero" size="lg" className="w-full sm:w-auto" asChild>
+                        <Link to="/video/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+                          <Video className="h-4 w-4" /> Join now
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button variant="hero" size="lg" className="w-full sm:w-auto" disabled>
+                        <Video className="h-4 w-4" /> Join {startsIn}
+                      </Button>
+                    )}
+                    <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
+                      <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
+                        <Eye className="h-4 w-4" /> Details
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex w-full flex-col gap-2.5 lg:w-80 lg:shrink-0">
+                  <UpNextRescheduleActions
+                    sessionId={s.id}
+                    currentUserId={userId}
+                    teacherId={s.teacher_id}
+                    durationMinutes={s.duration_minutes}
+                    onResolved={onScheduleChanged}
+                    className="w-full"
+                  />
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1" asChild>
+                      <Link to="/messages" search={{ s: s.id }}>
+                        <MessageCircle className="h-4 w-4" /> Message
+                      </Link>
+                    </Button>
+                    <ConfirmAction
+                      title="Cancel this session?"
+                      description={`Cancelling refunds the ${s.credits} credit${
+                        s.credits === 1 ? "" : "s"
+                      } held in escrow. You can re-request later if plans change.`}
+                      confirmLabel="Cancel session"
+                      cancelLabel="Keep it"
+                      destructive
+                      onConfirm={() => onCancel(s)}
+                    >
+                      <Button variant="outline" className="flex-1" disabled={busyIds.has(s.id)}>
+                        {busyIds.has(s.id) ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <X className="h-4 w-4" />
+                        )}
+                        Cancel session
+                      </Button>
+                    </ConfirmAction>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
     );
@@ -1783,7 +1804,7 @@ function NextMoveCard({
           <Sparkles className="h-3.5 w-3.5" />{" "}
           {plural ? "Top matches for you" : "Top match for you"}
         </div>
-        <div className={cn("mt-4 grid gap-4", plural && "md:grid-cols-2 md:gap-5")}>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 md:gap-5">
           {ts.map((t) => (
             <TopMatchTile
               key={t.id}

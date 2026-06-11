@@ -25,7 +25,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  BookOpen,
   ChevronLeft,
   Coins,
   History,
@@ -49,7 +48,6 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", icon: LayoutDashboard, to: "/dashboard" },
   { name: "Explore", icon: UserRoundSearch, to: "/explore" },
   { name: "Sessions", icon: Video, to: "/history" },
-  { name: "Tracks", icon: BookOpen, to: "/tracks" },
   { name: "Credits", icon: Coins, to: "/credits" },
   { name: "Messages", icon: MessageSquare, to: "/messages" },
   { name: "Profile", icon: UserIcon, to: "/profile" },

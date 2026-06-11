@@ -99,7 +99,12 @@ function sessionWindow({ scheduledAt, durationMinutes }: SessionCalendarDetails)
   return { start, end };
 }
 
-function sessionTitleAndDetails({ skillName, meetLink, organizerName, attendeeName }: SessionCalendarDetails) {
+function sessionTitleAndDetails({
+  skillName,
+  meetLink,
+  organizerName,
+  attendeeName,
+}: SessionCalendarDetails) {
   const title = `SkillSwap: ${skillName}`;
   const details = `${organizerName} teaching ${skillName} to ${attendeeName}.${meetLink ? `\nJoin: ${meetLink}` : ""}`;
   return { title, details };
@@ -288,5 +293,72 @@ export async function getOrCreateSession({
   // (open-session badges, request buttons), so drop their cached snapshots.
   if (data?.id) invalidatePageCaches(initiatorId);
 
-  return { sessionId: data?.id ?? null, error: friendlyRequestError(error), created: Boolean(data?.id) };
+  return {
+    sessionId: data?.id ?? null,
+    error: friendlyRequestError(error),
+    created: Boolean(data?.id),
+  };
+}
+
+// Books several sessions at once for the same teacher + skill — one pending
+// session per chosen start time. Each row goes through the normal lifecycle
+// (server recomputes credits, the teacher gets a `session_requested`
+// notification, and accepts/declines each one individually from the
+// dashboard), so a multi-session plan is just N ordinary requests. Credits are
+// only escrowed as each session is accepted, never up front.
+//
+// Inserted as a single statement so it's all-or-nothing: if any slot collides
+// with an existing open session at that exact time, the whole batch is rejected
+// and surfaced, rather than leaving a half-booked plan.
+export async function requestSessionsForSlots({
+  learnerId,
+  teacherId,
+  skillId,
+  creditsPerHour,
+  durationMinutes,
+  startTimes,
+}: {
+  learnerId: string;
+  teacherId: string;
+  skillId: string;
+  creditsPerHour: number;
+  durationMinutes: SessionDuration;
+  startTimes: string[];
+}): Promise<{ created: number; error: Error | null }> {
+  if (startTimes.length === 0) {
+    return { created: 0, error: new Error("Pick at least one session time.") };
+  }
+
+  // credits is recomputed server-side by the enforce_session_credits trigger;
+  // we still send a sane value to satisfy the NOT NULL / > 0 insert policy.
+  const credits = computeSessionCredits(creditsPerHour, durationMinutes);
+  // Tie the sessions together as one "plan" so the UI can group them (all times
+  // + progress). A lone booking stays ungrouped and renders like any single
+  // session.
+  const batchId = startTimes.length > 1 ? crypto.randomUUID() : null;
+  const rows = startTimes.map((scheduledAt) => ({
+    learner_id: learnerId,
+    teacher_id: teacherId,
+    initiator_id: learnerId,
+    skill_id: skillId,
+    status: "pending" as const,
+    credits,
+    duration_minutes: durationMinutes,
+    scheduled_at: scheduledAt,
+    batch_id: batchId,
+  }));
+
+  const { data, error } = await supabase.from("sessions").insert(rows).select("id");
+
+  if (data && data.length) invalidatePageCaches(learnerId);
+
+  const friendly = friendlyRequestError(error);
+  let normalizedError: Error | null = null;
+  if (friendly instanceof Error) {
+    normalizedError = friendly;
+  } else if (friendly) {
+    const message = (friendly as { message?: string }).message;
+    normalizedError = new Error(message ?? "Could not request the sessions.");
+  }
+  return { created: data?.length ?? 0, error: normalizedError };
 }

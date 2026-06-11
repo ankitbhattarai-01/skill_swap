@@ -13,7 +13,7 @@ import { ReportDialog } from "@/components/ReportDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthGate } from "@/lib/auth-gate";
 import { useAuth } from "@/lib/auth-context";
-import { getOrCreateSession, type SessionDuration } from "@/lib/sessions";
+import { getOrCreateSession, requestSessionsForSlots, type SessionDuration } from "@/lib/sessions";
 import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
@@ -50,6 +50,7 @@ import { useFeatureEnabled } from "@/lib/feature-flags";
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
+import type { MultiSessionParams } from "@/components/SessionRequestDialog";
 
 type ExploreMode = "teachers" | "learners";
 
@@ -987,6 +988,37 @@ function ExplorePage() {
     }
   };
 
+  // Multi-session path from the same dialog: book one ordinary pending session
+  // per chosen slot. Each shows up for the teacher to accept individually, just
+  // like a single request — credits are only escrowed as each is accepted.
+  const requestMultiple = async (params: MultiSessionParams): Promise<void> => {
+    if (!user || !requestRow?.skills) return;
+    setBusyAction(`request-${requestRow.id}`);
+    try {
+      const { created, error } = await requestSessionsForSlots({
+        learnerId: user.id,
+        teacherId: requestRow.user_id,
+        skillId: requestRow.skills.id,
+        creditsPerHour: requestRow.credits_per_hour,
+        durationMinutes: params.durationMinutes,
+        startTimes: params.startTimes,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      if (created > 0) {
+        playRequestSentChime();
+        toast.success(
+          `Requested ${created} ${created === 1 ? "session" : "sessions"}. The teacher accepts each one.`,
+        );
+        setRequestRow(null);
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   if (!publicExploreEnabled) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -1393,6 +1425,9 @@ function ExplorePage() {
             learnerId={user?.id}
             teacherId={requestRow.user_id}
             onConfirm={confirmRequest}
+            allowMultiSession
+            teacherName={requestRow.profiles?.full_name ?? "Teacher"}
+            onConfirmMulti={requestMultiple}
           />
         </Suspense>
       )}

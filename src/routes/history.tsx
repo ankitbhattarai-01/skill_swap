@@ -43,6 +43,7 @@ import {
   ChevronDown,
   Clock,
   Eye,
+  Layers,
   Loader2,
   MessageSquare,
   Sparkles,
@@ -95,12 +96,19 @@ type SessionRow = {
   scheduled_at: string | null;
   created_at: string;
   updated_at: string;
+  batch_id: string | null;
   skills: { id: string; name: string } | null;
   learnerName: string;
   teacherName: string;
 };
 
 type RawSessionRow = Omit<SessionRow, "learnerName" | "teacherName"> & SharedRawSessionRow;
+
+// A render unit in the list: either a standalone session, or a multi-session
+// "plan" (sessions booked together, sharing a batch_id).
+type SessionGroup =
+  | { type: "single"; key: string; session: SessionRow }
+  | { type: "plan"; key: string; sessions: SessionRow[] };
 
 async function querySessionRows(userId: string) {
   const rows = await queryUserSessions({
@@ -200,6 +208,7 @@ function SessionsPage() {
         return {
           ...session,
           meet_link: normalizedLink,
+          batch_id: session.batch_id ?? null,
           learnerName: names.get(session.learner_id) ?? "Student",
           teacherName: names.get(session.teacher_id) ?? "Student",
         };
@@ -264,6 +273,52 @@ function SessionsPage() {
     }
     return sessions.filter((session) => session.status === filter);
   }, [filter, sessions]);
+
+  // Progress per plan is computed over the *whole* batch (ignoring the active
+  // filter) so "1/3 done" stays accurate even when a filter hides some rows.
+  const planTotals = useMemo(() => {
+    const totals = new Map<string, { total: number; completed: number }>();
+    for (const session of sessions) {
+      if (!session.batch_id) continue;
+      const entry = totals.get(session.batch_id) ?? { total: 0, completed: 0 };
+      entry.total += 1;
+      if (session.status === "completed") entry.completed += 1;
+      totals.set(session.batch_id, entry);
+    }
+    return totals;
+  }, [sessions]);
+
+  // Collapse the visible rows into render groups: a multi-session "plan" (when
+  // its batch has more than one session) or a standalone single session.
+  const sessionGroups = useMemo(() => {
+    const groups: SessionGroup[] = [];
+    const planAt = new Map<string, number>();
+    for (const session of visibleSessions) {
+      const isPlan = session.batch_id && (planTotals.get(session.batch_id)?.total ?? 0) > 1;
+      if (isPlan && session.batch_id) {
+        const existing = planAt.get(session.batch_id);
+        if (existing != null) {
+          (groups[existing] as Extract<SessionGroup, { type: "plan" }>).sessions.push(session);
+        } else {
+          planAt.set(session.batch_id, groups.length);
+          groups.push({ type: "plan", key: `plan-${session.batch_id}`, sessions: [session] });
+        }
+      } else {
+        groups.push({ type: "single", key: session.id, session });
+      }
+    }
+    // Earliest first within a plan reads like a schedule.
+    for (const group of groups) {
+      if (group.type === "plan") {
+        group.sessions.sort(
+          (a, b) =>
+            new Date(a.scheduled_at ?? a.created_at).getTime() -
+            new Date(b.scheduled_at ?? b.created_at).getTime(),
+        );
+      }
+    }
+    return groups;
+  }, [visibleSessions, planTotals]);
 
   const acceptSession = async (session: SessionRow) => {
     markBusy(session.id);
@@ -500,19 +555,31 @@ function SessionsPage() {
               </Button>
             </div>
           ) : (
-            visibleSessions.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                currentUserId={user?.id}
-                busy={busyIds.has(session.id)}
-                onAccept={() => acceptSession(session)}
-                onReject={() => rejectSession(session)}
-                onComplete={() => completeSession(session)}
-                onBookAgain={() => bookAgain(session)}
-                onReview={() => setReviewSession(session)}
-              />
-            ))
+            sessionGroups.map((group) =>
+              group.type === "plan" ? (
+                <SessionPlanCard
+                  key={group.key}
+                  sessions={group.sessions}
+                  progress={planTotals.get(group.sessions[0].batch_id ?? "")}
+                  currentUserId={user?.id}
+                  busyIds={busyIds}
+                  onAccept={acceptSession}
+                  onReject={rejectSession}
+                />
+              ) : (
+                <SessionCard
+                  key={group.key}
+                  session={group.session}
+                  currentUserId={user?.id}
+                  busy={busyIds.has(group.session.id)}
+                  onAccept={() => acceptSession(group.session)}
+                  onReject={() => rejectSession(group.session)}
+                  onComplete={() => completeSession(group.session)}
+                  onBookAgain={() => bookAgain(group.session)}
+                  onReview={() => setReviewSession(group.session)}
+                />
+              ),
+            )
           )}
         </div>
       </section>
@@ -637,6 +704,165 @@ function StatCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function SessionPlanCard({
+  sessions,
+  progress,
+  currentUserId,
+  busyIds,
+  onAccept,
+  onReject,
+}: {
+  sessions: SessionRow[];
+  progress?: { total: number; completed: number };
+  currentUserId?: string;
+  busyIds: Set<string>;
+  onAccept: (session: SessionRow) => void;
+  onReject: (session: SessionRow) => void;
+}) {
+  const first = sessions[0];
+  const isTeacher = first.teacher_id === currentUserId;
+  const otherName = isTeacher ? first.learnerName : first.teacherName;
+  const roleLabel = isTeacher ? "Learner" : "Teacher";
+  const total = progress?.total ?? sessions.length;
+  const completed = progress?.completed ?? 0;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  return (
+    <article className="animate-fade-up group glass rounded-3xl border border-white/10 px-5 py-5 transition-all hover:-translate-y-0.5 hover:border-brand-purple/30 hover:shadow-glow sm:px-6">
+      <div className="flex min-w-0 items-start gap-4">
+        <AvatarInitial name={otherName} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-bold leading-tight sm:text-xl">
+              {first.skills?.name ?? "Skill session"}
+            </h2>
+            <Badge className="inline-flex items-center gap-1 rounded-full border-0 bg-brand-purple/15 px-2.5 py-0.5 text-xs font-medium text-brand-purple">
+              <Layers className="h-3 w-3" />
+              Plan · {total} sessions
+            </Badge>
+          </div>
+          <div className="mt-1.5 text-sm text-muted-foreground">
+            <span className="text-foreground/80">{roleLabel}:</span> {otherName}{" "}
+            <span className="mx-1 opacity-40">&bull;</span> {first.duration_minutes} min{" "}
+            <span className="mx-1 opacity-40">&bull;</span>{" "}
+            <span className="text-foreground/80">{first.credits} credits each</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-1.5">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Progress</span>
+          <span className="font-medium text-foreground/80">
+            {completed}/{total} completed
+          </span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan transition-all"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+
+      <ul className="mt-4 divide-y divide-white/5 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+        {sessions.map((session, index) => (
+          <PlanSessionRow
+            key={session.id}
+            session={session}
+            index={index}
+            currentUserId={currentUserId}
+            busy={busyIds.has(session.id)}
+            onAccept={() => onAccept(session)}
+            onReject={() => onReject(session)}
+          />
+        ))}
+      </ul>
+    </article>
+  );
+}
+
+function PlanSessionRow({
+  session,
+  index,
+  currentUserId,
+  busy,
+  onAccept,
+  onReject,
+}: {
+  session: SessionRow;
+  index: number;
+  currentUserId?: string;
+  busy: boolean;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const sessionInitiatorId = session.initiator_id ?? session.learner_id;
+  const canRespondToPending =
+    session.status === "pending" && Boolean(currentUserId && currentUserId !== sessionInitiatorId);
+  const isAccepted = session.status === "accepted" || session.status === "active";
+  const roomLink = getVideoRoomUrl({
+    link: session.meet_link,
+    sessionId: session.id,
+    skillName: session.skills?.name,
+  });
+  const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
+  const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
+  const when = new Date(session.scheduled_at ?? session.created_at);
+
+  return (
+    <li className="flex items-center justify-between gap-3 px-3 py-2.5">
+      <Link
+        to="/sessions/$sessionId"
+        params={{ sessionId: session.id }}
+        preload="intent"
+        className="flex min-w-0 items-center gap-3 rounded-lg transition-colors hover:text-primary"
+      >
+        <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-muted-foreground">
+          {index + 1}
+        </span>
+        <span className="truncate text-sm font-medium">
+          {when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+          <span className="mx-1 opacity-40">&bull;</span>
+          {when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+        </span>
+      </Link>
+      <div className="flex shrink-0 items-center gap-2">
+        <StatusBadge status={session.status} />
+        {canRespondToPending ? (
+          <>
+            <Button variant="hero" size="sm" onClick={onAccept} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Accept
+            </Button>
+            <Button variant="outline" size="sm" onClick={onReject} disabled={busy}>
+              <X className="h-4 w-4" />
+            </Button>
+          </>
+        ) : isAccepted && roomLink && joinAllowed ? (
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/video/$sessionId" preload="intent" params={{ sessionId: session.id }}>
+              <Video className="h-4 w-4" />
+              Join
+            </Link>
+          </Button>
+        ) : isAccepted && roomLink ? (
+          <Button variant="outline" size="sm" disabled title={joinHint ?? "Not in session window"}>
+            <Video className="h-4 w-4" />
+            {joinHint ?? "Join"}
+          </Button>
+        ) : (
+          <Button variant="ghost" size="sm" asChild aria-label="Session details">
+            <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: session.id }}>
+              <Eye className="h-4 w-4" />
+            </Link>
+          </Button>
+        )}
+      </div>
+    </li>
   );
 }
 

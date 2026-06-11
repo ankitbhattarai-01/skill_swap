@@ -9,7 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TracksRouteImport } from './routes/tracks'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -37,11 +36,6 @@ import { Route as AdminSessionsRouteImport } from './routes/admin.sessions'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminFinanceRouteImport } from './routes/admin.finance'
 
-const TracksRoute = TracksRouteImport.update({
-  id: '/tracks',
-  path: '/tracks',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SkillsRoute = SkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
@@ -189,7 +183,6 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/skills': typeof SkillsRoute
-  '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/sessions': typeof AdminSessionsRoute
@@ -217,7 +210,6 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/skills': typeof SkillsRoute
-  '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/sessions': typeof AdminSessionsRoute
@@ -247,7 +239,6 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/skills': typeof SkillsRoute
-  '/tracks': typeof TracksRoute
   '/admin/finance': typeof AdminFinanceRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/sessions': typeof AdminSessionsRoute
@@ -278,7 +269,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/skills'
-    | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
     | '/admin/sessions'
@@ -306,7 +296,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/skills'
-    | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
     | '/admin/sessions'
@@ -335,7 +324,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/skills'
-    | '/tracks'
     | '/admin/finance'
     | '/admin/reports'
     | '/admin/sessions'
@@ -365,7 +353,6 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
   SkillsRoute: typeof SkillsRoute
-  TracksRoute: typeof TracksRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
@@ -374,13 +361,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/tracks': {
-      id: '/tracks'
-      path: '/tracks'
-      fullPath: '/tracks'
-      preLoaderRoute: typeof TracksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/skills': {
       id: '/skills'
       path: '/skills'
@@ -614,7 +594,6 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
   SkillsRoute: SkillsRoute,
-  TracksRoute: TracksRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
