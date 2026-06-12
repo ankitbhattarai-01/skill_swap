@@ -152,6 +152,19 @@ async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<
     supabase.rpc("my_credit_balance"),
   ]);
 
+  // Partial failures degrade the prompt (a missing signal block) rather than
+  // abort the whole generation — but they must be visible in the function
+  // logs, otherwise a broken signal silently produces generic suggestions.
+  for (const [label, res] of [
+    ["profile", profileRes],
+    ["teaching", teachRes],
+    ["learning", learnRes],
+    ["trending", trendingRes],
+    ["credits", creditBalanceRes],
+  ] as const) {
+    if (res.error) console.error(`[gatherSignals] ${label} read failed:`, res.error.message);
+  }
+
   type SkillJoinRow = { skill_id: string; skills: { name: string } | null };
 
   const teachingRows = (teachRes.data ?? []) as SkillJoinRow[];
@@ -166,88 +179,129 @@ async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<
     .filter((n): n is string => Boolean(n));
 
   // Find available teachers for the user's learning skills.
-  // Two-step lookup: PostgREST cannot auto-join user_teaching_skills.user_id
-  // (FK to auth.users) with public.profiles, so we fetch teaching rows first,
-  // then resolve names via a separate profiles query.
+  // One batched query across ALL learning skills (was: 3 serial queries per
+  // skill — up to 15 round trips), then a single profiles + single reviews
+  // lookup over the union of candidates. PostgREST cannot auto-join
+  // user_teaching_skills.user_id (FK to auth.users) with public.profiles,
+  // hence the separate profiles query.
   const availableTeachers: AvailableTeacher[] = [];
-  for (const row of learningRows.slice(0, 5)) {
-    if (!row.skill_id || !row.skills?.name) continue;
-
-    type TeachRow = { user_id: string; level: string; credits_per_hour: number };
-    const { data: teachingRowsForSkillRaw } = await supabase
+  const learningForTeachers = learningRows
+    .filter((r): r is SkillJoinRow & { skills: { name: string } } =>
+      Boolean(r.skill_id && r.skills?.name),
+    )
+    .slice(0, 5);
+  if (learningForTeachers.length) {
+    type TeachRow = { user_id: string; skill_id: string; level: string; credits_per_hour: number };
+    const { data: teachAllRaw, error: teachAllError } = await supabase
       .from("user_teaching_skills")
-      .select("user_id, level, credits_per_hour")
-      .eq("skill_id", row.skill_id)
+      .select("user_id, skill_id, level, credits_per_hour")
+      .in(
+        "skill_id",
+        learningForTeachers.map((r) => r.skill_id),
+      )
       .neq("user_id", userId)
       .order("credits_per_hour", { ascending: true })
-      .limit(3);
-
-    const teachingRowsForSkill = (teachingRowsForSkillRaw ?? []) as TeachRow[];
-    if (!teachingRowsForSkill.length) continue;
-
-    const teacherIds = teachingRowsForSkill.map((t: TeachRow) => t.user_id);
-
-    type ProfileRow = { id: string; full_name: string | null };
-    const { data: teacherProfilesRaw } = await supabase
-      .from("profiles")
-      .select("id, full_name")
-      .in("id", teacherIds);
-
-    const teacherProfiles = (teacherProfilesRaw ?? []) as ProfileRow[];
-    const nameById = new Map<string, string | null>(
-      teacherProfiles.map((p: ProfileRow) => [p.id, p.full_name]),
-    );
-
-    // Batch-fetch reviews for all candidate teachers in one query.
-    type ReviewRow = { reviewee_id: string; rating: number };
-    const { data: reviewsRaw } = await supabase
-      .from("reviews")
-      .select("reviewee_id, rating")
-      .in("reviewee_id", teacherIds);
-
-    const reviewsByTeacher = new Map<string, number[]>();
-    for (const r of (reviewsRaw ?? []) as ReviewRow[]) {
-      const arr = reviewsByTeacher.get(r.reviewee_id) ?? [];
-      arr.push(r.rating);
-      reviewsByTeacher.set(r.reviewee_id, arr);
+      .limit(60);
+    if (teachAllError) {
+      console.error("[gatherSignals] teacher candidates read failed:", teachAllError.message);
     }
 
-    for (const t of teachingRowsForSkill) {
-      const name = nameById.get(t.user_id);
-      if (!name) continue;
-      const ratings = reviewsByTeacher.get(t.user_id) ?? [];
-      const avgRating = ratings.length
-        ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10
-        : null;
-      availableTeachers.push({
-        skill: row.skills.name,
-        skill_id: row.skill_id,
-        teacher_name: name,
-        teacher_id: t.user_id,
-        level: t.level ?? "basic",
-        credits_per_hour: t.credits_per_hour ?? 4,
-        rating: avgRating,
-        review_count: ratings.length,
-      });
+    // Cheapest 3 per skill (rows arrive price-ascending).
+    const teachersBySkill = new Map<string, TeachRow[]>();
+    for (const t of (teachAllRaw ?? []) as TeachRow[]) {
+      const arr = teachersBySkill.get(t.skill_id) ?? [];
+      if (arr.length < 3) {
+        arr.push(t);
+        teachersBySkill.set(t.skill_id, arr);
+      }
+    }
+
+    const teacherIds = Array.from(
+      new Set(
+        Array.from(teachersBySkill.values())
+          .flat()
+          .map((t) => t.user_id),
+      ),
+    );
+
+    if (teacherIds.length) {
+      type ProfileRow = { id: string; full_name: string | null };
+      type ReviewRow = { reviewee_id: string; rating: number };
+      const [teacherProfilesRes, reviewsRes] = await Promise.all([
+        supabase.from("profiles").select("id, full_name").in("id", teacherIds),
+        supabase.from("reviews").select("reviewee_id, rating").in("reviewee_id", teacherIds),
+      ]);
+      if (teacherProfilesRes.error) {
+        console.error(
+          "[gatherSignals] teacher profiles read failed:",
+          teacherProfilesRes.error.message,
+        );
+      }
+      if (reviewsRes.error) {
+        console.error("[gatherSignals] reviews read failed:", reviewsRes.error.message);
+      }
+
+      const nameById = new Map<string, string | null>(
+        ((teacherProfilesRes.data ?? []) as ProfileRow[]).map((p) => [p.id, p.full_name]),
+      );
+      const reviewsByTeacher = new Map<string, number[]>();
+      for (const r of (reviewsRes.data ?? []) as ReviewRow[]) {
+        const arr = reviewsByTeacher.get(r.reviewee_id) ?? [];
+        arr.push(r.rating);
+        reviewsByTeacher.set(r.reviewee_id, arr);
+      }
+
+      for (const row of learningForTeachers) {
+        for (const t of teachersBySkill.get(row.skill_id) ?? []) {
+          const name = nameById.get(t.user_id);
+          if (!name) continue;
+          const ratings = reviewsByTeacher.get(t.user_id) ?? [];
+          const avgRating = ratings.length
+            ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10
+            : null;
+          availableTeachers.push({
+            skill: row.skills.name,
+            skill_id: row.skill_id,
+            teacher_name: name,
+            teacher_id: t.user_id,
+            level: t.level ?? "basic",
+            credits_per_hour: t.credits_per_hour ?? 4,
+            rating: avgRating,
+            review_count: ratings.length,
+          });
+        }
+      }
     }
   }
 
   // Count how many learners on the platform want each skill the user teaches.
-  // This grounds "X students want to learn from you" suggestions in real numbers.
+  // This grounds "X students want to learn from you" suggestions in real
+  // numbers. The per-skill head-count queries run in parallel (was serial).
   const seekerCounts: SeekerCount[] = [];
-  for (const row of teachingRows.slice(0, 5)) {
-    if (!row.skill_id || !row.skills?.name) continue;
-
-    const { count } = await supabase
-      .from("user_learning_skills")
-      .select("user_id", { count: "exact", head: true })
-      .eq("skill_id", row.skill_id)
-      .neq("user_id", userId);
-
-    if (count && count > 0) {
-      seekerCounts.push({ skill: row.skills.name, skill_id: row.skill_id, count });
+  const teachingForSeekers = teachingRows
+    .filter((r): r is SkillJoinRow & { skills: { name: string } } =>
+      Boolean(r.skill_id && r.skills?.name),
+    )
+    .slice(0, 5);
+  const seekerCountResults = await Promise.all(
+    teachingForSeekers.map((row) =>
+      supabase
+        .from("user_learning_skills")
+        .select("user_id", { count: "exact", head: true })
+        .eq("skill_id", row.skill_id)
+        .neq("user_id", userId),
+    ),
+  );
+  teachingForSeekers.forEach((row, i) => {
+    const res = seekerCountResults[i];
+    if (res.error) {
+      console.error("[gatherSignals] seeker count failed:", res.error.message);
+      return;
     }
-  }
+    if (res.count && res.count > 0) {
+      seekerCounts.push({ skill: row.skills.name, skill_id: row.skill_id, count: res.count });
+    }
+  });
 
   // Reciprocal matches: users who teach what the current user wants to learn
   // AND want to learn what the current user teaches. This is the heart of a
@@ -438,7 +492,9 @@ function buildPrompt(s: GroundingSignals): string {
 
   const seekersBlock = s.seekerCounts.length
     ? s.seekerCounts
-        .map((c, i) => `  - [seeker:${i + 1}] ${c.count} learner(s) want to learn ${clean(c.skill)}`)
+        .map(
+          (c, i) => `  - [seeker:${i + 1}] ${c.count} learner(s) want to learn ${clean(c.skill)}`,
+        )
         .join("\n")
     : "  EMPTY — no learner demand for the user's teaching skills. Do NOT produce any 'N learners want X' / 'a learner wants X' / seeker-count suggestion. There is no real demand to surface.";
 
@@ -732,10 +788,7 @@ function inferExploreMode(message: string): "learners" | undefined {
   return /\b(teach|offer)\b/i.test(message) ? "learners" : undefined;
 }
 
-function resolveAction(
-  llm: LlmSuggestion,
-  signals: GroundingSignals,
-): SuggestionAction | null {
+function resolveAction(llm: LlmSuggestion, signals: GroundingSignals): SuggestionAction | null {
   const ref = (llm.ref ?? "").trim().toLowerCase();
   const indexedMatch = ref.match(/^([a-z]+):(\d+)$/);
 
@@ -774,15 +827,11 @@ function resolveAction(
   switch (llm.type) {
     case "swap": {
       const m = signals.reciprocalMatches[0];
-      return m
-        ? { kind: "user", userId: m.user_id, skillName: m.they_teach }
-        : { kind: "explore" };
+      return m ? { kind: "user", userId: m.user_id, skillName: m.they_teach } : { kind: "explore" };
     }
     case "match": {
       const t = signals.availableTeachers[0];
-      return t
-        ? { kind: "user", userId: t.teacher_id, skillName: t.skill }
-        : { kind: "explore" };
+      return t ? { kind: "user", userId: t.teacher_id, skillName: t.skill } : { kind: "explore" };
     }
     case "trending": {
       const t = signals.trendingSkills[0];
@@ -793,9 +842,7 @@ function resolveAction(
       return p ? { kind: "explore", q: p.suggest } : { kind: "explore" };
     }
     case "profile":
-      return signals.teachingSkills.length === 0
-        ? { kind: "skills" }
-        : { kind: "profile" };
+      return signals.teachingSkills.length === 0 ? { kind: "skills" } : { kind: "profile" };
     case "momentum":
       return { kind: "explore" };
     case "general":
@@ -883,6 +930,53 @@ Deno.serve(async (req) => {
             retryAfter,
           },
           { "Retry-After": String(retryAfter) },
+        );
+      }
+    }
+
+    // ── In-flight dedupe ──────────────────────────────────────────────────
+    // Two concurrent requests (double tab, dashboard + manual refresh racing)
+    // would both reach this point and both pay for an LLM call. Claim the
+    // cache row atomically before generating:
+    //  - expired/forced regen: compare-and-swap generated_at — only the
+    //    request that flips it proceeds; the loser serves the stale copy.
+    //  - first-time: INSERT a placeholder row — the unique(user_id) constraint
+    //    makes exactly one request win; the loser gets a short retry-after.
+    const claimIso = new Date().toISOString();
+    if (cached) {
+      const { data: claimedRows, error: claimError } = await adminClient
+        .from("ai_suggestions")
+        .update({ generated_at: claimIso })
+        .eq("user_id", user.id)
+        .eq("generated_at", cached.generated_at)
+        .select("user_id");
+      if (claimError) {
+        console.error("[generate-suggestions] claim update failed", claimError);
+        return json(500, { error: "Internal error" });
+      }
+      if (!claimedRows || claimedRows.length === 0) {
+        // Another request is regenerating right now — serve the previous copy.
+        return json(200, {
+          suggestions: cached.suggestions,
+          cached: true,
+          generatedAt: cached.generated_at,
+        });
+      }
+    } else {
+      const { error: claimError } = await adminClient.from("ai_suggestions").insert({
+        user_id: user.id,
+        suggestions: [],
+        generated_at: claimIso,
+        // Placeholder is born expired so it never serves as a real cache hit.
+        expires_at: claimIso,
+      });
+      if (claimError) {
+        // Unique violation: a concurrent first-time request won the claim.
+        return corsJson(
+          req,
+          429,
+          { error: "Suggestions are being generated. Try again in a few seconds.", retryAfter: 5 },
+          { "Retry-After": "5" },
         );
       }
     }
