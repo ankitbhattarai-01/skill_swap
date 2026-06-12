@@ -435,15 +435,7 @@ function useAttachmentDownload(url: string | null, name: string) {
   return { downloading, handleDownload };
 }
 
-function ImageAttachment({
-  url,
-  name,
-  mine,
-}: {
-  url: string | null;
-  name: string;
-  mine: boolean;
-}) {
+function ImageAttachment({ url, name, mine }: { url: string | null; name: string; mine: boolean }) {
   const { downloading, handleDownload } = useAttachmentDownload(url, name);
   if (!url) {
     return (
@@ -527,7 +519,9 @@ function DocumentAttachment({
           onClick={(e) => e.stopPropagation()}
           className="min-w-0 flex-1 transition-opacity hover:opacity-80"
         >
-          <div className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}>
+          <div
+            className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}
+          >
             {name}
           </div>
           {sizeLabel && (
@@ -538,7 +532,9 @@ function DocumentAttachment({
         </a>
       ) : (
         <div className="min-w-0 flex-1">
-          <div className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}>
+          <div
+            className={cn("truncate text-sm font-medium", mine ? "text-white" : "text-foreground")}
+          >
             {name}
           </div>
           {sizeLabel && (

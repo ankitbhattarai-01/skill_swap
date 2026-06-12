@@ -3,12 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 export const ATTACHMENT_BUCKET = "message-attachments";
 
-const IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 const DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -85,7 +80,10 @@ export function validateAttachment(file: File, expected: AttachmentKind): Valida
 function safeFileName(name: string): string {
   // Storage object keys can technically hold many characters but signed URLs
   // are cleaner when we strip path separators and trim length.
-  const cleaned = name.replace(/[\\/]+/g, "_").replace(/\s+/g, " ").trim();
+  const cleaned = name
+    .replace(/[\\/]+/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
   return cleaned.slice(0, 120) || "file";
 }
 
@@ -104,7 +102,12 @@ export async function uploadMessageAttachment(args: {
   userId: string;
 }): Promise<AttachmentMeta> {
   const { file, kind, mime, sessionId, userId } = args;
-  const ext = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
+  const ext =
+    file.name
+      .split(".")
+      .pop()
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]/g, "") ?? "";
   const objectKey = `${sessionId}/${userId}/${randomId()}${ext ? `.${ext}` : ""}`;
   const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(objectKey, file, {
     cacheControl: "3600",
@@ -123,7 +126,33 @@ export async function uploadMessageAttachment(args: {
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const SIGNED_URL_CACHE_MAX_AGE_MS = 50 * 60 * 1000;
+// Bounded: a long chat session can sign thousands of distinct paths; without a
+// cap this map (and its URL strings) grows for the lifetime of the tab.
+const SIGNED_URL_CACHE_MAX_ENTRIES = 500;
 const signedUrlCache = new Map<string, { url: string; savedAt: number }>();
+
+function cacheSignedUrl(path: string, url: string) {
+  if (signedUrlCache.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
+    // Map iterates in insertion order — evict the oldest entries first.
+    const overflow = signedUrlCache.size - SIGNED_URL_CACHE_MAX_ENTRIES + 1;
+    let evicted = 0;
+    for (const key of signedUrlCache.keys()) {
+      signedUrlCache.delete(key);
+      if (++evicted >= overflow) break;
+    }
+  }
+  signedUrlCache.set(path, { url, savedAt: Date.now() });
+}
+
+// Best-effort removal of an uploaded object whose message insert failed —
+// without it the orphaned file would sit in storage forever.
+export async function removeMessageAttachment(path: string): Promise<void> {
+  try {
+    await supabase.storage.from(ATTACHMENT_BUCKET).remove([path]);
+  } catch {
+    // Best effort: an orphan is invisible to users and harmless to correctness.
+  }
+}
 
 export async function signAttachmentUrl(path: string): Promise<string | null> {
   const cached = signedUrlCache.get(path);
@@ -134,7 +163,7 @@ export async function signAttachmentUrl(path: string): Promise<string | null> {
     .from(ATTACHMENT_BUCKET)
     .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
   if (error || !data?.signedUrl) return null;
-  signedUrlCache.set(path, { url: data.signedUrl, savedAt: Date.now() });
+  cacheSignedUrl(path, data.signedUrl);
   return data.signedUrl;
 }
 
@@ -159,7 +188,7 @@ export async function signAttachmentUrls(paths: string[]): Promise<Map<string, s
     for (const item of data ?? []) {
       if (item.path && item.signedUrl) {
         map.set(item.path, item.signedUrl);
-        signedUrlCache.set(item.path, { url: item.signedUrl, savedAt: Date.now() });
+        cacheSignedUrl(item.path, item.signedUrl);
       }
     }
   } catch {

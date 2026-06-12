@@ -147,8 +147,7 @@ export function detectViolations(text: string): Violation[] {
 }
 
 const CONDUCT_MESSAGE: Record<string, string> = {
-  hate_speech:
-    "Hate speech and slurs are strictly prohibited. SkillSwap is a space for everyone.",
+  hate_speech: "Hate speech and slurs are strictly prohibited. SkillSwap is a space for everyone.",
   threat:
     "Threats and harmful language aren't allowed. If you or someone you know is struggling, please reach out to a trusted person or a local helpline.",
   sexual: "Sexual or explicit content isn't allowed in chat. Keep conversations appropriate.",

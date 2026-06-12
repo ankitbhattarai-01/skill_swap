@@ -33,6 +33,7 @@ import {
   DOCUMENT_ACCEPT,
   IMAGE_ACCEPT,
   formatBytes,
+  removeMessageAttachment,
   signAttachmentUrls,
   uploadMessageAttachment,
   validateAttachment,
@@ -179,6 +180,21 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "closed", label: "Closed" },
 ];
 
+// A swap thread holds sessions in both roles at once, so anything rendered
+// inside a role tab (the status filter, list sublines, chat header) derives
+// its active/pending/latest session from only the sessions matching that
+// tab's role — never from the thread-wide pick.
+function roleSessionView(t: ThreadItem, userId: string, tab: RoleTab) {
+  const sessions = t.sessions.filter((s) =>
+    tab === "teaching" ? s.teacher_id === userId : s.learner_id === userId,
+  );
+  const reversed = [...sessions].reverse();
+  const activeSession = reversed.find((s) => OPEN_STATUSES.has(s.status)) ?? null;
+  const chatSession = activeSession ?? reversed.find((s) => s.status === "pending") ?? null;
+  const latestSession = sessions.length ? sessions[sessions.length - 1] : null;
+  return { activeSession, chatSession, latestSession };
+}
+
 function formatPreviewTime(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
@@ -224,6 +240,9 @@ function MessagesIndexPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // Synchronous mirror of `sending` — the state setter is async, so two rapid
+  // submits could both pass an `if (sending)` check before the first re-render.
+  const sendingRef = useRef(false);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [reportingMessageId, setReportingMessageId] = useState<string | null>(null);
   const [pendingQuotaUsed, setPendingQuotaUsed] = useState<number | null>(null);
@@ -262,6 +281,16 @@ function MessagesIndexPage() {
       setAttachmentUrls((prev) => {
         const next = new Map(prev);
         for (const [k, v] of map) next.set(k, v);
+        // Bound the per-page cache: once it outgrows a few pages of history,
+        // drop URLs for paths no longer visible in the current thread (the
+        // module-level signed-URL cache still avoids a re-sign round trip if
+        // the user scrolls back).
+        if (next.size > 300) {
+          const keep = new Set(paths);
+          for (const key of next.keys()) {
+            if (!keep.has(key)) next.delete(key);
+          }
+        }
         return next;
       });
     });
@@ -290,6 +319,10 @@ function MessagesIndexPage() {
     setHiddenIds(loadHiddenMessageIds(user.id));
     setLastOpened(loadLastOpened(user.id));
     void refreshQuota();
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed; depending on `user` refires every
+    // such effect 3× during bootstrap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, refreshQuota]);
 
   const markOpened = useCallback(
@@ -519,8 +552,7 @@ function MessagesIndexPage() {
           const sessions = (sessionsByOther.get(otherUserId) ?? []).slice();
           const reversed = [...sessions].reverse();
           const activeSession = reversed.find((s) => OPEN_STATUSES.has(s.status)) ?? null;
-          const chatSession =
-            activeSession ?? reversed.find((s) => s.status === "pending") ?? null;
+          const chatSession = activeSession ?? reversed.find((s) => s.status === "pending") ?? null;
           const latestSession = sessions.length ? sessions[sessions.length - 1] : null;
           const conv = conversationByOther.get(otherUserId) ?? null;
           const profile = profileMap.get(otherUserId);
@@ -555,45 +587,69 @@ function MessagesIndexPage() {
         const conversationIds = baseThreads
           .map((t) => t.conversationId)
           .filter((id): id is string => Boolean(id));
-        const [avatarResult, messageResult] = await Promise.allSettled([
+
+        // One row per conversation (DISTINCT ON in the RPC) so a chatty thread
+        // can't crowd quieter threads out of the preview window. Falls back to
+        // the old windowed query if the RPC isn't deployed yet.
+        const previewsPromise = (async () => {
+          const lastMsgByConversation = new Map<string, MessagePreview>();
+          if (!conversationIds.length) return lastMsgByConversation;
+          const { data: latest, error: latestError } = await supabase
+            .rpc("conversation_latest_messages", { p_conversation_ids: conversationIds })
+            .abortSignal(controller.signal);
+          if (!latestError && latest) {
+            for (const m of latest) {
+              lastMsgByConversation.set(m.conversation_id, {
+                text: m.text,
+                created_at: m.created_at,
+                sender_id: m.sender_id,
+                attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
+                attachment_name: m.attachment_name ?? null,
+              });
+            }
+            return lastMsgByConversation;
+          }
+          const { data: windowed } = await supabase
+            .from("messages")
+            .select(
+              "id, conversation_id, sender_id, text, created_at, attachment_kind, attachment_name",
+            )
+            .in("conversation_id", conversationIds)
+            .order("created_at", { ascending: false })
+            // Sidebar preview cap only — the active thread has its own paginated query.
+            .limit(Math.min(conversationIds.length * 5, 200))
+            .abortSignal(controller.signal);
+          for (const m of windowed ?? []) {
+            if (!lastMsgByConversation.has(m.conversation_id)) {
+              lastMsgByConversation.set(m.conversation_id, {
+                text: m.text,
+                created_at: m.created_at,
+                sender_id: m.sender_id,
+                attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
+                attachment_name: m.attachment_name ?? null,
+              });
+            }
+          }
+          return lastMsgByConversation;
+        })();
+
+        const [avatarResult, previewResult] = await Promise.allSettled([
           signAvatarUrls(avatarPaths, {
             width: 128,
             height: 128,
             quality: 75,
             resize: "cover",
           }),
-          conversationIds.length
-            ? supabase
-                .from("messages")
-                .select(
-                  "id, conversation_id, sender_id, text, created_at, attachment_kind, attachment_name",
-                )
-                .in("conversation_id", conversationIds)
-                .order("created_at", { ascending: false })
-                // Sidebar preview cap only — the active thread has its own paginated query.
-                .limit(Math.min(conversationIds.length * 5, 200))
-                .abortSignal(controller.signal)
-            : Promise.resolve({ data: [] }),
+          previewsPromise,
         ]);
         if (!alive) return;
 
         const signedAvatarMap =
           avatarResult.status === "fulfilled" ? avatarResult.value : new Map<string, string>();
-
-        // Map: conversationId → latest message (each thread's last message).
-        const lastMsgByConversation = new Map<string, MessagePreview>();
-        const msgs = messageResult.status === "fulfilled" ? (messageResult.value.data ?? []) : [];
-        for (const m of msgs) {
-          if (!lastMsgByConversation.has(m.conversation_id)) {
-            lastMsgByConversation.set(m.conversation_id, {
-              text: m.text,
-              created_at: m.created_at,
-              sender_id: m.sender_id,
-              attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
-              attachment_name: m.attachment_name ?? null,
-            });
-          }
-        }
+        const lastMsgByConversation =
+          previewResult.status === "fulfilled"
+            ? previewResult.value
+            : new Map<string, MessagePreview>();
 
         const hydrated = baseThreads.map((t) => {
           const profile = profileMap.get(t.otherUserId);
@@ -625,6 +681,8 @@ function MessagesIndexPage() {
       alive = false;
       controller.abort();
     };
+    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Backwards-compat: if a deep link arrives as ?s=<sessionId>, resolve to ?u=<otherUserId>.
@@ -639,6 +697,8 @@ function MessagesIndexPage() {
         replace: true,
       });
     }
+    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, search.s, search.u, threads, navigate]);
 
   const selectedThread = useMemo(
@@ -651,13 +711,21 @@ function MessagesIndexPage() {
     selectedConversationIdRef.current = selectedThread?.conversationId ?? null;
   }, [selectedThread]);
 
-  // Auto-switch tab to where the selected thread lives. A chat-only
-  // conversation (no session) has no fixed role, so leave the tab as-is.
+  // Auto-switch tab to where the selected thread lives. A swap thread lives
+  // under both tabs, so only switch when the current tab doesn't show it.
+  // A chat-only conversation (no session) has no fixed role — leave the tab
+  // as-is.
   useEffect(() => {
-    if (!selectedThread || !user || !selectedThread.latestSession) return;
-    const tab: RoleTab =
-      selectedThread.latestSession.teacher_id === user.id ? "teaching" : "learning";
-    setRoleTab((prev) => (prev === tab ? prev : tab));
+    if (!selectedThread || !user || !selectedThread.sessions.length) return;
+    const teaches = selectedThread.sessions.some((s) => s.teacher_id === user.id);
+    const learns = selectedThread.sessions.some((s) => s.learner_id === user.id);
+    setRoleTab((prev) =>
+      (prev === "teaching" && teaches) || (prev === "learning" && learns)
+        ? prev
+        : teaches
+          ? "teaching"
+          : "learning",
+    );
   }, [selectedThread, user]);
 
   // Pagination state for the chat scroller. hasMoreMessages tracks whether
@@ -860,7 +928,8 @@ function MessagesIndexPage() {
         (payload) => {
           const old = payload.old as Partial<MessageRow>;
           if (!old.id) return;
-          if (old.conversation_id && !allConversationIdsRef.current.has(old.conversation_id)) return;
+          if (old.conversation_id && !allConversationIdsRef.current.has(old.conversation_id))
+            return;
           if (old.conversation_id && selectedConversationIdRef.current === old.conversation_id) {
             setChatMessages((prev) => prev.filter((m) => m.id !== old.id));
           }
@@ -871,6 +940,8 @@ function MessagesIndexPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
+    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, conversationIdsKey, markOpened]);
 
   useEffect(() => {
@@ -898,15 +969,23 @@ function MessagesIndexPage() {
     [lastOpened, user],
   );
 
-  // Role is derived from the latest session with that person. A chat-only
-  // conversation (no session yet) has no fixed role, so it shows under both
-  // tabs and stays reachable however the user is browsing.
+  // Role comes from any session with that person, not just the latest: a
+  // direct swap holds a teaching and a learning session at once, so its
+  // thread must show under both tabs. A chat-only conversation (no session
+  // yet) has no fixed role, so it also shows under both and stays reachable
+  // however the user is browsing.
   const teachingThreads = useMemo(
-    () => threads.filter((t) => !t.latestSession || t.latestSession.teacher_id === user?.id),
+    () =>
+      threads.filter(
+        (t) => !t.sessions.length || t.sessions.some((s) => s.teacher_id === user?.id),
+      ),
     [threads, user],
   );
   const learningThreads = useMemo(
-    () => threads.filter((t) => !t.latestSession || t.latestSession.learner_id === user?.id),
+    () =>
+      threads.filter(
+        (t) => !t.sessions.length || t.sessions.some((s) => s.learner_id === user?.id),
+      ),
     [threads, user],
   );
 
@@ -921,8 +1000,12 @@ function MessagesIndexPage() {
 
   const filtered = useMemo(() => {
     let list = roleTab === "teaching" ? teachingThreads : learningThreads;
-    if (filter === "active") list = list.filter((t) => t.chatSession !== null);
-    else if (filter === "closed") list = list.filter((t) => t.chatSession === null);
+    if (user) {
+      if (filter === "active")
+        list = list.filter((t) => roleSessionView(t, user.id, roleTab).chatSession !== null);
+      else if (filter === "closed")
+        list = list.filter((t) => roleSessionView(t, user.id, roleTab).chatSession === null);
+    }
     if (!query.trim()) return list;
     const q = query.toLowerCase();
     return list.filter(
@@ -931,7 +1014,7 @@ function MessagesIndexPage() {
         t.sessions.some((s) => s.skill_name?.toLowerCase().includes(q)) ||
         t.lastMessage?.text.toLowerCase().includes(q),
     );
-  }, [teachingThreads, learningThreads, roleTab, query, filter]);
+  }, [teachingThreads, learningThreads, roleTab, query, filter, user]);
 
   const visibleChatMessages = useMemo(
     () => chatMessages.filter((m) => !hiddenIds.has(m.id)),
@@ -994,6 +1077,10 @@ function MessagesIndexPage() {
 
   const sendMessage = async () => {
     if (!user || !selectedThread) return;
+    // Hard duplicate-send guard. `sending` state lags a render behind, so a
+    // double Enter / double click could start two sends before the first
+    // setSending(true) painted; the ref flips synchronously before any await.
+    if (sendingRef.current) return;
     const trimmed = text.trim();
     if (!trimmed && !staged) return;
     if (trimmed) {
@@ -1012,55 +1099,69 @@ function MessagesIndexPage() {
       return;
     }
 
-    // Resolve the conversation, lazily creating it for a chat-only thread
-    // (e.g. a session was requested but no message has been sent yet).
-    let conversationId = selectedThread.conversationId;
-    if (!conversationId) {
-      const created = await getOrCreateConversation(selectedThread.otherUserId);
-      if (created.error || !created.conversationId) {
-        toastError(created.error ?? new Error("Could not open this conversation."));
-        return;
-      }
-      conversationId = created.conversationId;
-      const newId = conversationId;
-      const otherId = selectedThread.otherUserId;
-      setThreads((prev) =>
-        prev.map((t) => (t.otherUserId === otherId ? { ...t, conversationId: newId } : t)),
-      );
-      selectedConversationIdRef.current = newId;
-    }
-    if (!conversationId) return; // unreachable — narrows the type to string
-
-    const stagedSnapshot = staged;
-    const tempId = `temp-${
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    }`;
-    const optimisticCreatedAt = new Date().toISOString();
-    const optimisticRow: MessageRow = {
-      id: tempId,
-      conversation_id: conversationId,
-      session_id: sessionForContext?.id ?? null,
-      sender_id: user.id,
-      text: trimmed,
-      created_at: optimisticCreatedAt,
-      edited_at: null,
-      attachment_path: null,
-      attachment_kind: stagedSnapshot?.kind ?? null,
-      attachment_name: stagedSnapshot?.file.name ?? null,
-      attachment_size: stagedSnapshot?.file.size ?? null,
-      attachment_mime: stagedSnapshot?.mime ?? null,
-    };
-    setChatMessages((prev) => [...prev, optimisticRow]);
-    setText("");
-    if (composerRef.current) {
-      composerRef.current.style.height = "auto";
-    }
-    if (stagedSnapshot) clearStaged();
+    sendingRef.current = true;
     setSending(true);
+    // The user can switch threads while the send is in flight; in that case
+    // the chat-pane state belongs to the new thread and must not be touched.
+    const threadUserId = selectedThread.otherUserId;
+    const onThread = () => selectedRef.current === threadUserId;
 
     try {
+      // Resolve the conversation, lazily creating it for a chat-only thread
+      // (e.g. a session was requested but no message has been sent yet).
+      let conversationId = selectedThread.conversationId;
+      if (!conversationId) {
+        const created = await getOrCreateConversation(selectedThread.otherUserId);
+        if (created.error || !created.conversationId) {
+          toastError(created.error ?? new Error("Could not open this conversation."));
+          return;
+        }
+        conversationId = created.conversationId;
+        const newId = conversationId;
+        setThreads((prev) =>
+          prev.map((t) => (t.otherUserId === threadUserId ? { ...t, conversationId: newId } : t)),
+        );
+        if (onThread()) selectedConversationIdRef.current = newId;
+      }
+      if (!conversationId) return; // unreachable — narrows the type to string
+
+      const stagedSnapshot = staged;
+      const tempId = `temp-${
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      }`;
+      const optimisticCreatedAt = new Date().toISOString();
+      const optimisticRow: MessageRow = {
+        id: tempId,
+        conversation_id: conversationId,
+        session_id: sessionForContext?.id ?? null,
+        sender_id: user.id,
+        text: trimmed,
+        created_at: optimisticCreatedAt,
+        edited_at: null,
+        attachment_path: null,
+        attachment_kind: stagedSnapshot?.kind ?? null,
+        attachment_name: stagedSnapshot?.file.name ?? null,
+        attachment_size: stagedSnapshot?.file.size ?? null,
+        attachment_mime: stagedSnapshot?.mime ?? null,
+      };
+      setChatMessages((prev) => [...prev, optimisticRow]);
+      setText("");
+      if (composerRef.current) {
+        composerRef.current.style.height = "auto";
+      }
+      if (stagedSnapshot) clearStaged();
+
+      // Restores the composer to its pre-send state so the user can retry,
+      // but only when they're still looking at this thread.
+      const restoreComposer = () => {
+        setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
+        if (!onThread()) return;
+        setText(trimmed);
+        if (stagedSnapshot) setStaged(stagedSnapshot);
+      };
+
       let attachmentMeta: Awaited<ReturnType<typeof uploadMessageAttachment>> | null = null;
       if (stagedSnapshot && sessionForContext) {
         try {
@@ -1072,9 +1173,7 @@ function MessagesIndexPage() {
             userId: user.id,
           });
         } catch (uploadError) {
-          setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
-          setText(trimmed);
-          setStaged(stagedSnapshot);
+          restoreComposer();
           toastError(uploadError);
           return;
         }
@@ -1099,9 +1198,10 @@ function MessagesIndexPage() {
         void refreshQuota();
       }
       if (error) {
-        setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
-        setText(trimmed);
-        if (stagedSnapshot) setStaged(stagedSnapshot);
+        // The object was uploaded but its message row never landed — remove it
+        // so it doesn't become an unreachable orphan in storage.
+        if (attachmentMeta?.path) void removeMessageAttachment(attachmentMeta.path);
+        restoreComposer();
         toastError(error);
         return;
       }
@@ -1115,6 +1215,7 @@ function MessagesIndexPage() {
         });
       }
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -1135,8 +1236,14 @@ function MessagesIndexPage() {
   // Pre-acceptance = the thread has no accepted/active session (a cold direct
   // message OR a pending request). Caps apply and attachments stay locked.
   const preAcceptance = Boolean(selectedThread) && !selectedThread?.activeSession;
-  const headerSession = chatSession ?? selectedThread?.latestSession ?? null;
-  const headerTeaching = headerSession?.teacher_id === user?.id;
+  // The header describes the leg of the relationship matching the tab in
+  // view — for a swap that's one of two live sessions. Thread-wide fallbacks
+  // cover the tick before the tab auto-switch effect runs.
+  const headerView = selectedThread ? roleSessionView(selectedThread, user.id, roleTab) : null;
+  const headerChatSession = headerView?.chatSession ?? chatSession;
+  const headerSession =
+    headerChatSession ?? headerView?.latestSession ?? selectedThread?.latestSession ?? null;
+  const headerTeaching = headerSession?.teacher_id === user.id;
   const pendingQuotaRemaining =
     pendingQuotaUsed === null ? null : Math.max(0, PENDING_DAILY_LIMIT - pendingQuotaUsed);
   const pendingQuotaExhausted = pendingQuotaRemaining === 0;
@@ -1285,12 +1392,13 @@ function MessagesIndexPage() {
                 filtered.map((t, idx) => {
                   const isSelected = t.otherUserId === selectedUserId;
                   const unread = isUnread(t);
-                  const subline = t.activeSession
-                    ? `Active: ${t.activeSession.skill_name ?? "skill"} · ${t.activeSession.duration_minutes} min`
-                    : t.chatSession?.status === "pending"
-                      ? `Pending: ${t.chatSession.skill_name ?? "skill"} · pre-session chat`
-                      : t.latestSession
-                        ? `Last: ${t.latestSession.skill_name ?? "skill"} · ${statusLabel(t.latestSession.status)}`
+                  const roleView = roleSessionView(t, user.id, roleTab);
+                  const subline = roleView.activeSession
+                    ? `Active: ${roleView.activeSession.skill_name ?? "skill"} · ${roleView.activeSession.duration_minutes} min`
+                    : roleView.chatSession?.status === "pending"
+                      ? `Pending: ${roleView.chatSession.skill_name ?? "skill"} · pre-session chat`
+                      : roleView.latestSession
+                        ? `Last: ${roleView.latestSession.skill_name ?? "skill"} · ${statusLabel(roleView.latestSession.status)}`
                         : "Direct message";
                   const previewMine = t.lastMessage?.sender_id === user?.id;
                   const messagePreview = t.lastMessage
@@ -1407,8 +1515,8 @@ function MessagesIndexPage() {
                       )}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {chatSession
-                        ? `${chatSession.skill_name ?? "Skill"} · ${chatSession.duration_minutes} min · ${statusLabel(chatSession.status)}`
+                      {headerChatSession
+                        ? `${headerChatSession.skill_name ?? "Skill"} · ${headerChatSession.duration_minutes} min · ${statusLabel(headerChatSession.status)}`
                         : selectedThread.sessions.length
                           ? `${selectedThread.sessions.length} session${selectedThread.sessions.length === 1 ? "" : "s"} · no active session`
                           : "Direct message"}
@@ -1448,7 +1556,9 @@ function MessagesIndexPage() {
                         const prev = visibleChatMessages[idx - 1];
                         const isFirstOfRun = !prev || prev.sender_id !== msg.sender_id;
                         const showDivider = !prev || prev.session_id !== msg.session_id;
-                        const session = msg.session_id ? sessionById.get(msg.session_id) : undefined;
+                        const session = msg.session_id
+                          ? sessionById.get(msg.session_id)
+                          : undefined;
                         const sessionIdx = msg.session_id
                           ? sessionIndexMap.get(msg.session_id)
                           : undefined;
@@ -1489,7 +1599,7 @@ function MessagesIndexPage() {
                   <div ref={bottomRef} />
                 </div>
 
-                {(
+                {
                   <div className="flex shrink-0 flex-col">
                     {preAcceptance && (
                       <div className="border-t border-amber-400/15 bg-amber-400/5 px-4 py-2 text-[11px] text-amber-200/90">
@@ -1563,85 +1673,85 @@ function MessagesIndexPage() {
                         }}
                       />
                       <div className="flex items-end gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
-                        onClick={() => imageInputRef.current?.click()}
-                        disabled={sending || Boolean(staged) || preAcceptance}
-                        aria-label="Attach image"
-                        title={
-                          preAcceptance
-                            ? "Image sharing unlocks after the teacher accepts the session"
-                            : "Attach image (max 5 MB)"
-                        }
-                      >
-                        <ImagePlus className="h-5 w-5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
-                        onClick={() => documentInputRef.current?.click()}
-                        disabled={sending || Boolean(staged) || preAcceptance}
-                        aria-label="Attach document"
-                        title={
-                          preAcceptance
-                            ? "File sharing unlocks after the teacher accepts the session"
-                            : "Attach document (max 5 MB)"
-                        }
-                      >
-                        <Paperclip className="h-5 w-5" />
-                      </Button>
-                      <textarea
-                        ref={composerRef}
-                        value={text}
-                        onChange={(e) => {
-                          setText(e.target.value);
-                          const el = e.currentTarget;
-                          el.style.height = "auto";
-                          el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                            e.preventDefault();
-                            void sendMessage();
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
+                          onClick={() => imageInputRef.current?.click()}
+                          disabled={sending || Boolean(staged) || preAcceptance}
+                          aria-label="Attach image"
+                          title={
+                            preAcceptance
+                              ? "Image sharing unlocks after the teacher accepts the session"
+                              : "Attach image (max 5 MB)"
                           }
-                        }}
-                        placeholder={
-                          preAcceptance && pendingQuotaExhausted
-                            ? "Daily limit reached. Resets at midnight UTC."
-                            : chatSession
-                              ? `Message about ${chatSession.skill_name ?? "the session"}...`
-                              : `Message ${selectedThread.otherName}...`
-                        }
-                        rows={1}
-                        disabled={preAcceptance && pendingQuotaExhausted}
-                        className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30 disabled:opacity-60"
-                      />
-                      <Button
-                        variant="hero"
-                        type="submit"
-                        size="icon"
-                        className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
-                        disabled={
-                          sending ||
-                          (!text.trim() && !staged) ||
-                          (preAcceptance && pendingQuotaExhausted)
-                        }
-                      >
-                        {sending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                        )}
-                      </Button>
+                        >
+                          <ImagePlus className="h-5 w-5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 cursor-pointer rounded-full text-muted-foreground transition-colors hover:text-brand-purple disabled:opacity-50"
+                          onClick={() => documentInputRef.current?.click()}
+                          disabled={sending || Boolean(staged) || preAcceptance}
+                          aria-label="Attach document"
+                          title={
+                            preAcceptance
+                              ? "File sharing unlocks after the teacher accepts the session"
+                              : "Attach document (max 5 MB)"
+                          }
+                        >
+                          <Paperclip className="h-5 w-5" />
+                        </Button>
+                        <textarea
+                          ref={composerRef}
+                          value={text}
+                          onChange={(e) => {
+                            setText(e.target.value);
+                            const el = e.currentTarget;
+                            el.style.height = "auto";
+                            el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                              e.preventDefault();
+                              void sendMessage();
+                            }
+                          }}
+                          placeholder={
+                            preAcceptance && pendingQuotaExhausted
+                              ? "Daily limit reached. Resets at midnight UTC."
+                              : chatSession
+                                ? `Message about ${chatSession.skill_name ?? "the session"}...`
+                                : `Message ${selectedThread.otherName}...`
+                          }
+                          rows={1}
+                          disabled={preAcceptance && pendingQuotaExhausted}
+                          className="glass min-h-[2.75rem] max-h-40 min-w-0 flex-1 resize-none rounded-2xl border border-white/10 px-4 py-2.5 text-sm leading-relaxed outline-none transition-all focus-visible:border-brand-purple/40 focus-visible:ring-2 focus-visible:ring-brand-purple/30 disabled:opacity-60"
+                        />
+                        <Button
+                          variant="hero"
+                          type="submit"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 rounded-full transition-all duration-200 hover:scale-105 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
+                          disabled={
+                            sending ||
+                            (!text.trim() && !staged) ||
+                            (preAcceptance && pendingQuotaExhausted)
+                          }
+                        >
+                          {sending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                          )}
+                        </Button>
                       </div>
                     </form>
                   </div>
-                )}
+                }
               </>
             ) : (
               <div className="relative flex flex-1 items-center justify-center overflow-hidden p-10 text-center">
@@ -1661,8 +1771,8 @@ function MessagesIndexPage() {
                     className="animate-fade-up mx-auto mt-2 max-w-sm text-sm text-muted-foreground"
                     style={{ animationDelay: "160ms" }}
                   >
-                    Pick a chat from the inbox to keep your skill swaps moving, or message
-                    someone from Explore or their profile to start a new one.
+                    Pick a chat from the inbox to keep your skill swaps moving, or message someone
+                    from Explore or their profile to start a new one.
                   </p>
                   <div
                     className="animate-fade-up mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground"
