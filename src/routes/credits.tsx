@@ -82,6 +82,7 @@ function CreditsPage() {
       navigate({ to: "/login", search: { redirect: "/credits" } });
     }
     // user?.id is sufficient — the redirect only cares whether a user exists.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, navigate, user?.id]);
 
   const loadCredits = useCallback(async () => {
@@ -203,6 +204,7 @@ function CreditsPage() {
     // user.id is the only field read above — depending on the whole user object
     // re-created loadCredits on every auth event, which made the
     // useEffect(loadCredits) below refire and double-fetch the page on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   useEffect(() => {

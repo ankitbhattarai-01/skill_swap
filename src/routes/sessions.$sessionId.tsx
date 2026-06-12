@@ -58,6 +58,8 @@ type SessionRow = {
   scheduled_at: string | null;
   created_at: string;
   batch_id: string | null;
+  is_swap?: boolean;
+  swap_id?: string | null;
   skills: { id: string; name: string; category: string | null } | null;
   learnerName: string;
   teacherName: string;
@@ -172,11 +174,22 @@ function SessionPage() {
 
   useEffect(() => {
     void loadSession();
+    // user?.id (not user) — auth token refreshes rotate the user object
+    // reference without changing the user; depending on the object re-ran
+    // this whole load (and its profile fan-out) on every refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, user]);
+  }, [sessionId, user?.id]);
+
+  // Has the scheduled start already passed? After that point cancel_session()
+  // no longer blanket-refunds — it routes through attendance-based settlement
+  // (see migration 20260523010000_fix_cancel_refund_exploit.sql), so the UI
+  // copy must not promise a refund.
+  const sessionStartPassed = Boolean(
+    session?.scheduled_at && Date.parse(session.scheduled_at) <= Date.now(),
+  );
 
   const acceptSession = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("accept");
     try {
       // meet_link is derived server-side by accept_session() — the second arg
@@ -199,69 +212,92 @@ function SessionPage() {
   };
 
   const rejectSession = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("reject");
-    const { error } = await supabase.rpc("reject_session", {
-      p_session_id: session.id,
-    });
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    markSelfAction(session.id, ["session_rejected"]);
-    toast.success("Session rejected");
-    await loadSession();
+    try {
+      const { error } = await supabase.rpc("reject_session", {
+        p_session_id: session.id,
+      });
+      if (error) return toast.error(error.message);
+      markSelfAction(session.id, ["session_rejected"]);
+      toast.success("Session rejected");
+      await loadSession();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not reject session");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const completeSession = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("complete");
-    const { error } = await supabase.rpc("complete_session", { p_session_id: session.id });
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    markSelfAction(session.id, ["session_completed"]);
-    void invalidateCreditBalance();
-    // During pending_review this routes through the attendance rule, so the
-    // outcome might be a refund (no-show) rather than a transfer. Use a
-    // neutral success message and let the history page show the detail.
-    toast.success(
-      session.status === "pending_review"
-        ? "Session settled. See history for the outcome."
-        : "Session completed and credits transferred",
-    );
-    navigate({ to: "/history" });
+    try {
+      const { error } = await supabase.rpc("complete_session", { p_session_id: session.id });
+      if (error) return toast.error(error.message);
+      markSelfAction(session.id, ["session_completed"]);
+      void invalidateCreditBalance();
+      // During pending_review this routes through the attendance rule, so the
+      // outcome might be a refund (no-show) rather than a transfer. Use a
+      // neutral success message and let the history page show the detail.
+      toast.success(
+        session.status === "pending_review"
+          ? "Session settled. See history for the outcome."
+          : "Session completed and credits transferred",
+      );
+      navigate({ to: "/history" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not complete session");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const cancelSession = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("cancel");
-    const { error } = await supabase.rpc("cancel_session", { p_session_id: session.id });
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    markSelfAction(session.id, ["session_cancelled"]);
-    void invalidateCreditBalance();
-    playCancelChime();
-    toast(
-      session.status === "accepted" || session.status === "active"
-        ? "Session cancelled. Credits refunded."
-        : "Request cancelled.",
-    );
-    await loadSession();
+    try {
+      const wasOpenEscrow = session.status === "accepted" || session.status === "active";
+      const { error } = await supabase.rpc("cancel_session", { p_session_id: session.id });
+      if (error) return toast.error(error.message);
+      markSelfAction(session.id, ["session_cancelled"]);
+      void invalidateCreditBalance();
+      playCancelChime();
+      toast(
+        wasOpenEscrow
+          ? sessionStartPassed
+            ? "Session ended. Credits were settled based on attendance — see history for the outcome."
+            : "Session cancelled. Credits refunded."
+          : "Request cancelled.",
+      );
+      await loadSession();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not cancel session");
+    } finally {
+      setBusy(null);
+    }
   };
 
   // "Something's wrong" during the review window. Freezes the session in
   // 'disputed' so the 24h auto-settle doesn't fire; the user should then
   // file a regular Report so admin has context.
   const disputeSession = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("dispute");
-    const { error } = await supabase.rpc("dispute_session", { p_session_id: session.id });
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    toast.success("Session flagged for admin review. Please file a report with details.");
-    await loadSession();
+    try {
+      const { error } = await supabase.rpc("dispute_session", { p_session_id: session.id });
+      if (error) return toast.error(error.message);
+      toast.success("Session flagged for admin review. Please file a report with details.");
+      await loadSession();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not flag session");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const saveSchedule = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     if (!scheduleDraft) {
       toast.error("Pick a date and time first");
       return;
@@ -279,28 +315,34 @@ function SessionPage() {
     }
     const iso = scheduledAt.toISOString();
     setBusy("schedule");
-    const { error } = await supabase
-      .from("sessions")
-      .update({ scheduled_at: iso })
-      .eq("id", session.id);
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    toast.success("Session scheduled");
-    setScheduleDraft("");
-    await loadSession();
+    try {
+      const { error } = await supabase
+        .from("sessions")
+        .update({ scheduled_at: iso })
+        .eq("id", session.id);
+      if (error) return toast.error(error.message);
+      toast.success("Session scheduled");
+      setScheduleDraft("");
+      await loadSession();
+    } finally {
+      setBusy(null);
+    }
   };
 
   const clearSchedule = async () => {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy("schedule");
-    const { error } = await supabase
-      .from("sessions")
-      .update({ scheduled_at: null })
-      .eq("id", session.id);
-    setBusy(null);
-    if (error) return toast.error(error.message);
-    toast.success("Schedule cleared");
-    await loadSession();
+    try {
+      const { error } = await supabase
+        .from("sessions")
+        .update({ scheduled_at: null })
+        .eq("id", session.id);
+      if (error) return toast.error(error.message);
+      toast.success("Schedule cleared");
+      await loadSession();
+    } finally {
+      setBusy(null);
+    }
   };
 
   if (authLoading || loading || !session) {
@@ -308,11 +350,15 @@ function SessionPage() {
   }
 
   const isTeacher = session.teacher_id === user?.id;
+  const isSwap = Boolean(session.is_swap);
   const sessionInitiatorId = session.initiator_id ?? session.learner_id;
+  // Swaps use a paired accept/decline flow (both legs at once) handled from the
+  // dashboard's Skill swaps card, never the per-session accept_session RPC.
   const canRespondToPending =
-    session.status === "pending" && Boolean(user?.id && user.id !== sessionInitiatorId);
+    !isSwap && session.status === "pending" && Boolean(user?.id && user.id !== sessionInitiatorId);
   const canCancelPending =
-    session.status === "pending" && Boolean(user?.id && user.id === sessionInitiatorId);
+    !isSwap && session.status === "pending" && Boolean(user?.id && user.id === sessionInitiatorId);
+  const isPendingSwap = isSwap && session.status === "pending";
   const isAcceptedSession = session.status === "accepted" || session.status === "active";
   const isInReview = session.status === "pending_review";
   const isDisputed = session.status === "disputed";
@@ -328,7 +374,9 @@ function SessionPage() {
       ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
       : null;
   const earlyReleaseUnlocked = earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
-  const canEarlyRelease = isAcceptedSession && !isTeacher && earlyReleaseUnlocked;
+  // Swaps hold no escrow, so there are no credits to release early — the cron
+  // sweeper auto-completes swap legs after their scheduled end.
+  const canEarlyRelease = !isSwap && isAcceptedSession && !isTeacher && earlyReleaseUnlocked;
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
   const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
   const statusTone = sessionStatusTone(session.status);
@@ -547,7 +595,7 @@ function SessionPage() {
               </p>
               {/* Direct schedule edit only on pending sessions — once accepted,
                   changes must go through the two-sided propose_reschedule flow. */}
-              {isTeacher && session.status === "pending" && (
+              {isTeacher && !isSwap && session.status === "pending" && (
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                   <Input
                     type="datetime-local"
@@ -647,6 +695,18 @@ function SessionPage() {
               </div>
               <h2 className="text-lg font-semibold leading-tight">Actions</h2>
             </div>
+            {isPendingSwap && (
+              <div className="rounded-xl border border-brand-purple/25 bg-brand-purple/[0.06] px-4 py-3 text-sm">
+                <p className="font-medium">This is a skill swap.</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Accept or decline both sides at once from the Skill swaps card on your{" "}
+                  <Link to="/dashboard" className="text-brand-purple hover:underline">
+                    dashboard
+                  </Link>
+                  .
+                </p>
+              </div>
+            )}
             {canRespondToPending && (
               <>
                 <Button
@@ -747,7 +807,7 @@ function SessionPage() {
                 This session is frozen pending admin review. Credits stay in escrow until resolved.
               </div>
             )}
-            {isAcceptedSession && !isTeacher && !earlyReleaseUnlocked && earlyReleaseUnlockAt && (
+            {!isSwap && isAcceptedSession && !isTeacher && !earlyReleaseUnlocked && earlyReleaseUnlockAt && (
               <p className="text-xs text-muted-foreground">
                 Early release becomes available at{" "}
                 {new Date(earlyReleaseUnlockAt).toLocaleString(undefined, {
@@ -774,9 +834,23 @@ function SessionPage() {
             )}
             {isAcceptedSession && (
               <ConfirmAction
-                title="Cancel this session?"
-                description={`Cancelling will refund the ${session.credits} credits held in escrow back to the learner. You can re-request later if plans change.`}
-                confirmLabel="Cancel session"
+                title={
+                  isSwap
+                    ? "Cancel this skill swap?"
+                    : sessionStartPassed
+                      ? "End this session?"
+                      : "Cancel this session?"
+                }
+                description={
+                  isSwap
+                    ? "This session is one half of a skill swap, so cancelling calls off both linked sessions. No credits are involved."
+                    : sessionStartPassed
+                      ? `The session has already started, so the ${session.credits} escrowed credits are settled based on who attended the call — they may transfer to the teacher, be refunded, or split. There's no blanket refund after the start time.`
+                      : `Cancelling will refund the ${session.credits} credits held in escrow back to the learner. You can re-request later if plans change.`
+                }
+                confirmLabel={
+                  isSwap ? "Cancel swap" : sessionStartPassed ? "End and settle" : "Cancel session"
+                }
                 cancelLabel="Keep it"
                 destructive
                 onConfirm={cancelSession}
@@ -787,7 +861,7 @@ function SessionPage() {
                   ) : (
                     <X className="h-4 w-4" />
                   )}
-                  Cancel Session
+                  {isSwap ? "Cancel Swap" : sessionStartPassed ? "End Session" : "Cancel Session"}
                 </Button>
               </ConfirmAction>
             )}

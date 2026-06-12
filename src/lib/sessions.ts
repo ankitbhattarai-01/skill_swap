@@ -184,17 +184,27 @@ export function downloadSessionIcs(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-async function findOpenSession(learnerId: string, teacherId: string, skillId: string) {
-  return supabase
+// Mirrors the sessions_one_open_request_per_skill_time unique index
+// (20260610000000): a pair+skill may hold several open sessions as long as each
+// is at a distinct scheduled_at. The lookup therefore keys on the requested
+// time too — a null time only matches the (single possible) unscheduled open
+// session, preserving the legacy "one open unscheduled request" behavior.
+async function findOpenSession(
+  learnerId: string,
+  teacherId: string,
+  skillId: string,
+  scheduledAt: string | null,
+) {
+  let query = supabase
     .from("sessions")
     .select("id")
     .eq("learner_id", learnerId)
     .eq("teacher_id", teacherId)
     .eq("skill_id", skillId)
-    .in("status", [...OPEN_SESSION_STATUSES])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .in("status", [...OPEN_SESSION_STATUSES]);
+  query =
+    scheduledAt === null ? query.is("scheduled_at", null) : query.eq("scheduled_at", scheduledAt);
+  return query.order("created_at", { ascending: false }).limit(1).maybeSingle();
 }
 
 export async function findAcceptedSession(learnerId: string, teacherId: string, skillId: string) {
@@ -239,6 +249,7 @@ export async function getOrCreateSession({
     learnerId,
     teacherId,
     skillId,
+    scheduledAt ?? null,
   );
 
   if (existingError) return { sessionId: null, error: existingError, created: false };
@@ -285,7 +296,12 @@ export async function getOrCreateSession({
   // Concurrent click lost the race against the unique partial index — recover
   // by returning the row the winning insert created.
   if (error?.code === "23505") {
-    const { data: raced } = await findOpenSession(learnerId, teacherId, skillId);
+    const { data: raced } = await findOpenSession(
+      learnerId,
+      teacherId,
+      skillId,
+      scheduledAt ?? null,
+    );
     if (raced?.id) return { sessionId: raced.id, error: null, created: false };
   }
 

@@ -99,11 +99,16 @@ export function IncomingRequestBanner() {
     const controller = new AbortController();
 
     const fetchPending = async () => {
+      // Swap legs are excluded: a swap is accepted/declined as a PAIR from the
+      // dashboard's Skill swaps card (respond_to_swap). Surfacing one leg here
+      // let teachers accept_session() half a swap, leaving the other leg stuck
+      // in pending on the proposer's side.
       const { data, error } = await supabase
         .from("sessions")
         .select(SELECT)
         .eq("teacher_id", userId)
         .eq("status", "pending")
+        .eq("is_swap", false)
         .order("created_at", { ascending: false })
         .limit(50)
         .abortSignal(controller.signal);
@@ -137,7 +142,8 @@ export function IncomingRequestBanner() {
           filter: `teacher_id=eq.${userId}`,
         },
         (payload) => {
-          if ((payload.new as { status?: string }).status === "pending") {
+          const next = payload.new as { status?: string; is_swap?: boolean };
+          if (next.status === "pending" && !next.is_swap) {
             void fetchPending();
           }
         },

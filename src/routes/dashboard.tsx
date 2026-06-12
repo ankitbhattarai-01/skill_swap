@@ -58,6 +58,7 @@ import type { Enums } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
 import { useInvalidateMyCreditBalance, useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import { queryUserSessions } from "@/lib/session-queries";
+import { SwapInbox } from "@/components/SwapInbox";
 import { completeOnboarding } from "@/lib/onboarding";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 
@@ -66,6 +67,10 @@ import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 // since the dialog only mounts when a user actually opens it.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
+// Lazy for the same reason — it pulls in the Calendar via TeacherSlotPicker.
+const SwapProposalDialog = lazy(() =>
+  import("@/components/SwapProposalDialog").then((m) => ({ default: m.SwapProposalDialog })),
 );
 
 export const Route = createFileRoute("/dashboard")({
@@ -176,6 +181,8 @@ type SessionRow = {
   scheduled_at: string | null;
   meet_link: string | null;
   created_at: string;
+  is_swap?: boolean;
+  swap_id?: string | null;
   skills: { id: string; name: string } | null;
   learnerName: string;
   teacherName: string;
@@ -237,10 +244,13 @@ async function loadProfiles(ids: string[]) {
   const profileMap = new Map<string, ProfileSummary>();
   if (!uniqueIds.length) return profileMap;
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select("id, full_name, learning_mode, avatar_url, updated_at")
     .in("id", uniqueIds);
+  // Profiles decorate the match tiles; a failure shouldn't kill the dashboard,
+  // but it shouldn't be invisible either.
+  if (error) console.error("[dashboard] loadProfiles failed:", error);
   const rows = data ?? [];
   // 128x128 covers 2x DPR on the 40-64px avatar slots used across the
   // dashboard (top-match tiles, active sessions strip, seeker cards). Without
@@ -269,10 +279,11 @@ async function loadProfiles(ids: string[]) {
 async function loadCandidateLearningSkillIds(userIds: string[]) {
   const map = new Map<string, Set<string>>();
   if (!userIds.length) return map;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("user_learning_skills")
     .select("user_id, skill_id")
     .in("user_id", userIds);
+  if (error) console.error("[dashboard] loadCandidateLearningSkillIds failed:", error);
   for (const row of data ?? []) {
     const set = map.get(row.user_id) ?? new Set<string>();
     set.add(row.skill_id);
@@ -284,10 +295,11 @@ async function loadCandidateLearningSkillIds(userIds: string[]) {
 async function loadCandidateTeachingSkillIds(userIds: string[]) {
   const map = new Map<string, Set<string>>();
   if (!userIds.length) return map;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("user_teaching_skills")
     .select("user_id, skill_id")
     .in("user_id", userIds);
+  if (error) console.error("[dashboard] loadCandidateTeachingSkillIds failed:", error);
   for (const row of data ?? []) {
     const set = map.get(row.user_id) ?? new Set<string>();
     set.add(row.skill_id);
@@ -318,17 +330,22 @@ async function loadCompletedSessionCounts(userIds: string[]) {
   // Fallback: original two-query client-side tally. Keeps the dashboard working
   // if the RPC hasn't been applied to the DB yet (or errors), so deploying the
   // client and running the migration don't have to be perfectly in lockstep.
+  // Capped: the count is only a ranking signal, so saturating at 2000 rows per
+  // leg beats streaming every completed session ever recorded back to the
+  // browser just to tally them.
   const [{ data: asTeacher }, { data: asLearner }] = await Promise.all([
     supabase
       .from("sessions")
       .select("teacher_id")
       .in("teacher_id", userIds)
-      .eq("status", "completed"),
+      .eq("status", "completed")
+      .limit(2000),
     supabase
       .from("sessions")
       .select("learner_id")
       .in("learner_id", userIds)
-      .eq("status", "completed"),
+      .eq("status", "completed")
+      .limit(2000),
   ]);
   for (const row of asTeacher ?? []) {
     if (!row.teacher_id) continue;
@@ -440,7 +457,15 @@ function DashboardPage() {
   liveCreditBalanceRef.current = liveCreditBalance;
   const aiSuggestionsEnabledRef = useRef(aiSuggestionsEnabled);
   aiSuggestionsEnabledRef.current = aiSuggestionsEnabled;
+  // Who is signed in right now — lets a slow in-flight load detect that the
+  // user changed underneath it and drop its results instead of painting them.
+  const currentUserIdRef = useRef<string | undefined>(undefined);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // Mirror for loadDashboard's "keep the painted page, skip the skeleton"
+  // check — reading `profile` directly would force it into the callback deps
+  // and refire the whole load whenever the profile object is replaced.
+  const profileRef = useRef<Profile | null>(null);
+  profileRef.current = profile;
   const [learning, setLearning] = useState<LearnRow[]>([]);
   const [teachers, setTeachers] = useState<TeachOffer[]>([]);
   // teacher_id → next free slot the teacher offers (or null = no free
@@ -461,8 +486,20 @@ function DashboardPage() {
     }[]
   >([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  // The user a swap is being proposed to (opens SwapProposalDialog). Driven by
+  // the reciprocal-match AI suggestion tile.
+  const [swapTarget, setSwapTarget] = useState<string | null>(null);
+  // Bumped whenever the sessions realtime channel fires (or a swap is
+  // proposed) so SwapInbox refetches — it manages its own data and would
+  // otherwise only load on mount.
+  const [swapRefresh, setSwapRefresh] = useState(0);
   const [streak, setStreak] = useState(0);
   const [recs, setRecs] = useState<AiSuggestion[] | null>(null);
+  // Mirror so loadDashboard can persist the latest suggestions into the cache
+  // without listing `recs` as a dep (which would refire the whole load every
+  // time suggestions resolve).
+  const recsRef = useRef<AiSuggestion[] | null>(null);
+  recsRef.current = recs;
   const [recsRefreshing, setRecsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   // True once the live teacher/seeker query has resolved this mount. The
@@ -522,6 +559,7 @@ function DashboardPage() {
     // user?.id only — auth events rotate the user object reference even when
     // the underlying user hasn't changed, which previously refired this and
     // every other [user] effect on the page 3× during bootstrap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user?.id, navigate]);
 
   // The onboarding gate is opened by `loadDashboard` as soon as it confirms
@@ -553,15 +591,31 @@ function DashboardPage() {
     setRecs(cache.recs ?? null);
     setTeacherRatings(new Map(cache.teacherRatings ?? []));
     setLoading(false);
+    // user?.id only — see the auth-rotation note on the login-redirect effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Collapse overlapping loads: a realtime burst arriving while a load is
+  // already running queues exactly one trailing rerun instead of racing a
+  // second full pipeline whose phases interleave with the first.
+  const loadInFlightRef = useRef<string | null>(null);
+  const loadQueuedRef = useRef(false);
 
   const loadDashboard = useCallback(async () => {
     if (!user) return;
+    const uid = user.id;
+    currentUserIdRef.current = uid;
+    if (loadInFlightRef.current === uid) {
+      loadQueuedRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = uid;
+    const stale = () => currentUserIdRef.current !== uid;
     // auto_complete_due_sessions / notify_upcoming_sessions are now run on a
     // schedule (pg_cron or an external worker using the service role) rather
     // than fired from every dashboard load. The grants were tightened in
     // migration 20260511040000_lock_sweep_rpcs_to_service_role.sql.
-    setLoading((current) => (profile ? false : current));
+    setLoading((current) => (profileRef.current ? false : current));
     try {
       // Phase 1+2: fire every independent read in parallel. Profile resolves
       // first so we can short-circuit on !onboarded, but the rest race in the
@@ -581,6 +635,7 @@ function DashboardPage() {
       const streakPromise = loadStreak(user.id);
 
       const { data: p, error: profileError } = await profilePromise;
+      if (stale()) return;
       if (profileError) throw profileError;
 
       if (!p) {
@@ -630,12 +685,13 @@ function DashboardPage() {
       setOnboardingGateReady(true);
 
       // The phase-2 reads we kicked off above should be resolved or near it.
-      const [learn, myTeach, rawSessions, streakCount] = await Promise.all([
+      const [learn, myTeach, allRawSessions, streakCount] = await Promise.all([
         learnPromise,
         myTeachPromise,
         sessionsPromise,
         streakPromise,
       ]);
+      if (stale()) return;
       setStreak(streakCount);
 
       const learnRows = learn ?? [];
@@ -658,6 +714,10 @@ function DashboardPage() {
             availability: new Map<string, string | null>(),
           };
         }
+        // Candidate pool for the rank-sort. Ordered newest-first so the cut is
+        // deterministic instead of whatever insertion order the planner
+        // returns; 100 keeps the fan-out queries (profiles/ratings/counts)
+        // cheap while giving the ranker a real pool to pick its top 10 from.
         let teacherResult = await supabase
           .from("user_teaching_skills")
           .select(
@@ -665,15 +725,18 @@ function DashboardPage() {
           )
           .in("skill_id", learnSkillIds)
           .neq("user_id", user.id)
-          .limit(50);
+          .order("created_at", { ascending: false })
+          .limit(100);
         if (teacherResult.error) {
           teacherResult = (await supabase
             .from("user_teaching_skills")
             .select("id, skill_id, level, credits_per_hour, user_id, skills:skill_id(id, name)")
             .in("skill_id", learnSkillIds)
             .neq("user_id", user.id)
-            .limit(50)) as unknown as typeof teacherResult;
+            .order("created_at", { ascending: false })
+            .limit(100)) as unknown as typeof teacherResult;
         }
+        if (teacherResult.error) throw teacherResult.error;
         const { data: t } = teacherResult;
         const teacherRows = (t ?? []) as unknown as TeachOffer[];
         if (!teacherRows.length) {
@@ -683,7 +746,7 @@ function DashboardPage() {
             availability: new Map<string, string | null>(),
           };
         }
-        const teacherUserIds = teacherRows.map((row) => row.user_id);
+        const teacherUserIds = Array.from(new Set(teacherRows.map((row) => row.user_id)));
         // teachers_free_time_status used to run after the rank-sort+slice; it
         // only feeds the final ordering, so moving it into the same Promise.all
         // as profile/ratings shaves one serial roundtrip off this pipeline.
@@ -699,7 +762,8 @@ function DashboardPage() {
           loadCandidateLearningSkillIds(teacherUserIds),
           loadCompletedSessionCounts(teacherUserIds),
           supabase.rpc("teachers_free_time_status", {
-            p_teacher_ids: teacherUserIds,
+            // The RPC caps at 100 ids per call.
+            p_teacher_ids: teacherUserIds.slice(0, 100),
             p_duration_minutes: 30,
             p_horizon_days: 7,
           }),
@@ -789,24 +853,28 @@ function DashboardPage() {
 
       const seekerPipeline = (async () => {
         if (!teachSkillIds.length) return [] as Seeker[];
+        // Same deterministic newest-first 100-row pool as the teacher pipeline.
         let seekerResult = await supabase
           .from("user_learning_skills")
           .select("id, user_id, skill_id, current_level, learning_mode, skills:skill_id(id, name)")
           .in("skill_id", teachSkillIds)
           .neq("user_id", user.id)
-          .limit(50);
+          .order("created_at", { ascending: false })
+          .limit(100);
         if (seekerResult.error) {
           seekerResult = (await supabase
             .from("user_learning_skills")
             .select("id, user_id, skill_id, current_level, skills:skill_id(id, name)")
             .in("skill_id", teachSkillIds)
             .neq("user_id", user.id)
-            .limit(50)) as unknown as typeof seekerResult;
+            .order("created_at", { ascending: false })
+            .limit(100)) as unknown as typeof seekerResult;
         }
+        if (seekerResult.error) throw seekerResult.error;
         const { data: s } = seekerResult;
         const seekerRows = (s ?? []) as unknown as Seeker[];
         if (!seekerRows.length) return [] as Seeker[];
-        const seekerUserIds = seekerRows.map((row) => row.user_id);
+        const seekerUserIds = Array.from(new Set(seekerRows.map((row) => row.user_id)));
         const [seekerProfiles, seekerTeachingMap, seekerSessionsMap] = await Promise.all([
           loadProfiles(seekerUserIds),
           loadCandidateTeachingSkillIds(seekerUserIds),
@@ -866,6 +934,10 @@ function DashboardPage() {
       })();
 
       const sessionPipeline = (async () => {
+        // Swap sessions (is_swap) have a different, credit-free accept flow and
+        // are surfaced separately in <SwapInbox>. Keep them out of the ordinary
+        // session lists so their cards and accept buttons never mix in here.
+        const rawSessions = allRawSessions.filter((s) => !s.is_swap);
         const participantIds = Array.from(
           new Set(rawSessions.flatMap((s) => [s.learner_id, s.teacher_id])),
         );
@@ -908,6 +980,7 @@ function DashboardPage() {
         seekerPipeline,
         sessionPipeline,
       ]);
+      if (stale()) return;
       setTeacherRatings(teacherOutcome.ratings);
       setTeacherAvailability(teacherOutcome.availability);
       setTeachers(teacherOutcome.list);
@@ -922,7 +995,7 @@ function DashboardPage() {
         seekers: seekerList,
         myTeaching: myTeachRows,
         sessions: sessionList,
-        recs,
+        recs: recsRef.current,
         teacherRatings: Array.from(teacherOutcome.ratings.entries()),
         streak: streakCount,
       });
@@ -934,10 +1007,23 @@ function DashboardPage() {
       // was a wasted function call whose result was never rendered.
       if (aiSuggestionsEnabledRef.current) {
         void fetchAiSuggestions()
-          .then((r) => setRecs(r.suggestions))
-          .catch(() => setRecs([]));
+          .then((r) => {
+            if (stale()) return;
+            setRecs(r.suggestions);
+            // Patch the snapshot written above so the next mount rehydrates
+            // these suggestions instead of the previous session's.
+            const snapshot = getDashboardCache(uid);
+            if (snapshot) {
+              const { savedAt: _savedAt, ...rest } = snapshot;
+              setDashboardCache(uid, { ...rest, recs: r.suggestions });
+            }
+          })
+          .catch(() => {
+            if (!stale()) setRecs([]);
+          });
       }
     } catch (error) {
+      if (stale()) return;
       setLoading(false);
       setRecs([]);
       setMatchesHydrated(true);
@@ -945,9 +1031,18 @@ function DashboardPage() {
       // instead of an indefinite spinner.
       setOnboardingGateReady(true);
       toastError(error, "Could not load dashboard");
+    } finally {
+      if (loadInFlightRef.current === uid) loadInFlightRef.current = null;
+      if (loadQueuedRef.current) {
+        loadQueuedRef.current = false;
+        // A realtime event landed mid-load; run once more so its change isn't
+        // lost. Skipped when the user changed — their own effect reloads.
+        if (!stale()) void loadDashboard();
+      }
     }
     // Stable across user-object rotations so useEffect(loadDashboard) below
     // only refires when the actual user changes, not on every auth event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, navigate]);
 
   useEffect(() => {
@@ -960,6 +1055,7 @@ function DashboardPage() {
   // (accept → trigger → audit insert → notification insert) collapses into
   // one reload instead of three.
   const debouncedReloadDashboard = useDebouncedCallback(() => {
+    setSwapRefresh((n) => n + 1);
     void loadDashboard();
   }, 250);
 
@@ -991,6 +1087,8 @@ function DashboardPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
+    // user?.id only — see the auth-rotation note on the login-redirect effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, debouncedReloadDashboard]);
 
   const openRequestDialog = (teacher: TeachOffer) => {
@@ -1372,8 +1470,13 @@ function DashboardPage() {
           </div>
         </section>
 
+        {/* Direct skill swaps — renders only when the user has any. */}
+        <div className="animate-fade-up" style={{ animationDelay: "60ms" }}>
+          <SwapInbox refreshKey={swapRefresh} onChanged={() => loadDashboard()} />
+        </div>
+
         {/* Your Next Move — stacks pending requests + the next upcoming session. */}
-        <div className="animate-fade-up space-y-4 md:space-y-5" style={{ animationDelay: "60ms" }}>
+        <div className="animate-fade-up space-y-4 md:space-y-5" style={{ animationDelay: "100ms" }}>
           {nextMoves.map((move, i) => (
             <NextMoveCard
               key={
@@ -1404,6 +1507,7 @@ function DashboardPage() {
               recs={recs}
               refreshing={recsRefreshing}
               onRefresh={() => void refreshSuggestions()}
+              onSwap={(userId) => setSwapTarget(userId)}
             />
           </div>
         )}
@@ -1534,6 +1638,22 @@ function DashboardPage() {
             learnerId={requestDialog.kind === "request" ? user?.id : requestDialog.seeker.user_id}
             teacherId={requestDialog.kind === "request" ? requestDialog.teacher.user_id : user?.id}
             onConfirm={confirmRequestDialog}
+          />
+        </Suspense>
+      )}
+
+      {swapTarget && (
+        <Suspense fallback={null}>
+          <SwapProposalDialog
+            open={swapTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setSwapTarget(null);
+            }}
+            otherUserId={swapTarget}
+            onProposed={() => {
+              setSwapRefresh((n) => n + 1);
+              void loadDashboard();
+            }}
           />
         </Suspense>
       )}
@@ -2023,9 +2143,11 @@ type AiInsightCardProps = {
   recs: AiSuggestion[] | null;
   refreshing: boolean;
   onRefresh: () => void;
+  // Opens the swap proposal dialog for a reciprocal-match ("swap") tile.
+  onSwap?: (userId: string) => void;
 };
 
-function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
+function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardProps) {
   if (recs === null) {
     return (
       <section className="rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
@@ -2070,14 +2192,20 @@ function AiInsightCard({ recs, refreshing, onRefresh }: AiInsightCardProps) {
 
       <div className="relative mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
         {visible.map((r, i) => (
-          <InsightTile key={`v-${i}`} suggestion={r} />
+          <InsightTile key={`v-${i}`} suggestion={r} onSwap={onSwap} />
         ))}
       </div>
     </section>
   );
 }
 
-function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
+function InsightTile({
+  suggestion,
+  onSwap,
+}: {
+  suggestion: AiSuggestion;
+  onSwap?: (userId: string) => void;
+}) {
   const meta = SUGGESTION_TYPE_META[suggestion.type] ?? SUGGESTION_TYPE_META.general;
   const Icon = meta.icon;
 
@@ -2113,6 +2241,16 @@ function InsightTile({ suggestion }: { suggestion: AiSuggestion }) {
   // rather than building the props dynamically. Server always sends one of
   // these four; an unknown kind would silently render a non-link tile.
   if (action.kind === "user") {
+    // A reciprocal match ("swap") opens the swap proposal dialog directly —
+    // that's the "Direct swap, no credits" the message promises. Other
+    // user-targeted tiles just deep-link to the profile.
+    if (suggestion.type === "swap" && onSwap) {
+      return (
+        <button type="button" onClick={() => onSwap(action.userId)} className={tileClass}>
+          {inner}
+        </button>
+      );
+    }
     return (
       <Link
         to="/users/$userId"

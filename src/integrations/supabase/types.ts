@@ -463,11 +463,13 @@ export type Database = {
           escrow_held: boolean;
           id: string;
           initiator_id: string | null;
+          is_swap: boolean;
           learner_id: string | null;
           meet_link: string | null;
           scheduled_at: string | null;
           skill_id: string;
           status: Database["public"]["Enums"]["session_status"];
+          swap_id: string | null;
           teacher_id: string | null;
           updated_at: string;
         };
@@ -479,11 +481,13 @@ export type Database = {
           escrow_held?: false;
           id?: never;
           initiator_id?: string | null;
+          is_swap?: boolean;
           learner_id?: string | null;
           meet_link?: string | null;
           scheduled_at?: string | null;
           skill_id: string;
           status?: "pending";
+          swap_id?: string | null;
           teacher_id?: string | null;
           updated_at?: never;
         };
@@ -495,11 +499,13 @@ export type Database = {
           escrow_held?: never;
           id?: never;
           initiator_id?: never;
+          is_swap?: never;
           learner_id?: never;
           meet_link?: string | null;
           scheduled_at?: string | null;
           skill_id?: never;
           status?: never;
+          swap_id?: never;
           teacher_id?: never;
           updated_at?: never;
         };
@@ -830,6 +836,26 @@ export type Database = {
         Args: { p_session_id: string };
         Returns: Database["public"]["Tables"]["sessions"]["Row"];
       };
+      propose_swap: {
+        Args: {
+          p_recipient_id: string;
+          p_my_skill_id: string;
+          p_my_duration: number;
+          p_my_scheduled_at: string;
+          p_their_skill_id: string;
+          p_their_duration: number;
+          p_their_scheduled_at: string;
+        };
+        Returns: string;
+      };
+      respond_to_swap: {
+        Args: { p_swap_id: string; p_accept: boolean };
+        Returns: undefined;
+      };
+      cancel_swap: {
+        Args: { p_swap_id: string };
+        Returns: undefined;
+      };
       notify_upcoming_sessions: {
         Args: Record<string, never>;
         Returns: number;
@@ -1010,6 +1036,70 @@ export type Database = {
       completed_session_counts: {
         Args: { p_user_ids: string[] };
         Returns: { user_id: string; completed_count: number }[];
+      };
+      explore_teachers: {
+        Args: {
+          p_query?: string | null;
+          p_category?: string | null;
+          p_level?: string | null;
+          p_match_only?: boolean;
+          p_sort?: string;
+          p_limit?: number;
+          p_offset?: number;
+        };
+        Returns: {
+          id: string;
+          user_id: string;
+          level: string;
+          credits_per_hour: number;
+          created_at: string;
+          skill_id: string;
+          skill_name: string;
+          skill_category: string | null;
+          full_name: string | null;
+          bio: string | null;
+          avatar_url: string | null;
+          rating_average: number;
+          rating_count: number;
+          matches_viewer: boolean;
+          swap_match: boolean;
+        }[];
+      };
+      conversation_latest_messages: {
+        Args: { p_conversation_ids: string[] };
+        Returns: {
+          conversation_id: string;
+          text: string;
+          created_at: string;
+          sender_id: string | null;
+          attachment_kind: string | null;
+          attachment_name: string | null;
+        }[];
+      };
+      explore_learners: {
+        Args: {
+          p_query?: string | null;
+          p_category?: string | null;
+          p_level?: string | null;
+          p_match_only?: boolean;
+          p_sort?: string;
+          p_limit?: number;
+          p_offset?: number;
+        };
+        Returns: {
+          id: string;
+          user_id: string;
+          current_level: string;
+          created_at: string;
+          skill_id: string;
+          skill_name: string;
+          skill_category: string | null;
+          full_name: string | null;
+          bio: string | null;
+          avatar_url: string | null;
+          matches_viewer: boolean;
+          swap_match: boolean;
+        }[];
       };
       has_any_intersection: {
         Args: {

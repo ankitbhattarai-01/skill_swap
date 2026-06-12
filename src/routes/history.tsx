@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ConfirmAction";
@@ -165,8 +165,14 @@ function SessionsPage() {
     });
   }, []);
 
+  // Monotonic token: realtime bursts can start a reload while one is already
+  // in flight; only the newest invocation may write state, so an older slow
+  // response can't overwrite a newer one.
+  const loadSeqRef = useRef(0);
+
   const loadSessions = useCallback(async () => {
     if (!user) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const [{ data: profileData, error: profileError }, { data: creditBalance }, rawSessions] =
@@ -183,14 +189,17 @@ function SessionsPage() {
       );
       const names = new Map<string, string>();
       if (participantIds.length) {
-        const { data: people } = await supabase
+        const { data: people, error: peopleError } = await supabase
           .from("profiles")
           .select("id, full_name")
           .in("id", participantIds);
+        if (peopleError) console.error("[history] participant profile load failed:", peopleError);
         for (const person of people ?? []) {
           names.set(person.id, person.full_name ?? "Student");
         }
       }
+
+      if (seq !== loadSeqRef.current) return;
 
       setProfile({
         full_name: (profileData as { full_name: string | null } | null)?.full_name ?? null,
@@ -215,11 +224,15 @@ function SessionsPage() {
       });
       setSessions(sessionRows);
     } catch (error) {
+      if (seq !== loadSeqRef.current) return;
       toastError(error, "Could not load sessions");
       setSessions([]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   useEffect(() => {
@@ -365,7 +378,13 @@ function SessionsPage() {
       const { error } = await supabase.rpc("complete_session", { p_session_id: session.id });
       if (error) return toast.error(error.message);
       markSelfAction(session.id, ["session_completed"]);
-      toast.success("Session completed and credits transferred");
+      // During pending_review the RPC routes through the attendance rule, so
+      // the outcome can be a refund (no-show) rather than a transfer.
+      toast.success(
+        session.status === "pending_review"
+          ? "Session settled. The outcome is based on attendance."
+          : "Session completed and credits transferred",
+      );
       void invalidateCreditBalance();
       await loadSessions();
     } finally {

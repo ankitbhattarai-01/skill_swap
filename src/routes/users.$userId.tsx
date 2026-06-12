@@ -14,6 +14,7 @@ import { playRequestSentChime } from "@/lib/sounds";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ArrowLeft,
+  ArrowLeftRight,
   BookOpen,
   CalendarPlus,
   GraduationCap,
@@ -31,6 +32,9 @@ import { toast } from "sonner";
 // initial render. It handles both single and multi-session requests.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
+);
+const SwapProposalDialog = lazy(() =>
+  import("@/components/SwapProposalDialog").then((m) => ({ default: m.SwapProposalDialog })),
 );
 import type { MultiSessionParams } from "@/components/SessionRequestDialog";
 
@@ -85,6 +89,7 @@ function PublicUserPage() {
   const [loading, setLoading] = useState(true);
   const [openingChat, setOpeningChat] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [swapOpen, setSwapOpen] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [myCredits, setMyCredits] = useState<number | null>(null);
 
@@ -193,7 +198,8 @@ function PublicUserPage() {
       alive = false;
       controller.abort();
     };
-  }, [userId]);
+    // navigate is stable from TanStack Router; userId is the real input.
+  }, [userId, navigate]);
 
   useEffect(() => {
     if (!user) {
@@ -210,6 +216,9 @@ function PublicUserPage() {
       alive = false;
       controller.abort();
     };
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   if (loading) {
@@ -412,6 +421,22 @@ function PublicUserPage() {
                       Request session
                     </Button>
                   )}
+                  {teaching.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={() => {
+                        if (!user) {
+                          navigate({ to: "/login", search: { redirect: `/users/${userId}` } });
+                          return;
+                        }
+                        setSwapOpen(true);
+                      }}
+                    >
+                      <ArrowLeftRight className="h-4 w-4" />
+                      Propose swap
+                    </Button>
+                  )}
                   <Button variant="hero" size="lg" onClick={openChat} disabled={openingChat}>
                     {openingChat ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -559,6 +584,16 @@ function PublicUserPage() {
             allowMultiSession
             teacherName={profile?.full_name ?? "Teacher"}
             onConfirmMulti={requestMultiple}
+          />
+        </Suspense>
+      )}
+      {swapOpen && (
+        <Suspense fallback={null}>
+          <SwapProposalDialog
+            open={swapOpen}
+            onOpenChange={setSwapOpen}
+            otherUserId={userId}
+            otherName={profile?.full_name ?? undefined}
           />
         </Suspense>
       )}

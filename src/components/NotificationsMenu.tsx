@@ -32,16 +32,12 @@ type Notification = {
   metadata?: Json;
 };
 
-type SessionPreview = {
-  id: string;
-  learner_id: string;
-  teacher_id: string;
-  skills: { name: string } | null;
-};
-
+// Chat is conversation-first: every message belongs to a conversation, and
+// session_id is optional context (null for direct messages).
 type MessagePayload = {
   id: string;
-  session_id: string;
+  conversation_id: string;
+  session_id: string | null;
   sender_id: string;
   text: string;
   created_at: string;
@@ -98,18 +94,24 @@ function getNotificationMessageId(notification: Notification) {
   return notification.id.startsWith("message-") ? notification.id.slice("message-".length) : null;
 }
 
-function getNotificationSessionId(notification: Notification) {
-  if (
+// Where should a message notification land? New notifications are
+// conversation-first and carry the other user's id (?u=); legacy rows carry a
+// session id in metadata or in the link path (?s= / /messages/<id>).
+function getMessagesLinkTarget(notification: Notification): { u: string } | { s: string } | null {
+  const meta =
     notification.metadata &&
     typeof notification.metadata === "object" &&
-    !Array.isArray(notification.metadata) &&
-    typeof notification.metadata.sessionId === "string"
-  ) {
-    return notification.metadata.sessionId;
-  }
-
-  const match = notification.link?.match(/^\/messages\/([^/?#]+)/);
-  return match?.[1] ?? null;
+    !Array.isArray(notification.metadata)
+      ? (notification.metadata as Record<string, unknown>)
+      : null;
+  if (meta && typeof meta.otherUserId === "string") return { u: meta.otherUserId };
+  if (meta && typeof meta.sessionId === "string") return { s: meta.sessionId };
+  const uMatch = notification.link?.match(/^\/messages\/?\?u=([^&]+)/);
+  if (uMatch?.[1]) return { u: decodeURIComponent(uMatch[1]) };
+  const sMatch = notification.link?.match(/^\/messages\/?\?s=([^&]+)/);
+  if (sMatch?.[1]) return { s: decodeURIComponent(sMatch[1]) };
+  const pathMatch = notification.link?.match(/^\/messages\/([^/?#]+)/);
+  return pathMatch?.[1] ? { s: pathMatch[1] } : null;
 }
 
 function mergeNotifications(
@@ -240,6 +242,52 @@ export function NotificationsMenu() {
       }, 250);
     };
 
+    // Cached sender names so a chatty conversation doesn't re-fetch the same
+    // profile row for every realtime INSERT.
+    const senderNameCache = new Map<string, string | null>();
+    const resolveSenderName = async (senderId: string) => {
+      if (senderNameCache.has(senderId)) return senderNameCache.get(senderId) ?? null;
+      const { data } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", senderId)
+        .maybeSingle();
+      const name = data?.full_name ?? null;
+      senderNameCache.set(senderId, name);
+      return name;
+    };
+
+    const enqueueMessageNotification = (message: MessagePayload, senderName: string | null) => {
+      if (!alive) return;
+      markMessagesSeen([message.id]);
+      const fallback: Notification = {
+        id: `message-${message.id}`,
+        type: "message",
+        title: `${senderName ?? "Someone"} sent you a message`,
+        body: message.text,
+        // Conversation-first deep link; messages.tsx resolves ?u= directly.
+        link: `/messages?u=${encodeURIComponent(message.sender_id)}`,
+        read_at: null,
+        created_at: message.created_at,
+        metadata: {
+          otherUserId: message.sender_id,
+          conversationId: message.conversation_id,
+          sessionId: message.session_id,
+          messageId: message.id,
+        },
+      };
+
+      setNotifications((current) => {
+        if (current.some((notification) => getNotificationMessageId(notification) === message.id)) {
+          return current;
+        }
+        const next = [fallback, ...current].slice(0, 8);
+        writeFallbackNotifications(user.id, next);
+        writeCachedNotifications(user.id, next);
+        return next;
+      });
+    };
+
     const addMessageNotification = async (message: MessagePayload) => {
       if (!alive || message.sender_id === user.id || seenMessageIdsRef.current.has(message.id))
         return;
@@ -253,106 +301,38 @@ export function NotificationsMenu() {
         return;
       }
 
-      const { data: sessionData } = await supabase
-        .from("sessions")
-        .select("id, learner_id, teacher_id, skills:skill_id(name)")
-        .eq("id", message.session_id)
-        .maybeSingle();
-
-      if (!alive || !sessionData) return;
-
-      const session = sessionData as unknown as SessionPreview;
-      const isParticipant = session.learner_id === user.id || session.teacher_id === user.id;
-      if (!isParticipant) return;
-
-      const { data: sender } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", message.sender_id)
-        .maybeSingle();
-
-      markMessagesSeen([message.id]);
-      const senderName = sender?.full_name ?? "Someone";
-      const fallback: Notification = {
-        id: `message-${message.id}`,
-        type: "message",
-        title: `${senderName} sent you a message`,
-        body: message.text,
-        link: `/messages?s=${encodeURIComponent(message.session_id)}`,
-        read_at: null,
-        created_at: message.created_at,
-        metadata: { sessionId: message.session_id, messageId: message.id },
-      };
-
-      setNotifications((current) => {
-        if (current.some((notification) => getNotificationMessageId(notification) === message.id)) {
-          return current;
-        }
-        const next = [fallback, ...current].slice(0, 8);
-        writeFallbackNotifications(user.id, next);
-        writeCachedNotifications(user.id, next);
-        return next;
-      });
-    };
-
-    // Shared "we already have the session + sender, just enqueue" tail used
-    // by the batched poll below. addMessageNotification stays the realtime
-    // path (single message, two single-row follow-ups) — see the realtime
-    // INSERT handler for that channel.
-    const enqueuePrefetchedMessageNotification = (
-      message: MessagePayload,
-      session: SessionPreview,
-      senderName: string | null,
-    ) => {
+      // Realtime RLS only delivers INSERTs for conversations this user
+      // participates in, so no participation lookup is needed. Messages are
+      // conversation-first (session_id is optional context), which also means
+      // direct messages — with no session at all — notify correctly. One
+      // cached profile read for the sender name is the only round trip.
+      const senderName = await resolveSenderName(message.sender_id);
       if (!alive) return;
-      const isParticipant = session.learner_id === user.id || session.teacher_id === user.id;
-      if (!isParticipant) return;
-
-      markMessagesSeen([message.id]);
-      const fallback: Notification = {
-        id: `message-${message.id}`,
-        type: "message",
-        title: `${senderName ?? "Someone"} sent you a message`,
-        body: message.text,
-        link: `/messages?s=${encodeURIComponent(message.session_id)}`,
-        read_at: null,
-        created_at: message.created_at,
-        metadata: { sessionId: message.session_id, messageId: message.id },
-      };
-
-      setNotifications((current) => {
-        if (current.some((notification) => getNotificationMessageId(notification) === message.id)) {
-          return current;
-        }
-        const next = [fallback, ...current].slice(0, 8);
-        writeFallbackNotifications(user.id, next);
-        writeCachedNotifications(user.id, next);
-        return next;
-      });
+      enqueueMessageNotification(message, senderName);
     };
 
     const pollRecentMessages = async () => {
-      const { data: sessions } = await supabase
-        .from("sessions")
+      const { data: conversations } = await supabase
+        .from("conversations")
         .select("id")
-        .or(`learner_id.eq.${user.id},teacher_id.eq.${user.id}`)
-        // Bound so a heavy user with thousands of historical sessions
-        // doesn't push an unbounded id list into the .in() below.
+        .or(`user_low.eq.${user.id},user_high.eq.${user.id}`)
+        // Bound so a heavy user doesn't push an unbounded id list into the
+        // .in() below.
         .limit(500);
 
-      if (!alive || !sessions?.length) return;
+      if (!alive || !conversations?.length) return;
 
-      const sessionIds = sessions.map((session) => session.id);
+      const conversationIds = conversations.map((conversation) => conversation.id);
       const { data: messages } = await supabase
         .from("messages")
-        .select("id, session_id, sender_id, text, created_at")
-        .in("session_id", sessionIds)
+        .select("id, conversation_id, session_id, sender_id, text, created_at")
+        .in("conversation_id", conversationIds)
         .neq("sender_id", user.id)
         .order("created_at", { ascending: false })
         .limit(8);
 
-      // Drop dedupe + horizon misses BEFORE issuing the per-id batches so we
-      // don't fetch sessions/profiles for messages we'd discard.
+      // Drop dedupe + horizon misses BEFORE the profile batch so we don't
+      // fetch names for messages we'd discard.
       const candidates = ((messages ?? []) as MessagePayload[])
         .filter(
           (message) =>
@@ -361,35 +341,24 @@ export function NotificationsMenu() {
         .reverse();
       if (!alive || !candidates.length) return;
 
-      // Batch the two follow-up lookups: one sessions.in(id) covering every
-      // candidate's session, one profiles.in(id) covering every distinct
-      // sender — instead of the prior N×2 sequential per-message round-trips.
-      const candidateSessionIds = Array.from(new Set(candidates.map((m) => m.session_id)));
-      const candidateSenderIds = Array.from(new Set(candidates.map((m) => m.sender_id)));
-      const [{ data: sessionRows }, { data: senderRows }] = await Promise.all([
-        supabase
-          .from("sessions")
-          .select("id, learner_id, teacher_id, skills:skill_id(name)")
-          .in("id", candidateSessionIds),
-        supabase.from("profiles").select("id, full_name").in("id", candidateSenderIds),
-      ]);
-      if (!alive) return;
-
-      const sessionsById = new Map(
-        ((sessionRows ?? []) as unknown as SessionPreview[]).map((row) => [row.id, row]),
+      // One profiles.in(id) covering every distinct sender — instead of
+      // per-message sequential round trips.
+      const candidateSenderIds = Array.from(new Set(candidates.map((m) => m.sender_id))).filter(
+        (id) => !senderNameCache.has(id),
       );
-      const sendersById = new Map(
-        (senderRows ?? []).map((row) => [row.id, row.full_name ?? null] as const),
-      );
+      if (candidateSenderIds.length) {
+        const { data: senderRows } = await supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", candidateSenderIds);
+        if (!alive) return;
+        for (const row of senderRows ?? []) {
+          senderNameCache.set(row.id, row.full_name ?? null);
+        }
+      }
 
       for (const message of candidates) {
-        const session = sessionsById.get(message.session_id);
-        if (!session) continue;
-        enqueuePrefetchedMessageNotification(
-          message,
-          session,
-          sendersById.get(message.sender_id) ?? null,
-        );
+        enqueueMessageNotification(message, senderNameCache.get(message.sender_id) ?? null);
       }
     };
 
@@ -451,6 +420,7 @@ export function NotificationsMenu() {
     // Depend on user.id only — Supabase rotates the user object reference on
     // every auth event even when the id is unchanged, which previously tore
     // down + re-subscribed the notifications channel 2–4× per page load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, markMessagesSeen]);
 
   const clearAll = async () => {
@@ -585,8 +555,8 @@ export function NotificationsMenu() {
           </>
         )}
         {notifications.map((notification) => {
-          const messageSessionId =
-            notification.type === "message" ? getNotificationSessionId(notification) : null;
+          const messageTarget =
+            notification.type === "message" ? getMessagesLinkTarget(notification) : null;
           const content = (
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -601,11 +571,11 @@ export function NotificationsMenu() {
             </div>
           );
 
-          return messageSessionId ? (
+          return messageTarget ? (
             <DropdownMenuItem key={notification.id} asChild>
               <Link
                 to="/messages"
-                search={{ s: messageSessionId }}
+                search={"u" in messageTarget ? { u: messageTarget.u } : { s: messageTarget.s }}
                 onClick={() => void dismiss(notification)}
               >
                 {content}

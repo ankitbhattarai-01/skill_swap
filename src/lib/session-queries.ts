@@ -29,6 +29,10 @@ export type RawSessionRow = {
   created_at: string;
   updated_at?: string;
   batch_id?: string | null;
+  // Direct-swap columns (added 20260612200000). Absent on older schemas, so
+  // normalizeSessionRow defaults them and the SELECT ladder degrades gracefully.
+  is_swap?: boolean;
+  swap_id?: string | null;
   skills: { id: string; name: string; category?: string | null } | null;
 };
 
@@ -42,7 +46,11 @@ export function isSessionSchemaMismatch(error: SessionQueryError | null | undefi
   const raw = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
   return (
     (error?.code === "PGRST204" || error?.code === "42703" || raw.includes("schema cache")) &&
-    (raw.includes("initiator_id") || raw.includes("duration_minutes") || raw.includes("batch_id"))
+    (raw.includes("initiator_id") ||
+      raw.includes("duration_minutes") ||
+      raw.includes("batch_id") ||
+      raw.includes("is_swap") ||
+      raw.includes("swap_id"))
   );
 }
 
@@ -55,6 +63,8 @@ export function normalizeSessionRow<T extends Partial<RawSessionRow>>(
     ...row,
     initiator_id: row.initiator_id ?? row.learner_id ?? null,
     duration_minutes: row.duration_minutes ?? 60,
+    is_swap: row.is_swap ?? false,
+    swap_id: row.swap_id ?? null,
   } as T & { initiator_id: string | null; duration_minutes: number };
 }
 
@@ -74,20 +84,22 @@ export function buildSessionSelects(opts: SessionSelectOptions = {}): string[] {
   const base =
     "id, learner_id, teacher_id, skill_id, status, credits, scheduled_at, meet_link, created_at";
 
-  // `batch` is the optional grouping column (added 20260611000000). We prefer
-  // SELECTs that include it, then fall back to ones that don't so the pages
-  // still load against an older schema where the column is absent.
-  const variants = (batch: string) => [
+  // `batch` (added 20260611000000) and `swap` (is_swap/swap_id, added
+  // 20260612200000) are optional columns. We prefer SELECTs that include them,
+  // then fall back to ones that don't so the pages still load against an older
+  // schema where either column is absent.
+  const variants = (batch: string, swap: string) => [
     // Current schema: both initiator_id and duration_minutes present.
-    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits, duration_minutes${batch}, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits, duration_minutes${batch}${swap}, scheduled_at, meet_link, created_at${tail}`,
     // No initiator_id, has duration_minutes.
-    `id, learner_id, teacher_id, skill_id, status, credits, duration_minutes${batch}, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, skill_id, status, credits, duration_minutes${batch}${swap}, scheduled_at, meet_link, created_at${tail}`,
     // Has initiator_id, no duration_minutes.
-    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits${batch}, scheduled_at, meet_link, created_at${tail}`,
+    `id, learner_id, teacher_id, initiator_id, skill_id, status, credits${batch}${swap}, scheduled_at, meet_link, created_at${tail}`,
     // Legacy: neither column.
-    `${base}${batch}${tail}`,
+    `${base}${batch}${swap}${tail}`,
   ];
-  return [...variants(", batch_id"), ...variants("")];
+  const withBatch = (swap: string) => [...variants(", batch_id", swap), ...variants("", swap)];
+  return [...withBatch(", is_swap, swap_id"), ...withBatch("")];
 }
 
 // Try each SELECT in order until one succeeds. Re-throws any non-schema error

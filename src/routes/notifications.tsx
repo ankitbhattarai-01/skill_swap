@@ -59,20 +59,27 @@ function formatDate(value: string) {
   });
 }
 
-function getSessionId(notification: Notification) {
-  if (
+// Where a message notification should land. New notifications are
+// conversation-first and address the other user (?u=); legacy rows carry a
+// session id in metadata or in the link (?s= / /messages/<id>).
+function getMessagesTarget(notification: Notification): { u: string } | { s: string } | null {
+  const meta =
     notification.metadata &&
     typeof notification.metadata === "object" &&
-    !Array.isArray(notification.metadata) &&
-    typeof (notification.metadata as Record<string, unknown>).sessionId === "string"
-  ) {
-    return (notification.metadata as Record<string, string>).sessionId;
-  }
-  const queryMatch = notification.link?.match(/^\/messages\/?\?s=([^&]+)/);
-  if (queryMatch?.[1]) return decodeURIComponent(queryMatch[1]);
+    !Array.isArray(notification.metadata)
+      ? (notification.metadata as Record<string, unknown>)
+      : null;
+  if (meta && typeof meta.otherUserId === "string") return { u: meta.otherUserId };
+  if (meta && typeof meta.sessionId === "string") return { s: meta.sessionId };
+  const uMatch = notification.link?.match(/^\/messages\/?\?u=([^&]+)/);
+  if (uMatch?.[1]) return { u: decodeURIComponent(uMatch[1]) };
+  const sMatch = notification.link?.match(/^\/messages\/?\?s=([^&]+)/);
+  if (sMatch?.[1]) return { s: decodeURIComponent(sMatch[1]) };
   const pathMatch = notification.link?.match(/^\/messages\/([^/?#]+)/);
-  return pathMatch?.[1] ?? null;
+  return pathMatch?.[1] ? { s: pathMatch[1] } : null;
 }
+
+const NOTIFICATIONS_PAGE_SIZE = 50;
 
 function NotificationsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -80,6 +87,8 @@ function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [readFilter, setReadFilter] = useState<ReadFilter>("all");
   const [clearAllOpen, setClearAllOpen] = useState(false);
@@ -101,13 +110,15 @@ function NotificationsPage() {
         .select("id, type, title, body, link, read_at, created_at, metadata")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(200)
+        .limit(NOTIFICATIONS_PAGE_SIZE)
         .abortSignal(controller.signal);
       if (!alive) return;
       if (error) {
         toast.error(error.message);
       } else {
-        setNotifications((data ?? []) as Notification[]);
+        const rows = (data ?? []) as Notification[];
+        setNotifications(rows);
+        setHasMore(rows.length >= NOTIFICATIONS_PAGE_SIZE);
       }
       setLoading(false);
     })();
@@ -115,7 +126,37 @@ function NotificationsPage() {
       alive = false;
       controller.abort();
     };
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Cursor-paginated: fetch the page older than the oldest loaded row.
+  const loadMore = async () => {
+    if (!user || loadingMore || !hasMore) return;
+    const oldest = notifications[notifications.length - 1];
+    if (!oldest) return;
+    setLoadingMore(true);
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("id, type, title, body, link, read_at, created_at, metadata")
+      .eq("user_id", user.id)
+      .lt("created_at", oldest.created_at)
+      .order("created_at", { ascending: false })
+      .limit(NOTIFICATIONS_PAGE_SIZE);
+    setLoadingMore(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    const rows = (data ?? []) as Notification[];
+    setHasMore(rows.length >= NOTIFICATIONS_PAGE_SIZE);
+    if (rows.length === 0) return;
+    setNotifications((prev) => {
+      const seen = new Set(prev.map((n) => n.id));
+      return [...prev, ...rows.filter((n) => !seen.has(n.id))];
+    });
+  };
 
   const types = useMemo(
     () => Array.from(new Set(notifications.map((n) => n.type))).sort(),
@@ -310,7 +351,8 @@ function NotificationsPage() {
           </div>
         ) : (
           filtered.map((notification) => {
-            const sessionId = getSessionId(notification);
+            const messagesTarget =
+              notification.type === "message" ? getMessagesTarget(notification) : null;
             const isUnread = !notification.read_at;
             return (
               <article
@@ -334,14 +376,20 @@ function NotificationsPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {sessionId ? (
+                  {messagesTarget ? (
                     <Button
                       variant="outline"
                       size="sm"
                       asChild
                       onClick={() => void markRead(notification)}
                     >
-                      <Link to="/messages" preload="intent" search={{ s: sessionId }}>
+                      <Link
+                        to="/messages"
+                        preload="intent"
+                        search={
+                          "u" in messagesTarget ? { u: messagesTarget.u } : { s: messagesTarget.s }
+                        }
+                      >
                         Open
                       </Link>
                     </Button>
@@ -372,6 +420,19 @@ function NotificationsPage() {
               </article>
             );
           })
+        )}
+        {!loading && hasMore && (
+          <div className="flex justify-center pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+              Load older notifications
+            </Button>
+          </div>
         )}
       </section>
 
