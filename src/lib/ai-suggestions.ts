@@ -4,7 +4,11 @@ import { supabase } from "@/integrations/supabase/client";
 // the app. Resolved server-side from the LLM's `ref` field (with a type-based
 // fallback) so every tile is guaranteed to have a destination.
 export type AiSuggestionAction =
-  | { kind: "user"; userId: string; skillName?: string }
+  // `skillName` is the skill the message is about (teacher's skill for a match,
+  // skill to learn for a swap). `swapMySkillName` only applies to a reciprocal
+  // swap: the skill the current user teaches back, so the swap dialog can
+  // pre-select BOTH legs to match the skills the message named.
+  | { kind: "user"; userId: string; skillName?: string; swapMySkillName?: string }
   | { kind: "explore"; q?: string; mode?: "teachers" | "learners" }
   | { kind: "profile" }
   | { kind: "skills" };

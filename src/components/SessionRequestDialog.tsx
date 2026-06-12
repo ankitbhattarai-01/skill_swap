@@ -135,6 +135,14 @@ export function SessionRequestDialog({
   const addSlot = () => {
     if (!canAddSlot || !draft) return;
     setSlots((prev) => [...prev, draft].sort((a, b) => a.getTime() - b.getTime()));
+    // Constrained pickers auto-advance to the next free day via preferAfter;
+    // without teacher windows there's no auto-fill, so nudge the draft to the
+    // same time next day ourselves.
+    if (!teacherId) {
+      const next = new Date(draft);
+      next.setDate(next.getDate() + 1);
+      setDraft(next);
+    }
   };
 
   const removeSlot = (time: number) => {
@@ -159,7 +167,7 @@ export function SessionRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-2rem)] max-w-md max-h-[90vh] overflow-hidden rounded-2xl border-white/10 glass-strong p-0 gap-0">
+      <DialogContent className="w-[calc(100%-2rem)] max-w-[420px] max-h-[90vh] overflow-hidden rounded-2xl border-white/10 glass-strong p-0 gap-0">
         {/* Soft brand wash spans the whole dialog — matches Explore / Profile heroes. */}
         <div className="pointer-events-none absolute inset-0 gradient-hero opacity-80" />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.22),transparent_55%)] dark:hidden" />
@@ -323,6 +331,7 @@ export function SessionRequestDialog({
                     onValidityChange={setDraftValid}
                     active={open && multi}
                     excludeTimes={excludeTimes}
+                    preferAfter={slots.length > 0 ? slots[slots.length - 1].getTime() : null}
                   />
                   <Button
                     type="button"

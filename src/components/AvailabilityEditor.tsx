@@ -418,8 +418,13 @@ export const AvailabilityEditor = forwardRef<
     compact?: boolean;
     /** Hide the per-mode "Save changes" button (the parent drives saving via ref). */
     hideSaveButton?: boolean;
+    /** Notifies the parent of the current teaching/learning window counts so it can gate progress. */
+    onWindowsChange?: (counts: { teach: number; learn: number }) => void;
   }
->(function AvailabilityEditor({ compact = false, hideSaveButton = false }, ref) {
+>(function AvailabilityEditor(
+  { compact = false, hideSaveButton = false, onWindowsChange },
+  ref,
+) {
   const [teachWindows, setTeachWindows] = useState<LocalWindow[]>([]);
   const [learnWindows, setLearnWindows] = useState<LocalWindow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -448,6 +453,10 @@ export const AvailabilityEditor = forwardRef<
       controller.abort();
     };
   }, []);
+
+  useEffect(() => {
+    onWindowsChange?.({ teach: teachWindows.length, learn: learnWindows.length });
+  }, [teachWindows.length, learnWindows.length, onWindowsChange]);
 
   // One button saves both teaching and learning windows together.
   const saveAll = async () => {

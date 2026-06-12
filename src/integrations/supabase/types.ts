@@ -1443,6 +1443,16 @@ export type Database = {
         };
         Returns: Json;
       };
+      admin_set_user_admin: {
+        Args: {
+          p_user_id: string;
+          p_make_admin: boolean;
+          p_reason_code: string;
+          p_justification: string;
+          p_ticket_ref: string;
+        };
+        Returns: boolean;
+      };
       admin_reinstate_user: {
         Args: {
           p_user_id: string;

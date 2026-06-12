@@ -8,8 +8,11 @@ import type { Enums } from "@/integrations/supabase/types";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  ChevronRight,
+  Clock,
   Coins,
   Gift,
+  RotateCcw,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -65,8 +68,10 @@ type TransactionItem = {
   title: string;
   date: string;
   amount: number;
-  kind: "earned" | "spent" | "bonus";
+  kind: "earned" | "spent" | "bonus" | "refund" | "hold";
   durationMinutes?: number;
+  counterpartyId?: string | null;
+  counterpartyName?: string | null;
 };
 
 function CreditsPage() {
@@ -122,8 +127,17 @@ function CreditsPage() {
       if (sessionError) throw sessionError;
 
       const completedSessions = (sessionData ?? []) as unknown as CompletedSession[];
+      const creditRows = (transactionData ?? []) as unknown as CreditTransaction[];
+      // Names come from both the completed-session list and every session
+      // referenced by a ledger row (refunds/holds live on cancelled sessions
+      // that never appear in completedSessions).
       const participantIds = Array.from(
-        new Set(completedSessions.flatMap((session) => [session.learner_id, session.teacher_id])),
+        new Set([
+          ...completedSessions.flatMap((session) => [session.learner_id, session.teacher_id]),
+          ...creditRows.flatMap((row) =>
+            row.sessions ? [row.sessions.learner_id, row.sessions.teacher_id] : [],
+          ),
+        ]),
       );
       const names = new Map<string, string>();
       if (participantIds.length) {
@@ -136,31 +150,78 @@ function CreditsPage() {
         }
       }
 
-      const creditRows = (transactionData ?? []) as unknown as CreditTransaction[];
-      const fromLedger = creditRows.map((row) => {
-        const isEarned = row.to_user === user.id;
+      const fromLedger = creditRows.map<TransactionItem>((row) => {
         const session = row.sessions;
-        const otherUserId = isEarned ? session?.learner_id : session?.teacher_id;
-        const otherName = otherUserId ? (names.get(otherUserId) ?? "Student") : "SkillSwap";
+        const description = row.description ?? "";
+        // Escrow movements: a hold sets credits aside, a refund returns them.
+        // Neither is real income/spend — they must not land in the earned card,
+        // and a hold+refund pair has to net to zero in the spent card.
+        const isRefund = description.startsWith("Refund");
+        const isHold = description === "Held for upcoming session";
+        // The counterparty is the other participant in the session. For escrow
+        // rows one of from_user/to_user is NULL, so derive it from the session.
+        const iAmTeacher = session?.teacher_id === user.id;
+        const counterpartyId = session
+          ? iAmTeacher
+            ? session.learner_id
+            : session.teacher_id
+          : row.from_user === user.id
+            ? row.to_user
+            : row.from_user;
+        const counterpartyName = counterpartyId ? (names.get(counterpartyId) ?? "Student") : null;
         const skillName = session?.skills?.name ?? "a skill";
+        const durationMinutes = session?.duration_minutes;
+
+        if (isRefund) {
+          return {
+            id: row.id,
+            title: counterpartyName
+              ? `Refund · session with ${counterpartyName}`
+              : (row.description ?? "Refund"),
+            date: row.created_at,
+            amount: Math.abs(row.amount),
+            kind: "refund",
+            durationMinutes,
+            counterpartyId,
+            counterpartyName,
+          };
+        }
+        if (isHold) {
+          return {
+            id: row.id,
+            title: counterpartyName
+              ? `Reserved for session with ${counterpartyName}`
+              : "Held for upcoming session",
+            date: row.created_at,
+            amount: -Math.abs(row.amount),
+            kind: "hold",
+            durationMinutes,
+            counterpartyId,
+            counterpartyName,
+          };
+        }
+
+        const isEarned = row.to_user === user.id;
         return {
           id: row.id,
           title:
             row.description ??
             (isEarned
-              ? `Taught ${skillName} to ${otherName}`
-              : `Learned ${skillName} from ${otherName}`),
+              ? `Taught ${skillName} to ${counterpartyName ?? "a student"}`
+              : `Learned ${skillName} from ${counterpartyName ?? "a teacher"}`),
           date: row.created_at,
           amount: isEarned ? Math.abs(row.amount) : -Math.abs(row.amount),
-          kind: isEarned ? ("earned" as const) : ("spent" as const),
-          durationMinutes: session?.duration_minutes,
+          kind: isEarned ? "earned" : "spent",
+          durationMinutes,
+          counterpartyId,
+          counterpartyName,
         };
       });
 
-      const fallbackFromSessions = completedSessions.map((session) => {
+      const fallbackFromSessions = completedSessions.map<TransactionItem>((session) => {
         const isTeacher = session.teacher_id === user.id;
-        const otherName =
-          names.get(isTeacher ? session.learner_id : session.teacher_id) ?? "Student";
+        const counterpartyId = isTeacher ? session.learner_id : session.teacher_id;
+        const otherName = names.get(counterpartyId) ?? "Student";
         const skillName = session.skills?.name ?? "a skill";
         return {
           id: session.id,
@@ -169,8 +230,10 @@ function CreditsPage() {
             : `Learned ${skillName} from ${otherName}`,
           date: session.updated_at ?? session.created_at,
           amount: isTeacher ? session.credits : -session.credits,
-          kind: isTeacher ? ("earned" as const) : ("spent" as const),
+          kind: isTeacher ? "earned" : "spent",
           durationMinutes: session.duration_minutes,
+          counterpartyId,
+          counterpartyName: otherName,
         };
       });
 
@@ -256,6 +319,8 @@ function CreditsPage() {
     [transactions],
   );
 
+  // Earned counts teaching income only — refunds (escrow returning your own
+  // credits) are not earnings.
   const totalEarned = useMemo(
     () =>
       transactions
@@ -263,11 +328,22 @@ function CreditsPage() {
         .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0),
     [transactions],
   );
+  // Spent nets holds against their refunds: a cancelled session (hold then
+  // refund) collapses to zero, while a completed session's hold stays counted.
   const totalSpent = useMemo(
     () =>
-      transactions
-        .filter((transaction) => transaction.kind === "spent")
-        .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0),
+      Math.max(
+        0,
+        transactions.reduce((sum, transaction) => {
+          if (transaction.kind === "spent" || transaction.kind === "hold") {
+            return sum + Math.abs(transaction.amount);
+          }
+          if (transaction.kind === "refund") {
+            return sum - Math.abs(transaction.amount);
+          }
+          return sum;
+        }, 0),
+      ),
     [transactions],
   );
 
@@ -419,7 +495,7 @@ function SummaryCard({
             )}
           >
             {value}
-            <span className="text-sm font-medium text-muted-foreground">cr</span>
+            <span className="text-sm font-medium text-muted-foreground">Credits</span>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">{caption}</p>
         </div>
@@ -449,21 +525,37 @@ function TransactionRow({ transaction }: { transaction: TransactionItem }) {
       amount: "text-orange-400",
       hover: "hover:border-orange-400/30",
     },
+    refund: {
+      badge: "bg-emerald-400/15 text-emerald-400 ring-1 ring-emerald-400/20",
+      amount: "text-emerald-400",
+      hover: "hover:border-emerald-400/30",
+    },
+    hold: {
+      badge: "bg-amber-400/15 text-amber-400 ring-1 ring-amber-400/20",
+      amount: "text-muted-foreground",
+      hover: "hover:border-amber-400/30",
+    },
     bonus: {
       badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
       amount: "text-brand-purple",
       hover: "hover:border-brand-purple/30",
     },
   }[transaction.kind];
-  const Icon = transaction.kind === "bonus" ? Gift : isPositive ? ArrowDownLeft : ArrowUpRight;
+  const Icon =
+    transaction.kind === "bonus"
+      ? Gift
+      : transaction.kind === "refund"
+        ? RotateCcw
+        : transaction.kind === "hold"
+          ? Clock
+          : isPositive
+            ? ArrowDownLeft
+            : ArrowUpRight;
 
-  return (
-    <article
-      className={cn(
-        "group flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 transition-all hover:bg-white/[0.07] sm:px-5",
-        styles.hover,
-      )}
-    >
+  const clickable = Boolean(transaction.counterpartyId);
+
+  const body = (
+    <>
       <div
         className={cn(
           "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
@@ -482,14 +574,43 @@ function TransactionRow({ transaction }: { transaction: TransactionItem }) {
               {transaction.durationMinutes} min
             </>
           )}
+          {transaction.counterpartyName && (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              with {transaction.counterpartyName}
+            </>
+          )}
         </p>
       </div>
       <div className={cn("text-lg font-bold sm:text-xl", styles.amount)}>
         {isPositive ? "+" : "−"}
         {Math.abs(transaction.amount)}
       </div>
-    </article>
+      {clickable && (
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5" />
+      )}
+    </>
   );
+
+  const className = cn(
+    "group flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 transition-all hover:bg-white/[0.07] sm:px-5",
+    styles.hover,
+  );
+
+  if (clickable && transaction.counterpartyId) {
+    return (
+      <Link
+        to="/users/$userId"
+        params={{ userId: transaction.counterpartyId }}
+        preload="intent"
+        className={className}
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return <article className={className}>{body}</article>;
 }
 
 function formatDate(value: string) {

@@ -76,7 +76,12 @@ function SidebarItem({
       title={collapsed ? item.name : undefined}
       className={cn(
         "group relative mx-auto flex h-11 items-center overflow-hidden rounded-2xl text-sm font-semibold",
-        "transition-[background,color,transform,box-shadow,width,gap,padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-transform",
+        // No `will-change-transform` here: it promotes each item to its own GPU
+        // layer, which then escapes the sidebar's `overflow-hidden` clip in
+        // Chromium. During the collapse animation the item's `width: 100%` is
+        // briefly wider than the shrinking sidebar, so an unclipped active pill
+        // would visibly poke out past the sidebar's right edge.
+        "transition-[background,color,transform,box-shadow,width,gap,padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
         active
           ? "gradient-brand text-white shadow-[0_4px_10px_-6px_rgb(124_58_237_/_0.35)] dark:shadow-[0_2px_8px_-4px_rgb(0_0_0_/_0.5)]"
           : "text-muted-foreground hover:translate-x-0.5 hover:bg-secondary/70 hover:text-foreground",

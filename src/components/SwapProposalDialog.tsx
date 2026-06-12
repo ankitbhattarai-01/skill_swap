@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeftRight, Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -23,8 +23,24 @@ type Props = {
   otherUserId: string;
   // Optional pre-known name, just for the title before the match loads.
   otherName?: string;
+  // When the dialog is opened from a suggestion that named specific skills
+  // ("Swap Figma for Guitar"), pre-select those legs instead of the first
+  // overlap, so what the user clicked matches what opens. Matched
+  // case-insensitively; falls back to the first option when absent/unmatched.
+  preferMySkillName?: string;
+  preferTheirSkillName?: string;
   onProposed?: () => void;
 };
+
+// Picks the option whose name matches `name` (case-insensitive), else the first
+// option, else null.
+function pickSkill(options: SwapSkillOption[], name?: string): SwapSkillOption | null {
+  if (name) {
+    const match = options.find((o) => o.name.toLowerCase() === name.toLowerCase());
+    if (match) return match;
+  }
+  return options[0] ?? null;
+}
 
 // Lets the signed-in user offer a direct skill swap to `otherUserId`: pick one
 // skill to teach them and one of theirs to learn, a free time for each, and
@@ -34,6 +50,8 @@ export function SwapProposalDialog({
   onOpenChange,
   otherUserId,
   otherName,
+  preferMySkillName,
+  preferTheirSkillName,
   onProposed,
 }: Props) {
   const { user } = useAuth();
@@ -65,17 +83,17 @@ export function SwapProposalDialog({
     setTheirWhen(null);
     setTheirWhenValid(false);
     (async () => {
-      const m = await fetchSwapMatch(otherUserId);
+      const m = await fetchSwapMatch(otherUserId, user?.id);
       if (!alive) return;
       setMatch(m);
-      setMySkill(m?.iCanTeach[0] ?? null);
-      setTheirSkill(m?.theyCanTeach[0] ?? null);
+      setMySkill(pickSkill(m?.iCanTeach ?? [], preferMySkillName));
+      setTheirSkill(pickSkill(m?.theyCanTeach ?? [], preferTheirSkillName));
       setLoading(false);
     })();
     return () => {
       alive = false;
     };
-  }, [open, otherUserId]);
+  }, [open, otherUserId, user?.id, preferMySkillName, preferTheirSkillName]);
 
   const hasOverlap = Boolean(match && match.iCanTeach.length && match.theyCanTeach.length);
 
@@ -143,8 +161,7 @@ export function SwapProposalDialog({
               <DialogTitle className="text-base leading-tight">{title}</DialogTitle>
             </div>
             <DialogDescription className="text-xs leading-snug">
-              A direct swap is two free sessions. No credits change hands. You each teach the other
-              one skill.
+              You each teach the other one skill. Two sessions, no credits change hands.
             </DialogDescription>
           </DialogHeader>
 
@@ -178,7 +195,10 @@ export function SwapProposalDialog({
                 active={open}
               />
 
-              {/* They teach you */}
+              {/* They teach you. Excludes the first leg's time range so its
+                  suggestions and auto-filled pick can't clash with it — the
+                  exclusion is one-directional to keep the two auto-fills from
+                  endlessly dodging each other. */}
               <SwapLegEditor
                 heading="They teach you"
                 tone="purple"
@@ -192,6 +212,11 @@ export function SwapProposalDialog({
                 onWhen={setTheirWhen}
                 onWhenValid={setTheirWhenValid}
                 active={open}
+                excludeInterval={
+                  myWhen
+                    ? { start: myWhen.getTime(), end: myWhen.getTime() + myDuration * 60_000 }
+                    : null
+                }
               />
 
               {legsClash && (
@@ -231,6 +256,7 @@ function SwapLegEditor({
   onWhen,
   onWhenValid,
   active,
+  excludeInterval,
 }: {
   heading: string;
   tone: "cyan" | "purple";
@@ -244,6 +270,7 @@ function SwapLegEditor({
   onWhen: (d: Date | null) => void;
   onWhenValid: (v: boolean) => void;
   active: boolean;
+  excludeInterval?: { start: number; end: number } | null;
 }) {
   const accent = tone === "cyan" ? "text-brand-cyan" : "text-brand-purple";
   const selectedRing =
@@ -252,16 +279,41 @@ function SwapLegEditor({
       : "border-brand-purple/60 bg-brand-purple/10";
   // Reset the chosen time when the duration changes (a different length may no
   // longer fit the previously valid slot).
-  const durationKey = useMemo(() => duration, [duration]);
   useEffect(() => {
     onWhen(null);
     onWhenValid(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [durationKey]);
+  }, [duration]);
 
   return (
     <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-      <p className={cn("text-[10px] font-semibold uppercase tracking-wider", accent)}>{heading}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className={cn("text-[10px] font-semibold uppercase tracking-wider", accent)}>
+          {heading}
+        </p>
+
+        {/* Duration */}
+        <div className="flex gap-1">
+          {SESSION_DURATIONS.map((value) => {
+            const isSel = value === duration;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => onDuration(value)}
+                className={cn(
+                  "rounded-md border px-2 py-0.5 text-[11px] font-semibold transition-all",
+                  isSel
+                    ? selectedRing
+                    : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]",
+                )}
+              >
+                {value} min
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Skill */}
       <div className="flex flex-wrap gap-1.5">
@@ -285,36 +337,17 @@ function SwapLegEditor({
         })}
       </div>
 
-      {/* Duration */}
-      <div className="grid grid-cols-3 gap-2">
-        {SESSION_DURATIONS.map((value) => {
-          const isSel = value === duration;
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onDuration(value)}
-              className={cn(
-                "rounded-lg border px-2 py-1.5 text-center text-xs font-semibold transition-all",
-                isSel
-                  ? selectedRing
-                  : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]",
-              )}
-            >
-              {value} min
-            </button>
-          );
-        })}
-      </div>
-
-      {/* When (constrained to the teacher's free windows) */}
+      {/* When: the suggested chips are the choices; "Custom…" opens the full
+          date/time picker (still constrained to the teacher's free windows). */}
       <TeacherSlotPicker
+        compact
         teacherId={teacherId}
         durationMinutes={duration}
         value={when}
         onChange={onWhen}
         onValidityChange={onWhenValid}
         active={active}
+        excludeIntervals={excludeInterval ? [excludeInterval] : undefined}
       />
     </div>
   );

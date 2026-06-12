@@ -340,9 +340,9 @@ export async function requestSessionsForSlots({
   creditsPerHour: number;
   durationMinutes: SessionDuration;
   startTimes: string[];
-}): Promise<{ created: number; error: Error | null }> {
+}): Promise<{ created: number; firstSessionId: string | null; error: Error | null }> {
   if (startTimes.length === 0) {
-    return { created: 0, error: new Error("Pick at least one session time.") };
+    return { created: 0, firstSessionId: null, error: new Error("Pick at least one session time.") };
   }
 
   // credits is recomputed server-side by the enforce_session_credits trigger;
@@ -376,5 +376,5 @@ export async function requestSessionsForSlots({
     const message = (friendly as { message?: string }).message;
     normalizedError = new Error(message ?? "Could not request the sessions.");
   }
-  return { created: data?.length ?? 0, error: normalizedError };
+  return { created: data?.length ?? 0, firstSessionId: data?.[0]?.id ?? null, error: normalizedError };
 }

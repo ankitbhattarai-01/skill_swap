@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import {
   TIME_STEP_MIN,
@@ -38,7 +39,19 @@ type Props = {
   active?: boolean;
   // Local-timestamps (Date.getTime()) to hide from the choices — used when
   // building a multi-session plan so the same slot can't be picked twice.
+  // Each blocked slot is assumed to span this picker's own duration.
   excludeTimes?: number[];
+  // Blocked [start, end) ranges in ms with their own explicit lengths — used by
+  // swaps, where the other leg's session may have a different duration.
+  excludeIntervals?: { start: number; end: number }[];
+  // Timestamp (ms) of the latest slot already picked in a multi-session plan.
+  // When the current value needs auto-filling, the picker prefers the first
+  // free start on a day after this one, so consecutive adds step across days
+  // instead of stacking later times onto the same day.
+  preferAfter?: number | null;
+  // Compact mode: the suggested-time chips become the primary selectable
+  // choices and the full date/time picker hides behind a "Custom…" toggle.
+  compact?: boolean;
 };
 
 export function TeacherSlotPicker({
@@ -49,8 +62,12 @@ export function TeacherSlotPicker({
   onValidityChange,
   active = true,
   excludeTimes,
+  excludeIntervals,
+  preferAfter,
+  compact = false,
 }: Props) {
   const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>([]);
+  const [showCustom, setShowCustom] = useState(false);
   const [windowsLoading, setWindowsLoading] = useState(false);
   // Distinguishes "the fetch failed" from "the teacher genuinely has no free
   // times" so we don't tell the learner the teacher is unavailable when it was
@@ -65,11 +82,17 @@ export function TeacherSlotPicker({
   // [start, start + duration) interval overlaps any picked slot's interval —
   // other times on the same day stay available.
   const excludeKey = (excludeTimes ?? []).join(",");
+  const intervalKey = (excludeIntervals ?? []).map((i) => `${i.start}:${i.end}`).join(",");
   const isSlotBlocked = useMemo(() => {
     const blockedStarts = excludeKey ? excludeKey.split(",").map(Number) : [];
+    const intervals = intervalKey
+      ? intervalKey.split(",").map((pair) => pair.split(":").map(Number))
+      : [];
     const durMs = durationMinutes * 60 * 1000;
-    return (timeMs: number) => blockedStarts.some((t) => timeMs < t + durMs && timeMs + durMs > t);
-  }, [excludeKey, durationMinutes]);
+    return (timeMs: number) =>
+      blockedStarts.some((t) => timeMs < t + durMs && timeMs + durMs > t) ||
+      intervals.some(([s, e]) => timeMs < e && timeMs + durMs > s);
+  }, [excludeKey, intervalKey, durationMinutes]);
 
   // Fetch the teacher's free windows for the next horizon. One fetch per
   // (teacher, active) — duration filtering happens per-render on the client.
@@ -110,9 +133,10 @@ export function TeacherSlotPicker({
     };
   }, [active, teacherId, retryNonce]);
 
-  // Earliest N free starts across the whole horizon — surfaced as quick
-  // "Best times" chips. Recomputed when duration changes since shorter
-  // sessions fit in more places.
+  // First free start on each of the next N distinct days — surfaced as quick
+  // "Best times" chips, so the suggestions spread across different days
+  // instead of clustering 10 minutes apart on the same one. Recomputed when
+  // duration changes since shorter sessions fit in more places.
   const suggestedSlots = useMemo<Date[]>(() => {
     if (!constrainPicker) return [];
     const out: Date[] = [];
@@ -122,11 +146,8 @@ export function TeacherSlotPicker({
     cursor.setHours(0, 0, 0, 0);
     while (cursor <= horizonEnd && out.length < SUGGESTED_COUNT) {
       const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
-      for (const s of starts) {
-        if (isSlotBlocked(s.getTime())) continue;
-        out.push(s);
-        if (out.length >= SUGGESTED_COUNT) break;
-      }
+      const first = starts.find((s) => !isSlotBlocked(s.getTime()));
+      if (first) out.push(first);
       cursor.setDate(cursor.getDate() + 1);
     }
     return out;
@@ -180,11 +201,34 @@ export function TeacherSlotPicker({
   useEffect(() => {
     if (!constrainPicker || windowsLoading) return;
     if (valid) return;
+    // Multi-session plans: after a slot is added the old draft turns invalid,
+    // so step to the first free start on a day after the latest picked slot —
+    // consecutive adds then walk across available days instead of stacking
+    // later times onto the same day.
+    if (preferAfter != null) {
+      const horizonEnd = new Date();
+      horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
+      const cursor = new Date(preferAfter);
+      cursor.setHours(0, 0, 0, 0);
+      cursor.setDate(cursor.getDate() + 1);
+      while (cursor <= horizonEnd) {
+        const first = computeValidStartsForDay(teacherWindows, cursor, durationMinutes).find(
+          (s) => !isSlotBlocked(s.getTime()),
+        );
+        if (first) {
+          onChange(first);
+          return;
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      // No free day left after the latest slot — fall through to the earliest
+      // suggestion so the picker never strands on an invalid value.
+    }
     if (suggestedSlots.length === 0) return;
     onChange(new Date(suggestedSlots[0]));
     // onChange is stable from the parent; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [constrainPicker, windowsLoading, valid, suggestedSlots]);
+  }, [constrainPicker, windowsLoading, valid, suggestedSlots, preferAfter]);
 
   // Report validity upward.
   useEffect(() => {
@@ -209,25 +253,52 @@ export function TeacherSlotPicker({
               Loading teacher's free times…
             </p>
           ) : suggestedSlots.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <div className="flex items-start gap-1.5">
+              <span className="inline-flex shrink-0 items-center gap-1 py-1 text-[11px] text-muted-foreground">
                 <Sparkles className="h-3 w-3 text-brand-purple" />
                 Best times:
               </span>
-              {suggestedSlots.map((d) => (
+              <div className="flex flex-wrap gap-1.5">
+              {suggestedSlots.map((d) => {
+                const isSel =
+                  compact && scheduleDate != null && d.getTime() === scheduleDate.getTime();
+                return (
+                  <button
+                    key={d.getTime()}
+                    type="button"
+                    onClick={() => onChange(new Date(d))}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                      isSel
+                        ? "border-brand-purple bg-brand-purple text-white shadow-sm"
+                        : "border-brand-purple/30 bg-brand-purple/10 text-brand-purple hover:bg-brand-purple/20",
+                    )}
+                  >
+                    {d.toLocaleString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </button>
+                );
+              })}
+              {compact && (
                 <button
-                  key={d.getTime()}
                   type="button"
-                  onClick={() => onChange(new Date(d))}
-                  className="rounded-full border border-brand-purple/30 bg-brand-purple/10 px-2.5 py-1 text-xs font-medium text-brand-purple transition-colors hover:bg-brand-purple/20"
+                  onClick={() => setShowCustom((v) => !v)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                    showCustom
+                      ? "border-white/25 bg-white/10 text-foreground"
+                      : "border-white/10 bg-white/5 text-muted-foreground hover:bg-white/10",
+                  )}
                 >
-                  {d.toLocaleString(undefined, {
-                    weekday: "short",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
+                  Custom…
                 </button>
-              ))}
+              )}
+              </div>
             </div>
           ) : windowsError ? (
             <p className="text-xs text-destructive">
@@ -248,6 +319,7 @@ export function TeacherSlotPicker({
         </div>
       )}
 
+      {(!compact || showCustom) && (
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <Popover>
           <PopoverTrigger asChild>
@@ -361,12 +433,14 @@ export function TeacherSlotPicker({
           </SelectContent>
         </Select>
       </div>
+      )}
 
-      {scheduleDate && selectedStartMatchesValid && !scheduleInPast && (
+      {(!compact || showCustom) && scheduleDate && selectedStartMatchesValid && !scheduleInPast && (
         <p className="text-xs text-muted-foreground">{formatPretty(scheduleDate)}</p>
       )}
       {scheduleInPast && <p className="text-xs text-destructive">Pick a time in the future.</p>}
-      {constrainPicker &&
+      {(!compact || showCustom) &&
+        constrainPicker &&
         !windowsLoading &&
         !windowsError &&
         scheduleDate != null &&

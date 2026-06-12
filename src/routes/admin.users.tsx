@@ -10,6 +10,8 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Shield,
+  ShieldOff,
   ShieldX,
   Users,
 } from "lucide-react";
@@ -91,6 +93,7 @@ function AdminUsersPage() {
     hasAdminPermission(permissions, "users", "reveal") ||
     hasAdminPermission(permissions, "privacy", "reveal");
   const canSuspend = hasAdminPermission(permissions, "users", "update");
+  const canGrantAdmin = hasAdminPermission(permissions, "access-governance", "approve");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "admins" | "standard">("all");
@@ -100,6 +103,11 @@ function AdminUsersPage() {
   const [suspendTarget, setSuspendTarget] = useState<{
     id: string;
     mode: "suspend" | "reinstate";
+    label: string | null;
+  } | null>(null);
+  const [adminTarget, setAdminTarget] = useState<{
+    id: string;
+    mode: "grant" | "revoke";
     label: string | null;
   } | null>(null);
   const [ticketRef, setTicketRef] = useState("");
@@ -164,6 +172,42 @@ function AdminUsersPage() {
     setSuspendTarget(null);
     setTicketRef("");
     setJustification("");
+  };
+
+  const closeAdmin = () => {
+    setAdminTarget(null);
+    setTicketRef("");
+    setJustification("");
+  };
+
+  const runAdminAction = async () => {
+    if (!adminTarget || busy) return;
+    if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
+      toast.error("Ticket reference and justification are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const makeAdmin = adminTarget.mode === "grant";
+      const { error } = await supabase.rpc("admin_set_user_admin", {
+        p_user_id: adminTarget.id,
+        p_make_admin: makeAdmin,
+        p_reason_code: makeAdmin ? "access:admin_grant" : "access:admin_revoke",
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim(),
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success(makeAdmin ? "User is now an admin." : "Admin access removed.");
+      closeAdmin();
+      await queryClient.invalidateQueries({ queryKey: ADMIN_USERS_KEY(user?.id, search) });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update admin access.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const runSuspendAction = async () => {
@@ -447,6 +491,43 @@ function AdminUsersPage() {
                     >
                       <Eye className="h-4 w-4" /> Reveal
                     </Button>
+                    {canGrantAdmin &&
+                      row.id !== user.id &&
+                      (row.has_admin_role ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Remove admin access"
+                          onClick={() => {
+                            setTicketRef("");
+                            setJustification("");
+                            setAdminTarget({
+                              id: row.id,
+                              mode: "revoke",
+                              label: row.masked_email ?? row.masked_name,
+                            });
+                          }}
+                        >
+                          <ShieldOff className="h-4 w-4" /> Remove admin
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Make this user an admin"
+                          onClick={() => {
+                            setTicketRef("");
+                            setJustification("");
+                            setAdminTarget({
+                              id: row.id,
+                              mode: "grant",
+                              label: row.masked_email ?? row.masked_name,
+                            });
+                          }}
+                        >
+                          <Shield className="h-4 w-4" /> Make admin
+                        </Button>
+                      ))}
                     {row.suspended_at ? (
                       <Button
                         size="sm"
@@ -626,6 +707,50 @@ function AdminUsersPage() {
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {suspendTarget?.mode === "suspend" ? "Suspend" : "Reinstate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(adminTarget)} onOpenChange={(open) => !open && closeAdmin()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {adminTarget?.mode === "grant" ? "Make user an admin" : "Remove admin access"}
+            </DialogTitle>
+            <DialogDescription>
+              {adminTarget?.mode === "grant"
+                ? "Grants full platform admin access (every admin permission). The change is recorded in the audit chain."
+                : "Revokes every active admin role from this user. The change is recorded in the audit chain."}
+            </DialogDescription>
+          </DialogHeader>
+          {adminTarget && (
+            <div className="rounded-xl border border-border/60 bg-background/40 p-3 text-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Target</div>
+              <div className="mt-1 break-all font-medium">
+                {adminTarget.label ?? adminTarget.id}
+              </div>
+            </div>
+          )}
+          <div className="space-y-4">
+            <ReasonFields
+              ticketRef={ticketRef}
+              justification={justification}
+              onTicketRefChange={setTicketRef}
+              onJustificationChange={setJustification}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeAdmin}>
+              Cancel
+            </Button>
+            <Button
+              variant={adminTarget?.mode === "revoke" ? "destructive" : "default"}
+              disabled={busy}
+              onClick={() => void runAdminAction()}
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {adminTarget?.mode === "grant" ? "Make admin" : "Remove admin"}
             </Button>
           </DialogFooter>
         </DialogContent>

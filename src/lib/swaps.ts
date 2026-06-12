@@ -39,10 +39,17 @@ function toOptions(
 // Computes the reciprocal-match overlap between the signed-in user and
 // `otherUserId`. Returns null when there's no logged-in user. `iCanTeach` /
 // `theyCanTeach` may be empty when no overlap exists — the caller decides how
-// to message that.
-export async function fetchSwapMatch(otherUserId: string): Promise<SwapMatch | null> {
-  const { data: auth } = await supabase.auth.getUser();
-  const me = auth?.user?.id;
+// to message that. Pass the current user's id (callers already have it from
+// auth context) to skip a redundant auth-server round-trip before the queries.
+export async function fetchSwapMatch(
+  otherUserId: string,
+  currentUserId?: string,
+): Promise<SwapMatch | null> {
+  let me = currentUserId;
+  if (!me) {
+    const { data: auth } = await supabase.auth.getUser();
+    me = auth?.user?.id;
+  }
   if (!me) return null;
 
   const [myTeach, myLearn, theirTeach, theirLearn, otherProfile] = await Promise.all([

@@ -40,6 +40,7 @@ import { useFeatureEnabled } from "@/lib/feature-flags";
 const loadJitsi = () => import("@/lib/jitsi");
 import {
   getOrCreateSession,
+  requestSessionsForSlots,
   canJoinSession,
   describeJoinWindow,
   type SessionDuration,
@@ -68,6 +69,7 @@ import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
+import type { MultiSessionParams } from "@/components/SessionRequestDialog";
 // Lazy for the same reason — it pulls in the Calendar via TeacherSlotPicker.
 const SwapProposalDialog = lazy(() =>
   import("@/components/SwapProposalDialog").then((m) => ({ default: m.SwapProposalDialog })),
@@ -183,6 +185,7 @@ type SessionRow = {
   created_at: string;
   is_swap?: boolean;
   swap_id?: string | null;
+  batch_id?: string | null;
   skills: { id: string; name: string } | null;
   learnerName: string;
   teacherName: string;
@@ -487,8 +490,14 @@ function DashboardPage() {
   >([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   // The user a swap is being proposed to (opens SwapProposalDialog). Driven by
-  // the reciprocal-match AI suggestion tile.
-  const [swapTarget, setSwapTarget] = useState<string | null>(null);
+  // the reciprocal-match AI suggestion tile. The skill names let the dialog
+  // pre-select the exact legs the suggestion named ("Swap Figma for Guitar")
+  // instead of defaulting to the first overlap.
+  const [swapTarget, setSwapTarget] = useState<{
+    userId: string;
+    mySkillName?: string;
+    theirSkillName?: string;
+  } | null>(null);
   // Bumped whenever the sessions realtime channel fires (or a swap is
   // proposed) so SwapInbox refetches — it manages its own data and would
   // otherwise only load on mount.
@@ -975,18 +984,33 @@ function DashboardPage() {
         });
       })();
 
+      // The "Top matches" section renders teacher data only, so unblock its
+      // skeleton the instant the teacher pipeline resolves — don't make it wait
+      // on the seeker pipeline or the session pipeline (which dynamically
+      // imports Jitsi). Each pipeline paints its own section as it lands.
+      const teacherDone = teacherPipeline.then((outcome) => {
+        if (stale()) return outcome;
+        setTeacherRatings(outcome.ratings);
+        setTeacherAvailability(outcome.availability);
+        setTeachers(outcome.list);
+        setMatchesHydrated(true);
+        return outcome;
+      });
+      const seekerDone = seekerPipeline.then((list) => {
+        if (!stale()) setSeekers(list);
+        return list;
+      });
+      const sessionDone = sessionPipeline.then((list) => {
+        if (!stale()) setSessions(list);
+        return list;
+      });
+
       const [teacherOutcome, seekerList, sessionList] = await Promise.all([
-        teacherPipeline,
-        seekerPipeline,
-        sessionPipeline,
+        teacherDone,
+        seekerDone,
+        sessionDone,
       ]);
       if (stale()) return;
-      setTeacherRatings(teacherOutcome.ratings);
-      setTeacherAvailability(teacherOutcome.availability);
-      setTeachers(teacherOutcome.list);
-      setSeekers(seekerList);
-      setSessions(sessionList);
-      setMatchesHydrated(true);
 
       setDashboardCache(user.id, {
         profile: p as Profile,
@@ -1242,6 +1266,38 @@ function DashboardPage() {
     }
   };
 
+  // Multi-session path from the same dialog (request kind only): one ordinary
+  // pending session per chosen slot, accepted individually by the teacher.
+  const confirmRequestDialogMulti = async (params: MultiSessionParams) => {
+    if (!user || !requestDialog || requestDialog.kind !== "request") return;
+    const subjectId = requestDialog.teacher.id;
+    markBusy(subjectId);
+    try {
+      const { created, error } = await requestSessionsForSlots({
+        learnerId: user.id,
+        teacherId: requestDialog.teacher.user_id,
+        skillId: requestDialog.teacher.skill_id,
+        creditsPerHour: requestDialog.teacher.credits_per_hour,
+        durationMinutes: params.durationMinutes,
+        startTimes: params.startTimes,
+      });
+      if (error) {
+        toastError(error);
+        return;
+      }
+      if (created > 0) {
+        playRequestSentChime();
+        toast.success(
+          `Requested ${created} ${created === 1 ? "session" : "sessions"}. The teacher accepts each one.`,
+        );
+        setRequestDialog(null);
+        await loadDashboard();
+      }
+    } finally {
+      clearBusy(subjectId);
+    }
+  };
+
   const acceptSession = async (session: SessionRow) => {
     markBusy(session.id);
     try {
@@ -1279,6 +1335,71 @@ function DashboardPage() {
       await loadDashboard();
     } finally {
       clearBusy(session.id);
+    }
+  };
+
+  // Accept every session in a multi-session request in one go. Each session
+  // still gets its own Jitsi room and accept_session call (they're independent
+  // rows); we just batch the busy-state, toast, and dashboard reload so the
+  // teacher sees one smooth action instead of N. Failures on one session don't
+  // abort the rest.
+  const acceptSessions = async (sessions: SessionRow[]) => {
+    if (sessions.length === 1) return acceptSession(sessions[0]);
+    sessions.forEach((s) => markBusy(s.id));
+    try {
+      const { createVideoRoom } = await loadJitsi();
+      let accepted = 0;
+      for (const session of sessions) {
+        try {
+          const room = await createVideoRoom({
+            sessionId: session.id,
+            skillName: session.skills?.name,
+          });
+          const { error } = await supabase.rpc("accept_session", {
+            p_session_id: session.id,
+            p_meet_link: room.link,
+          });
+          if (error) {
+            toastError(error);
+            continue;
+          }
+          markSelfAction(session.id, ["session_accepted"]);
+          accepted += 1;
+        } catch (error) {
+          toastError(error, "Could not create Jitsi room");
+        }
+      }
+      if (accepted > 0) {
+        toast.success(`Accepted ${accepted} ${accepted === 1 ? "session" : "sessions"}`);
+        void invalidateCreditBalance();
+      }
+      await loadDashboard();
+    } finally {
+      sessions.forEach((s) => clearBusy(s.id));
+    }
+  };
+
+  const rejectSessions = async (sessions: SessionRow[]) => {
+    if (sessions.length === 1) return rejectSession(sessions[0]);
+    sessions.forEach((s) => markBusy(s.id));
+    try {
+      let rejected = 0;
+      for (const session of sessions) {
+        const { error } = await supabase.rpc("reject_session", { p_session_id: session.id });
+        if (error) {
+          toastError(error);
+          continue;
+        }
+        markSelfAction(session.id, ["session_rejected"]);
+        rejected += 1;
+      }
+      if (rejected > 0) {
+        toast.success(`Declined ${rejected} ${rejected === 1 ? "session" : "sessions"}`);
+        void invalidateCreditBalance();
+      }
+      await loadDashboard();
+    } finally {
+      sessions.forEach((s) => clearBusy(s.id));
     }
   };
 
@@ -1341,11 +1462,7 @@ function DashboardPage() {
     () =>
       new Set(
         nextMoves.flatMap((m) =>
-          m.kind === "incoming"
-            ? [m.session.id]
-            : m.kind === "upcoming"
-              ? m.sessions.map((s) => s.id)
-              : [],
+          m.kind === "incoming" || m.kind === "upcoming" ? m.sessions.map((s) => s.id) : [],
         ),
       ),
     [nextMoves],
@@ -1435,7 +1552,7 @@ function DashboardPage() {
                 >
                   {myTeaching.length > 0 ? (
                     <Link to="/explore" search={{ mode: "learners" }} preload="intent">
-                      Or find a learner
+                      Find a learner
                     </Link>
                   ) : (
                     <Link to="/profile" preload="intent">
@@ -1481,7 +1598,7 @@ function DashboardPage() {
             <NextMoveCard
               key={
                 move.kind === "incoming"
-                  ? `${move.kind}-${move.session.id}`
+                  ? `incoming-${move.sessions.map((s) => s.id).join("-")}`
                   : move.kind === "upcoming"
                     ? `upcoming-${move.sessions.map((s) => s.id).join("-")}`
                     : `${move.kind}-${i}`
@@ -1490,8 +1607,8 @@ function DashboardPage() {
               userId={user.id}
               busyIds={busyIds}
               matchesHydrated={matchesHydrated}
-              onAccept={acceptSession}
-              onReject={rejectSession}
+              onAcceptMany={acceptSessions}
+              onRejectMany={rejectSessions}
               onCancel={cancelSession}
               onRequest={openRequestDialog}
               onMessageTeacher={(t) => void openChatWithTeacher(t)}
@@ -1507,7 +1624,7 @@ function DashboardPage() {
               recs={recs}
               refreshing={recsRefreshing}
               onRefresh={() => void refreshSuggestions()}
-              onSwap={(userId) => setSwapTarget(userId)}
+              onSwap={(target) => setSwapTarget(target)}
             />
           </div>
         )}
@@ -1638,6 +1755,15 @@ function DashboardPage() {
             learnerId={requestDialog.kind === "request" ? user?.id : requestDialog.seeker.user_id}
             teacherId={requestDialog.kind === "request" ? requestDialog.teacher.user_id : user?.id}
             onConfirm={confirmRequestDialog}
+            allowMultiSession={requestDialog.kind === "request"}
+            teacherName={
+              requestDialog.kind === "request"
+                ? (requestDialog.teacher.profiles?.full_name ?? "Teacher")
+                : undefined
+            }
+            onConfirmMulti={
+              requestDialog.kind === "request" ? confirmRequestDialogMulti : undefined
+            }
           />
         </Suspense>
       )}
@@ -1649,7 +1775,9 @@ function DashboardPage() {
             onOpenChange={(open) => {
               if (!open) setSwapTarget(null);
             }}
-            otherUserId={swapTarget}
+            otherUserId={swapTarget.userId}
+            preferMySkillName={swapTarget.mySkillName}
+            preferTheirSkillName={swapTarget.theirSkillName}
             onProposed={() => {
               setSwapRefresh((n) => n + 1);
               void loadDashboard();
@@ -1681,8 +1809,22 @@ function formatTimeUntil(iso: string): string {
   return `in ${days}d`;
 }
 
+// Absolute, human label for a session's start — used when listing the times in
+// a multi-session request (where "in 2d" for each would be ambiguous).
+function formatSessionSlot(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Time to be decided";
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 type NextMove =
-  | { kind: "incoming"; session: SessionRow }
+  | { kind: "incoming"; sessions: SessionRow[] }
   | { kind: "upcoming"; sessions: SessionRow[] }
   | { kind: "match"; teachers: TeachOffer[] }
   | { kind: "empty"; hasLearning: boolean };
@@ -1700,10 +1842,24 @@ function pickNextMoves(
 ): NextMove[] {
   const moves: NextMove[] = [];
 
-  for (const s of sessions) {
-    if (s.status === "pending" && (s.initiator_id ?? s.learner_id) !== userId) {
-      moves.push({ kind: "incoming", session: s });
-    }
+  // A multi-session request books N separate pending sessions that share one
+  // batch_id. Collapse them into a single "Action needed" card so the teacher
+  // sees one request with all its times — not N identical cards — and can
+  // accept/decline the whole plan at once. Ungrouped requests (no batch_id)
+  // each get their own card, keyed by id so they never merge.
+  const incoming = sessions.filter(
+    (s) => s.status === "pending" && (s.initiator_id ?? s.learner_id) !== userId,
+  );
+  const batches = new Map<string, SessionRow[]>();
+  for (const s of incoming) {
+    const key = s.batch_id ?? s.id;
+    const group = batches.get(key);
+    if (group) group.push(s);
+    else batches.set(key, [s]);
+  }
+  for (const group of batches.values()) {
+    group.sort((a, b) => Date.parse(a.scheduled_at ?? "") - Date.parse(b.scheduled_at ?? ""));
+    moves.push({ kind: "incoming", sessions: group });
   }
 
   const now = Date.now();
@@ -1726,8 +1882,8 @@ type NextMoveCardProps = {
   userId: string;
   busyIds: Set<string>;
   matchesHydrated: boolean;
-  onAccept: (s: SessionRow) => void;
-  onReject: (s: SessionRow) => void;
+  onAcceptMany: (sessions: SessionRow[]) => void;
+  onRejectMany: (sessions: SessionRow[]) => void;
   onCancel: (s: SessionRow) => void;
   onRequest: (t: TeachOffer) => void;
   onMessageTeacher: (t: TeachOffer) => void;
@@ -1739,18 +1895,27 @@ function NextMoveCard({
   userId,
   busyIds,
   matchesHydrated,
-  onAccept,
-  onReject,
+  onAcceptMany,
+  onRejectMany,
   onCancel,
   onRequest,
   onMessageTeacher,
   onScheduleChanged,
 }: NextMoveCardProps) {
   if (next.kind === "incoming") {
-    const s = next.session;
+    const sessions = next.sessions;
+    const s = sessions[0];
+    const multi = sessions.length > 1;
     const isTeacher = s.teacher_id === userId;
     const otherName = isTeacher ? s.learnerName : s.teacherName;
-    const action = isTeacher ? "teach" : "learn from";
+    // `action` describes what the OTHER person wants to do. If I'm the teacher,
+    // they're the learner (they want to learn); if I'm the learner, they're the
+    // teacher offering to teach.
+    const action = isTeacher ? "learn" : "teach";
+    // A multi-session request shares one duration; sum the credits across every
+    // session so the teacher sees the whole plan's cost, not a single class.
+    const totalCredits = sessions.reduce((sum, x) => sum + x.credits, 0);
+    const busy = sessions.some((x) => busyIds.has(x.id));
     return (
       <section className="rounded-3xl border border-brand-purple/25 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
         <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
@@ -1760,31 +1925,41 @@ function NextMoveCard({
           {otherName} wants to {action} {s.skills?.name ?? "a skill"}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {s.duration_minutes} min · {s.credits} credit{s.credits === 1 ? "" : "s"}
+          {multi
+            ? `${sessions.length} sessions · ${s.duration_minutes} min each · ${totalCredits} credit${totalCredits === 1 ? "" : "s"} total`
+            : `${s.duration_minutes} min · ${s.credits} credit${s.credits === 1 ? "" : "s"}`}
         </p>
+        {multi && (
+          <ul className="mt-3 space-y-1.5">
+            {sessions.map((x, i) => (
+              <li key={x.id} className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-purple/10 text-[11px] font-semibold text-brand-purple">
+                  {i + 1}
+                </span>
+                {x.scheduled_at ? formatSessionSlot(x.scheduled_at) : "Time to be decided"}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
           <Button
             variant="hero"
             size="lg"
             className="w-full sm:w-auto"
-            onClick={() => onAccept(s)}
-            disabled={busyIds.has(s.id)}
+            onClick={() => onAcceptMany(sessions)}
+            disabled={busy}
           >
-            {busyIds.has(s.id) ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Check className="h-4 w-4" />
-            )}
-            Accept
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            {multi ? "Accept all" : "Accept"}
           </Button>
           <Button
             variant="outline"
             size="lg"
             className="w-full sm:w-auto"
-            onClick={() => onReject(s)}
-            disabled={busyIds.has(s.id)}
+            onClick={() => onRejectMany(sessions)}
+            disabled={busy}
           >
-            <X className="h-4 w-4" /> Decline
+            <X className="h-4 w-4" /> {multi ? "Decline all" : "Decline"}
           </Button>
         </div>
       </section>
@@ -2139,12 +2314,16 @@ function WelcomeStep({
   );
 }
 
+// What a "swap" tile hands back so the dialog can pre-select the exact legs the
+// suggestion named.
+type SwapTileTarget = { userId: string; mySkillName?: string; theirSkillName?: string };
+
 type AiInsightCardProps = {
   recs: AiSuggestion[] | null;
   refreshing: boolean;
   onRefresh: () => void;
   // Opens the swap proposal dialog for a reciprocal-match ("swap") tile.
-  onSwap?: (userId: string) => void;
+  onSwap?: (target: SwapTileTarget) => void;
 };
 
 function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardProps) {
@@ -2204,7 +2383,7 @@ function InsightTile({
   onSwap,
 }: {
   suggestion: AiSuggestion;
-  onSwap?: (userId: string) => void;
+  onSwap?: (target: SwapTileTarget) => void;
 }) {
   const meta = SUGGESTION_TYPE_META[suggestion.type] ?? SUGGESTION_TYPE_META.general;
   const Icon = meta.icon;
@@ -2245,8 +2424,21 @@ function InsightTile({
     // that's the "Direct swap, no credits" the message promises. Other
     // user-targeted tiles just deep-link to the profile.
     if (suggestion.type === "swap" && onSwap) {
+      // `skillName` is the skill they teach (you'd learn); `swapMySkillName` is
+      // the skill you teach back. Passing both lets the dialog open on exactly
+      // the legs the message promised.
       return (
-        <button type="button" onClick={() => onSwap(action.userId)} className={tileClass}>
+        <button
+          type="button"
+          onClick={() =>
+            onSwap({
+              userId: action.userId,
+              mySkillName: action.swapMySkillName,
+              theirSkillName: action.skillName,
+            })
+          }
+          className={tileClass}
+        >
           {inner}
         </button>
       );

@@ -121,16 +121,12 @@ function AdminSkillsPage() {
 
   const deleteSkill = async () => {
     if (!deleteTarget || busy) return;
-    if (justification.trim().length < 8) {
-      toast.error("Justification (8+ chars) is required.");
-      return;
-    }
     setBusy(true);
     try {
       const { error } = await supabase.rpc("admin_delete_skill", {
         p_skill_id: deleteTarget.id,
         p_reason_code: "skills:catalog",
-        p_justification: justification.trim(),
+        p_justification: justification.trim() || "Removed orphaned catalog entry",
         p_ticket_ref: ticketRef.trim() || "n/a",
       });
       if (error) {
@@ -185,7 +181,6 @@ function AdminSkillsPage() {
   );
 
   const canSubmitCreate = name.trim().length >= 2 && justification.trim().length >= 8;
-  const canSubmitDelete = justification.trim().length >= 8;
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6">
@@ -415,12 +410,12 @@ function AdminSkillsPage() {
               <Input value={ticketRef} onChange={(e) => setTicketRef(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label>Justification</Label>
+              <Label>Justification (optional)</Label>
               <Textarea
                 value={justification}
                 rows={3}
                 onChange={(e) => setJustification(e.target.value)}
-                placeholder="Why this skill is being removed (8+ characters)."
+                placeholder="Why this skill is being removed (optional, for the audit log)."
               />
             </div>
           </div>
@@ -430,7 +425,7 @@ function AdminSkillsPage() {
             </Button>
             <Button
               variant="destructive"
-              disabled={busy || !canSubmitDelete}
+              disabled={busy}
               onClick={() => void deleteSkill()}
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}

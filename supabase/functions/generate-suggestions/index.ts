@@ -23,7 +23,11 @@ import { corsJson, corsPreflight } from "../_shared/cors.ts";
 // suggestion is talking about (a specific user, a filtered explore view, etc.)
 // rather than dumping the user on a generic page.
 type SuggestionAction =
-  | { kind: "user"; userId: string; skillName?: string }
+  // `skillName` is the skill the message is about (the teacher's skill for a
+  // match, the skill to learn for a swap). `swapMySkillName` only applies to a
+  // reciprocal swap: it's the skill the current user would teach back, so the
+  // swap dialog can pre-select BOTH legs to match what the message promised.
+  | { kind: "user"; userId: string; skillName?: string; swapMySkillName?: string }
   | { kind: "explore"; q?: string; mode?: "teachers" | "learners" }
   | { kind: "profile" }
   | { kind: "skills" };
@@ -136,8 +140,58 @@ type GroundingSignals = {
   seekerCounts: SeekerCount[];
   reciprocalMatches: ReciprocalMatch[];
   sessionMomentum: SessionMomentum;
-  progressionHints: { from: string; suggest: string }[];
+  // `completed` marks a next-step skill the user has earned by *finishing* a
+  // session on `from` (strongest progression signal). `teacher*` names a real,
+  // well-reviewed ("kind") teacher of `suggest` so the tile can say "learn CSS
+  // from Ram" and deep-link to that person instead of a blank search.
+  progressionHints: {
+    from: string;
+    suggest: string;
+    completed: boolean;
+    teacherId?: string;
+    teacherName?: string;
+    teacherRating?: number | null;
+  }[];
 };
+
+// Fetches display name + average rating + review count for a set of teacher
+// user ids in two queries. Shared by the available-teachers and progression
+// teacher lookups so the review-aggregation logic lives in one place.
+type TeacherCard = { name: string; rating: number | null; reviewCount: number };
+async function loadTeacherCards(
+  supabase: SupabaseClient,
+  userIds: string[],
+): Promise<Map<string, TeacherCard>> {
+  const out = new Map<string, TeacherCard>();
+  if (!userIds.length) return out;
+  type ProfileRow = { id: string; full_name: string | null };
+  type ReviewRow = { reviewee_id: string; rating: number };
+  const [profilesRes, reviewsRes] = await Promise.all([
+    supabase.from("profiles").select("id, full_name").in("id", userIds),
+    supabase.from("reviews").select("reviewee_id, rating").in("reviewee_id", userIds),
+  ]);
+  if (profilesRes.error) {
+    console.error("[loadTeacherCards] profiles read failed:", profilesRes.error.message);
+  }
+  if (reviewsRes.error) {
+    console.error("[loadTeacherCards] reviews read failed:", reviewsRes.error.message);
+  }
+  const ratingsBy = new Map<string, number[]>();
+  for (const r of (reviewsRes.data ?? []) as ReviewRow[]) {
+    const arr = ratingsBy.get(r.reviewee_id) ?? [];
+    arr.push(r.rating);
+    ratingsBy.set(r.reviewee_id, arr);
+  }
+  for (const p of (profilesRes.data ?? []) as ProfileRow[]) {
+    if (!p.full_name) continue;
+    const ratings = ratingsBy.get(p.id) ?? [];
+    const rating = ratings.length
+      ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10
+      : null;
+    out.set(p.id, { name: p.full_name, rating, reviewCount: ratings.length });
+  }
+  return out;
+}
 
 async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<GroundingSignals> {
   // Credits live behind a SECURITY DEFINER RPC because the `credits` column
@@ -225,49 +279,21 @@ async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<
     );
 
     if (teacherIds.length) {
-      type ProfileRow = { id: string; full_name: string | null };
-      type ReviewRow = { reviewee_id: string; rating: number };
-      const [teacherProfilesRes, reviewsRes] = await Promise.all([
-        supabase.from("profiles").select("id, full_name").in("id", teacherIds),
-        supabase.from("reviews").select("reviewee_id, rating").in("reviewee_id", teacherIds),
-      ]);
-      if (teacherProfilesRes.error) {
-        console.error(
-          "[gatherSignals] teacher profiles read failed:",
-          teacherProfilesRes.error.message,
-        );
-      }
-      if (reviewsRes.error) {
-        console.error("[gatherSignals] reviews read failed:", reviewsRes.error.message);
-      }
-
-      const nameById = new Map<string, string | null>(
-        ((teacherProfilesRes.data ?? []) as ProfileRow[]).map((p) => [p.id, p.full_name]),
-      );
-      const reviewsByTeacher = new Map<string, number[]>();
-      for (const r of (reviewsRes.data ?? []) as ReviewRow[]) {
-        const arr = reviewsByTeacher.get(r.reviewee_id) ?? [];
-        arr.push(r.rating);
-        reviewsByTeacher.set(r.reviewee_id, arr);
-      }
+      const cards = await loadTeacherCards(supabase, teacherIds);
 
       for (const row of learningForTeachers) {
         for (const t of teachersBySkill.get(row.skill_id) ?? []) {
-          const name = nameById.get(t.user_id);
-          if (!name) continue;
-          const ratings = reviewsByTeacher.get(t.user_id) ?? [];
-          const avgRating = ratings.length
-            ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10
-            : null;
+          const card = cards.get(t.user_id);
+          if (!card) continue;
           availableTeachers.push({
             skill: row.skills.name,
             skill_id: row.skill_id,
-            teacher_name: name,
+            teacher_name: card.name,
             teacher_id: t.user_id,
             level: t.level ?? "basic",
             credits_per_hour: t.credits_per_hour ?? 4,
-            rating: avgRating,
-            review_count: ratings.length,
+            rating: card.rating,
+            review_count: card.reviewCount,
           });
         }
       }
@@ -397,15 +423,41 @@ async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<
   // ("you've completed 4 sessions this month!").
   type SessionRow = { id: string; updated_at: string; status: string };
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: completedRaw } = await supabase
-    .from("sessions")
-    .select("id, updated_at, status")
-    .or(`teacher_id.eq.${userId},learner_id.eq.${userId}`)
-    .eq("status", "completed")
-    .gte("updated_at", thirtyDaysAgo)
-    .order("updated_at", { ascending: false });
+  // Two reads: 30-day window drives momentum; all-time learner-side completions
+  // drive progression ("you finished HTML, learn CSS next"). A skill mastered
+  // months ago is still a valid next-step trigger, so that query isn't windowed.
+  type LearnedRow = { skill_id: string; skills: { name: string } | null; updated_at: string };
+  const [completedRes, learnedRes] = await Promise.all([
+    supabase
+      .from("sessions")
+      .select("id, updated_at, status")
+      .or(`teacher_id.eq.${userId},learner_id.eq.${userId}`)
+      .eq("status", "completed")
+      .gte("updated_at", thirtyDaysAgo)
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("sessions")
+      .select("skill_id, skills:skill_id(name), updated_at")
+      .eq("learner_id", userId)
+      .eq("status", "completed")
+      .order("updated_at", { ascending: false }),
+  ]);
+  if (learnedRes.error) {
+    console.error("[gatherSignals] completed-learning read failed:", learnedRes.error.message);
+  }
 
-  const completedSessions = (completedRaw ?? []) as SessionRow[];
+  // Skills the user has actually finished learning, newest sessions first so
+  // the freshest accomplishment drives the top progression hint.
+  const completedLearningSkills: string[] = [];
+  const seenLearned = new Set<string>();
+  for (const r of (learnedRes.data ?? []) as LearnedRow[]) {
+    const name = r.skills?.name;
+    if (!name || seenLearned.has(name.toLowerCase())) continue;
+    seenLearned.add(name.toLowerCase());
+    completedLearningSkills.push(name);
+  }
+
+  const completedSessions = (completedRes.data ?? []) as SessionRow[];
   const lastSessionDaysAgo = completedSessions[0]
     ? Math.floor(
         (Date.now() - new Date(completedSessions[0].updated_at).getTime()) / (1000 * 60 * 60 * 24),
@@ -417,19 +469,104 @@ async function gatherSignals(supabase: SupabaseClient, userId: string): Promise<
     last_session_days_ago: lastSessionDaysAgo,
   };
 
-  // Compute progression hints from teaching + learning skills.
-  const allKnown = [...teachingSkills, ...learningSkills];
+  // Compute progression hints. A skill the user has FINISHED LEARNING is the
+  // strongest "what next?" signal (you completed HTML, so CSS is the natural
+  // next step), so those lead, ahead of merely listed teaching/learning skills.
+  // `knownLower` is everything the user already has so we never suggest a skill
+  // back to them.
+  const allKnown = [...completedLearningSkills, ...teachingSkills, ...learningSkills];
   const knownLower = new Set(allKnown.map((s) => s.toLowerCase()));
-  const progressionHints: { from: string; suggest: string }[] = [];
+  const completedLower = new Set(completedLearningSkills.map((s) => s.toLowerCase()));
+  type ProgressionHint = {
+    from: string;
+    suggest: string;
+    completed: boolean;
+    teacherId?: string;
+    teacherName?: string;
+    teacherRating?: number | null;
+  };
+  const progressionHints: ProgressionHint[] = [];
+  const suggestedLower = new Set<string>();
   for (const skill of allKnown) {
     const next = SKILL_PROGRESSIONS[skill.toLowerCase()];
     if (!next) continue;
     for (const candidate of next) {
-      if (knownLower.has(candidate)) continue;
-      progressionHints.push({ from: skill, suggest: candidate });
+      if (knownLower.has(candidate) || suggestedLower.has(candidate)) continue;
+      suggestedLower.add(candidate);
+      progressionHints.push({
+        from: skill,
+        suggest: candidate,
+        completed: completedLower.has(skill.toLowerCase()),
+      });
       if (progressionHints.length >= 3) break;
     }
     if (progressionHints.length >= 3) break;
+  }
+
+  // For each next-step skill, find a real, well-reviewed ("kind") teacher to
+  // name so the tile reads "learn CSS from Ram, rated 4.9★" and deep-links to
+  // that person rather than dumping the user on a blank search. SKILL_PROGRESSIONS
+  // names are lowercase while DB skill names may be cased differently, so resolve
+  // ids case-insensitively.
+  if (progressionHints.length) {
+    const suggestNames = Array.from(new Set(progressionHints.map((h) => h.suggest)));
+    const { data: skillRows, error: skillErr } = await supabase
+      .from("skills")
+      .select("id, name")
+      .or(suggestNames.map((n) => `name.ilike.${n}`).join(","));
+    if (skillErr) {
+      console.error("[gatherSignals] progression skill lookup failed:", skillErr.message);
+    }
+    const idByName = new Map<string, string>();
+    for (const row of (skillRows ?? []) as { id: string; name: string }[]) {
+      idByName.set(row.name.toLowerCase(), row.id);
+    }
+    const suggestSkillIds = Array.from(idByName.values());
+
+    if (suggestSkillIds.length) {
+      type TeachRow = { user_id: string; skill_id: string };
+      const { data: progTeachRaw, error: progTeachErr } = await supabase
+        .from("user_teaching_skills")
+        .select("user_id, skill_id")
+        .in("skill_id", suggestSkillIds)
+        .neq("user_id", userId)
+        .limit(90);
+      if (progTeachErr) {
+        console.error("[gatherSignals] progression teacher lookup failed:", progTeachErr.message);
+      }
+      const teachersForSkill = new Map<string, string[]>();
+      for (const t of (progTeachRaw ?? []) as TeachRow[]) {
+        const arr = teachersForSkill.get(t.skill_id) ?? [];
+        arr.push(t.user_id);
+        teachersForSkill.set(t.skill_id, arr);
+      }
+      const allProgTeacherIds = Array.from(
+        new Set(Array.from(teachersForSkill.values()).flat()),
+      );
+      const cards = await loadTeacherCards(supabase, allProgTeacherIds);
+
+      for (const hint of progressionHints) {
+        const skillId = idByName.get(hint.suggest.toLowerCase());
+        if (!skillId) continue;
+        // Pick the "kindest" teacher: best rating, then most reviews. A teacher
+        // with no reviews still beats nobody, so unrated ones are last resort.
+        const candidates = (teachersForSkill.get(skillId) ?? [])
+          .map((id) => ({ id, card: cards.get(id) }))
+          .filter((c): c is { id: string; card: TeacherCard } => Boolean(c.card));
+        candidates.sort((a, b) => {
+          const ra = a.card.rating ?? -1;
+          const rb = b.card.rating ?? -1;
+          if (rb !== ra) return rb - ra;
+          return b.card.reviewCount - a.card.reviewCount;
+        });
+        const best = candidates[0];
+        if (best) {
+          hint.teacherId = best.id;
+          hint.teacherName = best.card.name;
+          hint.teacherRating = best.card.rating;
+        }
+      }
+    }
   }
 
   return {
@@ -518,10 +655,19 @@ function buildPrompt(s: GroundingSignals): string {
 
   const progressionBlock = s.progressionHints.length
     ? s.progressionHints
-        .map(
-          (h, i) =>
-            `  - [progress:${i + 1}] user knows ${clean(h.from)}, ${clean(h.suggest)} is a natural next step`,
-        )
+        .map((h, i) => {
+          const lead = h.completed
+            ? `user FINISHED a session learning ${clean(h.from)}`
+            : `user knows ${clean(h.from)}`;
+          const teacherPart = h.teacherName
+            ? `. Kind teacher available: ${clean(h.teacherName)}${
+                h.teacherRating !== null && h.teacherRating !== undefined
+                  ? ` rated ${h.teacherRating}★`
+                  : " (no reviews yet)"
+              } — clicking this tile opens their profile`
+            : "";
+          return `  - [progress:${i + 1}] ${lead}, ${clean(h.suggest)} is the natural next step${teacherPart}`;
+        })
         .join("\n")
     : "  (none)";
 
@@ -568,6 +714,7 @@ Examples of the right tone (1 sentence, headline-style, no em dashes, never lead
 - "Sulav teaches Python and wants JavaScript. Direct swap, no credits."
 - "Python has 3 learners waiting. Head to Explore to offer a session."
 - "Ram teaches JavaScript at 4 cr/hr, rated 4.8★. Book a session?"
+- "You finished HTML. CSS is the natural next step, and Ram teaches it, rated 4.9★."
 - "It's been 18 days since your last session. A 30-min refresher would help."
 - "You taught 4 sessions this month. Keep the streak alive."
 
@@ -612,7 +759,7 @@ Pick the 4 most useful suggestions, in this priority:
 2. SPECIFIC TEACHER MATCH for a skill the user wants (name the teacher, level, price, rating)
 3. SEEKER COUNT — if X learners want a skill the user teaches, surface that number
 4. ENGAGEMENT — if dormant/fading: nudge to book; if active: congratulate
-5. PROGRESSION — next-step skill from hints
+5. PROGRESSION — next-step skill from hints. PREFER a hint where the user FINISHED the prior skill (it earned the suggestion). If the hint names a "Kind teacher", name that teacher and their rating so the user can learn it from a real, well-reviewed person, e.g. "You finished HTML. CSS is the natural next step, and Ram teaches it, rated 4.9★."
 6. PROFILE FIX — bio missing or no teaching skills
 7. TRENDING — only if you can tie it to the user
 8. GENERAL — last resort, never fabricate
@@ -797,7 +944,13 @@ function resolveAction(llm: LlmSuggestion, signals: GroundingSignals): Suggestio
     const idx = Number(indexedMatch[2]) - 1;
     if (kind === "match") {
       const m = signals.reciprocalMatches[idx];
-      if (m) return { kind: "user", userId: m.user_id, skillName: m.they_teach };
+      if (m)
+        return {
+          kind: "user",
+          userId: m.user_id,
+          skillName: m.they_teach,
+          swapMySkillName: m.they_want_to_learn,
+        };
     } else if (kind === "teacher") {
       const t = signals.availableTeachers[idx];
       if (t) return { kind: "user", userId: t.teacher_id, skillName: t.skill };
@@ -809,7 +962,12 @@ function resolveAction(llm: LlmSuggestion, signals: GroundingSignals): Suggestio
       if (t) return { kind: "explore", q: t.name };
     } else if (kind === "progress") {
       const p = signals.progressionHints[idx];
-      if (p) return { kind: "explore", q: p.suggest };
+      // If a kind teacher was found for the next-step skill, the message names
+      // them, so the click must open that teacher (not a blank search).
+      if (p)
+        return p.teacherId
+          ? { kind: "user", userId: p.teacherId, skillName: p.suggest }
+          : { kind: "explore", q: p.suggest };
     }
   } else if (ref === "profile") {
     return { kind: "profile" };
@@ -827,7 +985,14 @@ function resolveAction(llm: LlmSuggestion, signals: GroundingSignals): Suggestio
   switch (llm.type) {
     case "swap": {
       const m = signals.reciprocalMatches[0];
-      return m ? { kind: "user", userId: m.user_id, skillName: m.they_teach } : { kind: "explore" };
+      return m
+        ? {
+            kind: "user",
+            userId: m.user_id,
+            skillName: m.they_teach,
+            swapMySkillName: m.they_want_to_learn,
+          }
+        : { kind: "explore" };
     }
     case "match": {
       const t = signals.availableTeachers[0];
@@ -839,7 +1004,10 @@ function resolveAction(llm: LlmSuggestion, signals: GroundingSignals): Suggestio
     }
     case "progression": {
       const p = signals.progressionHints[0];
-      return p ? { kind: "explore", q: p.suggest } : { kind: "explore" };
+      if (!p) return { kind: "explore" };
+      return p.teacherId
+        ? { kind: "user", userId: p.teacherId, skillName: p.suggest }
+        : { kind: "explore", q: p.suggest };
     }
     case "profile":
       return signals.teachingSkills.length === 0 ? { kind: "skills" } : { kind: "profile" };

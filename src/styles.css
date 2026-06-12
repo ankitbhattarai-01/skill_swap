@@ -162,11 +162,18 @@ html {
   scrollbar-gutter: stable;
 }
 
-/* Radix's scroll-lock (used by DropdownMenu/Popover/Dialog) adds padding-right
-   to <body> to compensate for the removed scrollbar. Combined with our stable
-   scrollbar gutter on <html>, that double-compensates and shifts page content
-   left when a menu opens. Cancel the body-level shift so layout stays put. */
-body[data-scroll-locked] {
+/* Radix's scroll-lock (used by DropdownMenu/Popover/Dialog) adds a margin-right
+   (and padding-right) gap to <body> to compensate for the removed scrollbar.
+   Combined with our stable scrollbar gutter on <html>, that double-compensates
+   and shifts page content when a menu opens. Cancel the body-level gap so
+   layout stays put.
+
+   react-remove-scroll injects its rule (also `body[data-scroll-locked]`, also
+   `!important`) into a <style> appended to the end of <head> at runtime — i.e.
+   AFTER this stylesheet. With equal specificity the later rule would win, so we
+   qualify ours with `html` to give it higher specificity and guarantee it wins
+   regardless of injection order. */
+html body[data-scroll-locked] {
   margin-right: 0 !important;
   padding-right: 0 !important;
 }

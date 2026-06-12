@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -156,7 +156,12 @@ function OnboardingPage() {
   const [teachMode, setTeachMode] = useState<LearningMode | "">("");
   const [learnMode, setLearnMode] = useState<LearningMode | "">("");
   const [hydrated, setHydrated] = useState(false);
+  const [availability, setAvailability] = useState({ teach: 0, learn: 0 });
   const availabilityRef = useRef<AvailabilityEditorHandle>(null);
+  const handleWindowsChange = useCallback(
+    (counts: { teach: number; learn: number }) => setAvailability(counts),
+    [],
+  );
   const [emailRedirectPending, setEmailRedirectPending] = useState(() => hasAuthRedirectParams());
 
   useEffect(() => {
@@ -467,6 +472,24 @@ function OnboardingPage() {
   const steps = ["About you", "Skills", "Mode", "Availability"];
   const isWideStep = step === 1 || step === 3;
 
+  // Each step must be filled in before the user can advance. Typed-but-not-yet-
+  // added skills count as valid here because Continue auto-adds them.
+  const hasTeaching = teaching.length > 0 || teachInput.trim().length > 0;
+  const hasLearning = learning.length > 0 || learnInput.trim().length > 0;
+  const hasAvailability = availability.teach > 0 || availability.learn > 0;
+  const stepComplete = [
+    fullName.trim().length > 0 && bio.trim().length > 0,
+    hasTeaching && hasLearning,
+    true,
+    hasAvailability,
+  ];
+  const stepHint = [
+    "Add your name and a short bio to continue.",
+    "Add at least one skill you teach and one you want to learn.",
+    "",
+    "Add at least one availability window to finish.",
+  ];
+
   const isVerifyingEmail = emailRedirectPending && !user;
   const isLoadingProfile = !!user && !hydrated;
   if (authLoading || isVerifyingEmail || isLoadingProfile) {
@@ -655,7 +678,12 @@ function OnboardingPage() {
                   that work for both you and the other party. You can skip this and set it up later
                   in your profile.
                 </p>
-                <AvailabilityEditor ref={availabilityRef} defaultMode="teach" hideSaveButton />
+                <AvailabilityEditor
+                  ref={availabilityRef}
+                  defaultMode="teach"
+                  hideSaveButton
+                  onWindowsChange={handleWindowsChange}
+                />
               </section>
             )}
           </div>
@@ -663,36 +691,45 @@ function OnboardingPage() {
           <div
             className={
               isWideStep
-                ? "glass-strong flex items-center justify-between rounded-3xl p-4 shadow-card"
-                : "mt-8 flex items-center justify-between"
+                ? "glass-strong flex flex-col gap-3 rounded-3xl p-4 shadow-card"
+                : "mt-8 flex flex-col gap-3"
             }
           >
-            <Button
-              variant="ghost"
-              onClick={() => setStep(Math.max(0, step - 1))}
-              disabled={step === 0}
-            >
-              Back
-            </Button>
-            {step < steps.length - 1 ? (
-              <Button
-                variant="hero"
-                disabled={step === 0 && !fullName.trim()}
-                onClick={async () => {
-                  // Auto-add a typed-but-not-added skill so users don't silently lose input
-                  if (step === 1 && teachInput.trim()) await addTeach();
-                  if (step === 1 && learnInput.trim()) await addLearn();
-                  setStep(step + 1);
-                }}
-              >
-                Continue
-              </Button>
-            ) : (
-              <Button variant="hero" onClick={finish} disabled={saving}>
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                Finish setup
-              </Button>
+            {!stepComplete[step] && stepHint[step] && (
+              <p className="text-xs text-muted-foreground">{stepHint[step]}</p>
             )}
+            <div className="flex items-center justify-between">
+              <Button
+                variant="ghost"
+                onClick={() => setStep(Math.max(0, step - 1))}
+                disabled={step === 0}
+              >
+                Back
+              </Button>
+              {step < steps.length - 1 ? (
+                <Button
+                  variant="hero"
+                  disabled={!stepComplete[step]}
+                  onClick={async () => {
+                    // Auto-add a typed-but-not-added skill so users don't silently lose input
+                    if (step === 1 && teachInput.trim()) await addTeach();
+                    if (step === 1 && learnInput.trim()) await addLearn();
+                    setStep(step + 1);
+                  }}
+                >
+                  Continue
+                </Button>
+              ) : (
+                <Button
+                  variant="hero"
+                  onClick={finish}
+                  disabled={saving || !stepComplete[step]}
+                >
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Finish setup
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>

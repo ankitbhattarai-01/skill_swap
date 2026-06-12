@@ -305,7 +305,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
       ) : currentUserId && swapMatch ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
           <ArrowLeftRight className="h-3 w-3" />
-          Mutual match — you can swap
+          Mutual match: you can swap
         </div>
       ) : currentUserId && matchesUser ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-cyan">
@@ -444,7 +444,7 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
       {swapMatch ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
           <ArrowLeftRight className="h-3 w-3" />
-          Mutual match — you can swap
+          Mutual match: you can swap
         </div>
       ) : matchesUser ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400">
@@ -1200,6 +1200,11 @@ function ExplorePage() {
         return;
       }
       if (sessionId) {
+        // Flip the card to "View session" right away — otherwise it keeps
+        // showing "Request session" until the next full reload re-fetches the
+        // sessions list.
+        const key = `${requestRow.user_id}:${requestRow.skills.id}`;
+        setOpenSessions((prev) => new Map(prev).set(key, { sessionId, status: "pending" }));
         playRequestSentChime();
         toast.success("Session requested. You can message them now while you wait.");
         setRequestRow(null);
@@ -1216,7 +1221,7 @@ function ExplorePage() {
     if (!user || !requestRow?.skills) return;
     setBusyAction(`request-${requestRow.id}`);
     try {
-      const { created, error } = await requestSessionsForSlots({
+      const { created, firstSessionId, error } = await requestSessionsForSlots({
         learnerId: user.id,
         teacherId: requestRow.user_id,
         skillId: requestRow.skills.id,
@@ -1229,6 +1234,14 @@ function ExplorePage() {
         return;
       }
       if (created > 0) {
+        if (firstSessionId) {
+          // Flip the card to "View session" immediately (links to the first of
+          // the batch) instead of waiting for a refresh.
+          const key = `${requestRow.user_id}:${requestRow.skills.id}`;
+          setOpenSessions((prev) =>
+            new Map(prev).set(key, { sessionId: firstSessionId, status: "pending" }),
+          );
+        }
         playRequestSentChime();
         toast.success(
           `Requested ${created} ${created === 1 ? "session" : "sessions"}. The teacher accepts each one.`,
