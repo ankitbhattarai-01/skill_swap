@@ -15,14 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const VOICE_NAME_KEY = "skillswap-help-voice-name";
 
-const NATURAL_HINTS = [
-  "(Natural)",
-  "Natural",
-  "Neural",
-  "Online",
-  "Premium",
-  "Enhanced",
-];
+const NATURAL_HINTS = ["(Natural)", "Natural", "Neural", "Online", "Premium", "Enhanced"];
 
 const SAFE_NAMED_VOICES = [
   "Ava",

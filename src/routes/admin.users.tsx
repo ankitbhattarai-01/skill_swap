@@ -167,50 +167,62 @@ function AdminUsersPage() {
   };
 
   const runSuspendAction = async () => {
-    if (!suspendTarget) return;
+    if (!suspendTarget || busy) return;
     if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
       toast.error("Ticket reference and justification are required.");
       return;
     }
+    // try/finally so a network throw can't strand the dialog's button in its
+    // disabled busy state.
     setBusy(true);
-    const rpc = suspendTarget.mode === "suspend" ? "admin_suspend_user" : "admin_reinstate_user";
-    const reasonCode = suspendTarget.mode === "suspend" ? "users:suspend" : "users:reinstate";
-    const { error } = await supabase.rpc(rpc, {
-      p_user_id: suspendTarget.id,
-      p_reason_code: reasonCode,
-      p_justification: justification.trim(),
-      p_ticket_ref: ticketRef.trim(),
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const rpc = suspendTarget.mode === "suspend" ? "admin_suspend_user" : "admin_reinstate_user";
+      const reasonCode = suspendTarget.mode === "suspend" ? "users:suspend" : "users:reinstate";
+      const { error } = await supabase.rpc(rpc, {
+        p_user_id: suspendTarget.id,
+        p_reason_code: reasonCode,
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim(),
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success(suspendTarget.mode === "suspend" ? "User suspended." : "User reinstated.");
+      closeSuspend();
+      await queryClient.invalidateQueries({ queryKey: ADMIN_USERS_KEY(user?.id, search) });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update the user.");
+    } finally {
+      setBusy(false);
     }
-    toast.success(suspendTarget.mode === "suspend" ? "User suspended." : "User reinstated.");
-    closeSuspend();
-    await queryClient.invalidateQueries({ queryKey: ADMIN_USERS_KEY(user?.id, search) });
   };
 
   const revealPii = async () => {
-    if (!revealTarget) return;
+    if (!revealTarget || busy) return;
     if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
       toast.error("Ticket reference and justification are required.");
       return;
     }
     setBusy(true);
-    const { data, error } = await supabase.rpc("reveal_admin_user_pii", {
-      p_user_id: revealTarget,
-      p_reason_code: "privacy:pii_reveal",
-      p_justification: justification.trim(),
-      p_ticket_ref: ticketRef.trim(),
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const { data, error } = await supabase.rpc("reveal_admin_user_pii", {
+        p_user_id: revealTarget,
+        p_reason_code: "privacy:pii_reveal",
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim(),
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      setRevealed((data ?? {}) as Record<string, unknown>);
+      toast.success("PII reveal logged.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not reveal PII.");
+    } finally {
+      setBusy(false);
     }
-    setRevealed((data ?? {}) as Record<string, unknown>);
-    toast.success("PII reveal logged.");
   };
 
   if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;

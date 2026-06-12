@@ -89,49 +89,62 @@ function AdminSkillsPage() {
   };
 
   const createSkill = async () => {
+    if (busy) return;
     if (name.trim().length < 2 || justification.trim().length < 8) {
       toast.error("Skill name (2+ chars) and justification (8+ chars) are required.");
       return;
     }
+    // try/finally so a network throw can't strand the dialog's button in its
+    // disabled busy state.
     setBusy(true);
-    const { error } = await supabase.rpc("admin_create_skill", {
-      p_name: name.trim(),
-      p_category: category.trim() ? category.trim() : null,
-      p_reason_code: "skills:catalog",
-      p_justification: justification.trim(),
-      p_ticket_ref: ticketRef.trim() || "n/a",
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const { error } = await supabase.rpc("admin_create_skill", {
+        p_name: name.trim(),
+        p_category: category.trim() ? category.trim() : null,
+        p_reason_code: "skills:catalog",
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim() || "n/a",
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Skill added.");
+      closeCreate();
+      await invalidate();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not add the skill.");
+    } finally {
+      setBusy(false);
     }
-    toast.success("Skill added.");
-    closeCreate();
-    await invalidate();
   };
 
   const deleteSkill = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || busy) return;
     if (justification.trim().length < 8) {
       toast.error("Justification (8+ chars) is required.");
       return;
     }
     setBusy(true);
-    const { error } = await supabase.rpc("admin_delete_skill", {
-      p_skill_id: deleteTarget.id,
-      p_reason_code: "skills:catalog",
-      p_justification: justification.trim(),
-      p_ticket_ref: ticketRef.trim() || "n/a",
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const { error } = await supabase.rpc("admin_delete_skill", {
+        p_skill_id: deleteTarget.id,
+        p_reason_code: "skills:catalog",
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim() || "n/a",
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Skill deleted.");
+      closeDelete();
+      await invalidate();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete the skill.");
+    } finally {
+      setBusy(false);
     }
-    toast.success("Skill deleted.");
-    closeDelete();
-    await invalidate();
   };
 
   if (authLoading || permissionsQuery.isLoading) return <PageLoading variant="list-wide" />;

@@ -18,11 +18,11 @@ working untouched.
 You need three URLs in your Supabase **Authentication → URL Configuration**
 section before touching any provider settings:
 
-| Field | Value |
-|---|---|
-| Site URL | `https://<your-domain>` (or `http://localhost:5173` during local dev) |
-| Redirect URLs (allow list) | `https://<your-domain>/auth/callback`, `http://localhost:5173/auth/callback` |
-| Additional redirects | `https://<your-domain>/auth/callback?next=*` if you want to allow the `?next=` query param Supabase strips by default |
+| Field                      | Value                                                                                                                 |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Site URL                   | `https://<your-domain>` (or `http://localhost:5173` during local dev)                                                 |
+| Redirect URLs (allow list) | `https://<your-domain>/auth/callback`, `http://localhost:5173/auth/callback`                                          |
+| Additional redirects       | `https://<your-domain>/auth/callback?next=*` if you want to allow the `?next=` query param Supabase strips by default |
 
 Supabase rejects any provider redirect that doesn't exactly match an entry in
 the allow list, so add both production and local-dev origins now to avoid
@@ -106,10 +106,10 @@ for the exact function body.
 
 ## 5. Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| "redirect_uri_mismatch" from Google | Authorized redirect URI in Google Cloud doesn't match the Supabase callback URL exactly. | Copy/paste from Supabase, not from memory. The `<project-ref>` matters. |
-| "Invalid Redirect URL" from Supabase | Your app passed a `redirectTo` that's not in the Supabase URL allow list. | Add `https://<your-domain>/auth/callback` to **Redirect URLs**. |
-| "provider is not enabled" toast on the login button | The provider toggle in Supabase is off, or you saved without filling in Client ID/Secret. | Re-open the provider in Supabase and verify both fields are populated. |
+| Symptom                                                  | Likely cause                                                                                                                                                              | Fix                                                                                                                                                                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "redirect_uri_mismatch" from Google                      | Authorized redirect URI in Google Cloud doesn't match the Supabase callback URL exactly.                                                                                  | Copy/paste from Supabase, not from memory. The `<project-ref>` matters.                                                                                                                             |
+| "Invalid Redirect URL" from Supabase                     | Your app passed a `redirectTo` that's not in the Supabase URL allow list.                                                                                                 | Add `https://<your-domain>/auth/callback` to **Redirect URLs**.                                                                                                                                     |
+| "provider is not enabled" toast on the login button      | The provider toggle in Supabase is off, or you saved without filling in Client ID/Secret.                                                                                 | Re-open the provider in Supabase and verify both fields are populated.                                                                                                                              |
 | User lands on `/auth/callback` and sees the error screen | Provider sent back `error=` instead of `code=`. Check the URL bar — `error_description` will tell you what the provider rejected (most commonly the user denied consent). | Most are user-driven; if you see "invalid_grant" repeatedly, the code is being exchanged twice (e.g., two tabs racing). The callback page guards against React's strict-mode double-effect already. |
-| Signed in but profile has email-prefix name | OAuth provider returned a `raw_user_meta_data` without any name keys, or the migration in §4 hasn't been applied yet. | Confirm the migration ran (`select pg_get_functiondef('public.handle_new_user'::regproc)` should mention `preferred_username`). |
+| Signed in but profile has email-prefix name              | OAuth provider returned a `raw_user_meta_data` without any name keys, or the migration in §4 hasn't been applied yet.                                                     | Confirm the migration ran (`select pg_get_functiondef('public.handle_new_user'::regproc)` should mention `preferred_username`).                                                                     |

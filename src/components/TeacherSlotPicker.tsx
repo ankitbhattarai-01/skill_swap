@@ -52,39 +52,38 @@ export function TeacherSlotPicker({
 }: Props) {
   const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>([]);
   const [windowsLoading, setWindowsLoading] = useState(false);
+  // Distinguishes "the fetch failed" from "the teacher genuinely has no free
+  // times" so we don't tell the learner the teacher is unavailable when it was
+  // really a network/RPC error.
+  const [windowsError, setWindowsError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const constrainPicker = Boolean(teacherId);
 
-  // Days already claimed by a picked slot. A plan books at most one session per
-  // calendar day, so once a day has a slot the whole day is off-limits for the
-  // next pick — this also rules out same-day overlaps by construction.
+  // Slots already claimed by a picked slot. All sessions in a plan share the
+  // same duration, so a candidate start is blocked when its
+  // [start, start + duration) interval overlaps any picked slot's interval —
+  // other times on the same day stay available.
   const excludeKey = (excludeTimes ?? []).join(",");
-  const isDayBlocked = useMemo(() => {
-    const days = new Set<number>();
-    for (const t of excludeTimes ?? []) {
-      const d = new Date(t);
-      d.setHours(0, 0, 0, 0);
-      days.add(d.getTime());
-    }
-    return (timeMs: number) => {
-      const d = new Date(timeMs);
-      d.setHours(0, 0, 0, 0);
-      return days.has(d.getTime());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [excludeKey]);
+  const isSlotBlocked = useMemo(() => {
+    const blockedStarts = excludeKey ? excludeKey.split(",").map(Number) : [];
+    const durMs = durationMinutes * 60 * 1000;
+    return (timeMs: number) => blockedStarts.some((t) => timeMs < t + durMs && timeMs + durMs > t);
+  }, [excludeKey, durationMinutes]);
 
   // Fetch the teacher's free windows for the next horizon. One fetch per
   // (teacher, active) — duration filtering happens per-render on the client.
   useEffect(() => {
     if (!active || !teacherId) {
       setTeacherWindows([]);
+      setWindowsError(false);
       return;
     }
     let alive = true;
     const controller = new AbortController();
     (async () => {
       setWindowsLoading(true);
+      setWindowsError(false);
       const { data, error } = await supabase
         .rpc("get_teacher_windows", {
           p_teacher_id: teacherId,
@@ -94,6 +93,7 @@ export function TeacherSlotPicker({
       if (!alive) return;
       if (error || !data) {
         setTeacherWindows([]);
+        setWindowsError(true);
       } else {
         setTeacherWindows(
           data.map((row) => ({
@@ -108,7 +108,7 @@ export function TeacherSlotPicker({
       alive = false;
       controller.abort();
     };
-  }, [active, teacherId]);
+  }, [active, teacherId, retryNonce]);
 
   // Earliest N free starts across the whole horizon — surfaced as quick
   // "Best times" chips. Recomputed when duration changes since shorter
@@ -123,14 +123,14 @@ export function TeacherSlotPicker({
     while (cursor <= horizonEnd && out.length < SUGGESTED_COUNT) {
       const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
       for (const s of starts) {
-        if (isDayBlocked(s.getTime())) continue;
+        if (isSlotBlocked(s.getTime())) continue;
         out.push(s);
         if (out.length >= SUGGESTED_COUNT) break;
       }
       cursor.setDate(cursor.getDate() + 1);
     }
     return out;
-  }, [constrainPicker, teacherWindows, durationMinutes, isDayBlocked]);
+  }, [constrainPicker, teacherWindows, durationMinutes, isSlotBlocked]);
 
   const scheduleDate = value;
   const scheduleInPast =
@@ -143,9 +143,9 @@ export function TeacherSlotPicker({
     if (!constrainPicker) return [];
     if (!scheduleDate || Number.isNaN(scheduleDate.getTime())) return [];
     return computeValidStartsForDay(teacherWindows, scheduleDate, durationMinutes).filter(
-      (s) => !isDayBlocked(s.getTime()),
+      (s) => !isSlotBlocked(s.getTime()),
     );
-  }, [constrainPicker, teacherWindows, scheduleDate, durationMinutes, isDayBlocked]);
+  }, [constrainPicker, teacherWindows, scheduleDate, durationMinutes, isSlotBlocked]);
 
   // Set of local-day timestamps within the horizon that have at least one
   // valid start. Used to gray out dead days in the calendar.
@@ -158,11 +158,11 @@ export function TeacherSlotPicker({
     cursor.setHours(0, 0, 0, 0);
     while (cursor <= horizonEnd) {
       const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
-      if (starts.some((s) => !isDayBlocked(s.getTime()))) keys.add(cursor.getTime());
+      if (starts.some((s) => !isSlotBlocked(s.getTime()))) keys.add(cursor.getTime());
       cursor.setDate(cursor.getDate() + 1);
     }
     return keys;
-  }, [constrainPicker, teacherWindows, durationMinutes, isDayBlocked]);
+  }, [constrainPicker, teacherWindows, durationMinutes, isSlotBlocked]);
 
   const selectedStartMatchesValid =
     !constrainPicker ||
@@ -229,6 +229,17 @@ export function TeacherSlotPicker({
                 </button>
               ))}
             </div>
+          ) : windowsError ? (
+            <p className="text-xs text-destructive">
+              Couldn't load this teacher's free times.{" "}
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => setRetryNonce((n) => n + 1)}
+              >
+                Try again
+              </button>
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
               This teacher hasn't posted any free times in the next two weeks.
@@ -276,7 +287,7 @@ export function TeacherSlotPicker({
                     teacherWindows,
                     merged,
                     durationMinutes,
-                  ).filter((s) => !isDayBlocked(s.getTime()));
+                  ).filter((s) => !isSlotBlocked(s.getTime()));
                   if (starts.length > 0) {
                     merged.setHours(starts[0].getHours(), starts[0].getMinutes(), 0, 0);
                   } else {
@@ -355,17 +366,21 @@ export function TeacherSlotPicker({
         <p className="text-xs text-muted-foreground">{formatPretty(scheduleDate)}</p>
       )}
       {scheduleInPast && <p className="text-xs text-destructive">Pick a time in the future.</p>}
-      {constrainPicker && !windowsLoading && scheduleDate != null && validStarts.length === 0 && (
-        <p className="text-xs text-destructive">
-          Teacher isn't free for a {durationMinutes}-min session on{" "}
-          {scheduleDate.toLocaleDateString(undefined, {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-          })}
-          . Pick another day.
-        </p>
-      )}
+      {constrainPicker &&
+        !windowsLoading &&
+        !windowsError &&
+        scheduleDate != null &&
+        validStarts.length === 0 && (
+          <p className="text-xs text-destructive">
+            Teacher isn't free for a {durationMinutes}-min session on{" "}
+            {scheduleDate.toLocaleDateString(undefined, {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+            })}
+            . Pick another day.
+          </p>
+        )}
     </div>
   );
 }

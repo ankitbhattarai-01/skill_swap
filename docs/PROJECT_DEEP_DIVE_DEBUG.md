@@ -211,45 +211,45 @@ Standalone routes do not use the main shell/sidebar layout. These include:
 
 ### Public/Auth Routes
 
-| Route | Purpose | Main connections |
-| --- | --- | --- |
-| `/` | Landing page | `profiles`, `user_teaching_skills`, public stats |
-| `/login` | Email/password login, OAuth, CAPTCHA | Supabase Auth, `safeRedirectPath`, `resolvePostAuthRoute` |
-| `/signup` | Signup and OAuth | Supabase Auth, CAPTCHA, profile trigger |
-| `/auth/callback` | OAuth PKCE exchange | Supabase Auth, `exchangeAuthCodeFromUrl` |
-| `/forgot-password` | Send password reset email | Supabase Auth |
-| `/reset-password` | Update password | Supabase Auth |
-| `/skills` | Public skill catalog | `skills`, `user_teaching_skills` |
+| Route              | Purpose                              | Main connections                                          |
+| ------------------ | ------------------------------------ | --------------------------------------------------------- |
+| `/`                | Landing page                         | `profiles`, `user_teaching_skills`, public stats          |
+| `/login`           | Email/password login, OAuth, CAPTCHA | Supabase Auth, `safeRedirectPath`, `resolvePostAuthRoute` |
+| `/signup`          | Signup and OAuth                     | Supabase Auth, CAPTCHA, profile trigger                   |
+| `/auth/callback`   | OAuth PKCE exchange                  | Supabase Auth, `exchangeAuthCodeFromUrl`                  |
+| `/forgot-password` | Send password reset email            | Supabase Auth                                             |
+| `/reset-password`  | Update password                      | Supabase Auth                                             |
+| `/skills`          | Public skill catalog                 | `skills`, `user_teaching_skills`                          |
 
 ### User App Routes
 
-| Route | Purpose | Main connections |
-| --- | --- | --- |
-| `/onboarding` | Initial profile and skill setup | `profiles`, `skills`, `user_teaching_skills`, `user_learning_skills` |
-| `/dashboard` | Main user dashboard | profile, credits, sessions, matches, reviews, AI suggestions |
-| `/explore` | Discover teachers/learners | skills, profiles, ratings, availability, sessions |
-| `/users/$userId` | Public profile detail | profile, skills, reviews, session request |
-| `/profile` | Edit own profile | profile, avatar storage, skills, password, delete account RPC |
-| `/history` | Session history | sessions, profiles, credits, realtime |
-| `/sessions/$sessionId` | Session detail/actions | session RPCs, reports, reschedules |
-| `/messages` | Inbox/chat | sessions, messages, profiles, realtime |
-| `/messages/$sessionId` | Legacy redirect | redirects to `/messages?s=<sessionId>` |
-| `/video/$sessionId` | Video room | sessions, Jitsi/JaaS, attendance RPCs |
-| `/notifications` | Full notification list | `notifications` |
-| `/credits` | Credit balance and ledger | `my_credit_balance`, `credit_transactions` |
-| `/tracks` | Learning tracks | track RPCs |
+| Route                  | Purpose                         | Main connections                                                     |
+| ---------------------- | ------------------------------- | -------------------------------------------------------------------- |
+| `/onboarding`          | Initial profile and skill setup | `profiles`, `skills`, `user_teaching_skills`, `user_learning_skills` |
+| `/dashboard`           | Main user dashboard             | profile, credits, sessions, matches, reviews, AI suggestions         |
+| `/explore`             | Discover teachers/learners      | skills, profiles, ratings, availability, sessions                    |
+| `/users/$userId`       | Public profile detail           | profile, skills, reviews, session request                            |
+| `/profile`             | Edit own profile                | profile, avatar storage, skills, password, delete account RPC        |
+| `/history`             | Session history                 | sessions, profiles, credits, realtime                                |
+| `/sessions/$sessionId` | Session detail/actions          | session RPCs, reports, reschedules                                   |
+| `/messages`            | Inbox/chat                      | sessions, messages, profiles, realtime                               |
+| `/messages/$sessionId` | Legacy redirect                 | redirects to `/messages?s=<sessionId>`                               |
+| `/video/$sessionId`    | Video room                      | sessions, Jitsi/JaaS, attendance RPCs                                |
+| `/notifications`       | Full notification list          | `notifications`                                                      |
+| `/credits`             | Credit balance and ledger       | `my_credit_balance`, `credit_transactions`                           |
+| `/tracks`              | Learning tracks                 | track RPCs                                                           |
 
 ### Admin Routes
 
-| Route | Purpose | Main connections |
-| --- | --- | --- |
-| `/admin` | Admin guard | `get_my_admin_permissions` |
-| `/admin/` | Admin console home | admin snapshot RPCs |
-| `/admin/users` | User moderation | suspend/reinstate/reveal PII RPCs |
-| `/admin/skills` | Skill catalog management | create/delete skill RPCs |
-| `/admin/sessions` | Session monitoring | admin sessions dashboard RPC |
-| `/admin/reports` | Moderation reports | report queue and status RPCs |
-| `/admin/finance` | Finance operations | maker-checker finance RPCs |
+| Route             | Purpose                  | Main connections                  |
+| ----------------- | ------------------------ | --------------------------------- |
+| `/admin`          | Admin guard              | `get_my_admin_permissions`        |
+| `/admin/`         | Admin console home       | admin snapshot RPCs               |
+| `/admin/users`    | User moderation          | suspend/reinstate/reveal PII RPCs |
+| `/admin/skills`   | Skill catalog management | create/delete skill RPCs          |
+| `/admin/sessions` | Session monitoring       | admin sessions dashboard RPC      |
+| `/admin/reports`  | Moderation reports       | report queue and status RPCs      |
+| `/admin/finance`  | Finance operations       | maker-checker finance RPCs        |
 
 ## 8. Database Model
 
@@ -528,12 +528,12 @@ Common debug issues:
 
 ## 14. Edge Functions
 
-| Function | Purpose | Important secrets/env |
-| --- | --- | --- |
-| `generate-suggestions` | AI suggestions | `GROQ_API_KEY`, `GEMINI_API_KEY`, Supabase service role |
-| `mint-jitsi-token` | JaaS JWT minting | `JAAS_APP_ID`, `JAAS_KEY_ID`, `JAAS_PRIVATE_KEY` |
-| `n8n-webhook` | Authenticated N8N proxy | `N8N_*`, `N8N_WEBHOOK_SECRET` |
-| `send-session-email` | Notification email fanout | `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `GMAIL_FROM_NAME`, `EMAIL_WEBHOOK_SECRET`, `APP_PUBLIC_URL` |
+| Function               | Purpose                   | Important secrets/env                                                                           |
+| ---------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `generate-suggestions` | AI suggestions            | `GROQ_API_KEY`, `GEMINI_API_KEY`, Supabase service role                                         |
+| `mint-jitsi-token`     | JaaS JWT minting          | `JAAS_APP_ID`, `JAAS_KEY_ID`, `JAAS_PRIVATE_KEY`                                                |
+| `n8n-webhook`          | Authenticated N8N proxy   | `N8N_*`, `N8N_WEBHOOK_SECRET`                                                                   |
+| `send-session-email`   | Notification email fanout | `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `GMAIL_FROM_NAME`, `EMAIL_WEBHOOK_SECRET`, `APP_PUBLIC_URL` |
 
 CORS helper:
 
@@ -699,7 +699,7 @@ This file contains literal control characters in a regex. Git treats the file as
 Suggested fix later:
 
 ```ts
-/[\u0000-\u001F\u007F]/
+/[\u0000-\u001F\u007F]/;
 ```
 
 instead of literal control characters.
@@ -942,4 +942,3 @@ Logs, browser console, and database rows reveal the actual failure
 ```
 
 Most serious behavior is enforced in the database, not only in the frontend. When the UI says one thing and the DB does another, trust the DB/RPC/trigger layer first.
-

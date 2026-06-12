@@ -125,9 +125,7 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
               <Sparkles className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <SheetTitle className="text-base font-semibold">
-                SkillSwap Guide
-              </SheetTitle>
+              <SheetTitle className="text-base font-semibold">SkillSwap Guide</SheetTitle>
               <SheetDescription className="text-xs">
                 New here? Take the tour. Got a question? Try the FAQ.
               </SheetDescription>
@@ -144,20 +142,13 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
                   voiceEnabled && "bg-primary/10 text-primary",
                 )}
               >
-                {voiceEnabled ? (
-                  <Volume2 className="h-4 w-4" />
-                ) : (
-                  <VolumeX className="h-4 w-4" />
-                )}
+                {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
               </button>
             )}
           </div>
           {voiceReady && voiceEnabled && voices.length > 0 && (
             <div className="mt-3 flex items-center gap-2">
-              <Select
-                value={selectedVoiceName ?? undefined}
-                onValueChange={selectVoice}
-              >
+              <Select value={selectedVoiceName ?? undefined} onValueChange={selectVoice}>
                 <SelectTrigger className="h-9 flex-1 rounded-xl bg-card/50 text-xs">
                   <SelectValue placeholder="Choose voice" />
                 </SelectTrigger>

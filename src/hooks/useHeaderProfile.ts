@@ -43,10 +43,7 @@ function readSessionCache(userId: string): HeaderProfile | undefined {
 function writeSessionCache(userId: string, profile: HeaderProfile) {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(
-      `${SESSION_CACHE_PREFIX}${userId}`,
-      JSON.stringify(profile),
-    );
+    window.sessionStorage.setItem(`${SESSION_CACHE_PREFIX}${userId}`, JSON.stringify(profile));
   } catch {
     // private mode / quota — best-effort.
   }
@@ -70,11 +67,7 @@ export function useHeaderProfile() {
         return { full_name: null, avatar_url: null, is_admin: false };
       }
       const [profileRes, adminRes] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("full_name, avatar_url")
-          .eq("id", userId)
-          .maybeSingle(),
+        supabase.from("profiles").select("full_name, avatar_url").eq("id", userId).maybeSingle(),
         supabase.rpc("is_admin", { p_user: userId }),
       ]);
       if (profileRes.error) throw profileRes.error;

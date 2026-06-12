@@ -195,7 +195,12 @@ function VideoCallPage() {
       alive = false;
       controller.abort();
     };
-  }, [navigate, sessionId, user]);
+    // user?.id only — auth token refreshes rotate the user object reference
+    // without changing the user. Depending on `user` re-ran this load, which
+    // produced a new `session`/`viewer` object and re-initialized the Jitsi
+    // iframe mid-call, kicking the user out of the conference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate, sessionId, user?.id]);
 
   const apiRoomName = useMemo(() => {
     if (!session) return "";
@@ -209,6 +214,12 @@ function VideoCallPage() {
   // so the answerer, who joins to an already-present caller, hears at most a
   // single burst.
   const ringedRef = useRef(false);
+  // Re-arm the ring for a different call: navigating from /video/A straight
+  // to /video/B reuses this mounted component, and without the reset the
+  // second session would never ring the other party.
+  useEffect(() => {
+    ringedRef.current = false;
+  }, [sessionId]);
   useEffect(() => {
     if (!session || !user || !viewer || ringedRef.current) return;
     ringedRef.current = true;

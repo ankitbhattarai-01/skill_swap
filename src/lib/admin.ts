@@ -865,6 +865,18 @@ export function useAdminSystemHealth(enabled: boolean) {
   });
 }
 
-export function buildIdempotencyKey(prefix: string, id: string, next: string) {
-  return `${prefix}:${id}:${next}:${Date.now()}`;
+// Stable key per logical operation — deliberately NO timestamp component.
+// Appending Date.now() made every retry/double-click a "new" operation,
+// which defeated the server-side idempotency check entirely. Callers whose
+// operation can legitimately repeat (e.g. two manual adjustments to the same
+// user) pass a `nonce` minted once per dialog open: retries inside the same
+// dialog reuse the key, a fresh dialog gets a fresh one.
+export function buildIdempotencyKey(prefix: string, id: string, next: string, nonce?: string) {
+  return nonce ? `${prefix}:${id}:${next}:${nonce}` : `${prefix}:${id}:${next}`;
+}
+
+export function newIdempotencyNonce() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

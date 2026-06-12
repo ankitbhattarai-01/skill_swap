@@ -15,6 +15,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { notifyProfileUpdated } from "@/lib/profile-events";
 import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
+import { invalidatePageCaches } from "@/lib/page-caches";
 import { Camera, ChevronDown, KeyRound, Loader2, Plus, Trash2, X } from "lucide-react";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,9 @@ type Skill = { id: string; name: string; category: string | null };
 type ProfileState = {
   full_name: string;
   bio: string;
-  credits: number;
+  // null = balance unknown (RPC failed/unavailable). Never invent a number —
+  // a fake default like 10 would misrepresent the user's real balance.
+  credits: number | null;
   avatar_url: string | null;
 };
 
@@ -488,7 +491,7 @@ function ProfilePage() {
         const loadedProfile = {
           full_name: p?.full_name ?? "",
           bio: p?.bio ?? "",
-          credits: creditBalance ?? 10,
+          credits: creditBalance ?? null,
           avatar_url: null,
         };
         setProfile(loadedProfile);
@@ -545,7 +548,7 @@ function ProfilePage() {
             ? String((error as { code?: unknown }).code)
             : "";
         if (name === "AbortError" || code === "20" || code === "ABORT_ERR") return;
-        setProfile({ full_name: "", bio: "", credits: 10, avatar_url: null });
+        setProfile({ full_name: "", bio: "", credits: null, avatar_url: null });
         toast.error(error instanceof Error ? error.message : "Could not load profile");
       }
     })();
@@ -566,6 +569,20 @@ function ProfilePage() {
       .insert({ name: trimmed, category })
       .select("id, name, category")
       .single();
+    // Someone else created the same skill first (unique name) — recover by
+    // using the winner's row instead of surfacing a raw conflict error.
+    if (error?.code === "23505") {
+      const { data: raced } = await supabase
+        .from("skills")
+        .select("id, name, category")
+        .ilike("name", trimmed)
+        .limit(1)
+        .maybeSingle();
+      if (raced) {
+        setAllSkills((prev) => (prev.some((s) => s.id === raced.id) ? prev : [...prev, raced]));
+        return raced;
+      }
+    }
     if (error || !data) {
       toast.error(error?.message ?? "Could not add skill");
       return null;
@@ -611,23 +628,50 @@ function ProfilePage() {
         .select("id")
         .single();
     }
-    const { data, error } = result;
+    let { data, error } = result;
+    // Double-submit race on the (user, skill) unique constraint — the row
+    // already exists, so adopt it instead of surfacing a conflict error.
+    if (error?.code === "23505") {
+      const { data: raced } = await supabase
+        .from("user_teaching_skills")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("skill_id", skill.id)
+        .maybeSingle();
+      if (raced) {
+        data = raced;
+        error = null;
+      }
+    }
     if (error || !data) return toast.error(error?.message ?? "Failed");
+    const newRow = data;
     if (!methodSavedInDatabase) {
-      setStoredSkillMethod(user.id, "teaching", data.id, selectedTeachMode);
+      setStoredSkillMethod(user.id, "teaching", newRow.id, selectedTeachMode);
     }
     const focus = teachFocusInput.trim();
-    setStoredSkillFocus(user.id, "teaching", data.id, focus);
-    setTeaching([
-      ...teaching,
-      { id: data.id, skill, focus, level: selectedTeachLevel, teaching_mode: selectedTeachMode },
-    ]);
+    setStoredSkillFocus(user.id, "teaching", newRow.id, focus);
+    setTeaching((prev) =>
+      prev.some((t) => t.id === newRow.id)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: newRow.id,
+              skill,
+              focus,
+              level: selectedTeachLevel,
+              teaching_mode: selectedTeachMode,
+            },
+          ],
+    );
     setTeachInput("");
     setTeachFocusInput("");
     setTeachCategory("");
     setTeachMode("");
     setTeachLevel("");
     void invalidateAiSuggestionsCache();
+    // Explore/dashboard rankings key off teaching skills — drop their snapshots.
+    invalidatePageCaches(user.id);
   };
 
   const addLearn = async () => {
@@ -667,42 +711,63 @@ function ProfilePage() {
         .select("id")
         .single();
     }
-    const { data, error } = result;
+    let { data, error } = result;
+    // Same double-submit recovery as addTeach.
+    if (error?.code === "23505") {
+      const { data: raced } = await supabase
+        .from("user_learning_skills")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("skill_id", skill.id)
+        .maybeSingle();
+      if (raced) {
+        data = raced;
+        error = null;
+      }
+    }
     if (error || !data) return toast.error(error?.message ?? "Failed");
+    const newRow = data;
     if (!methodSavedInDatabase) {
-      setStoredSkillMethod(user.id, "learning", data.id, selectedLearnMode);
+      setStoredSkillMethod(user.id, "learning", newRow.id, selectedLearnMode);
     }
     const focus = learnFocusInput.trim();
-    setStoredSkillFocus(user.id, "learning", data.id, focus);
-    setLearning([
-      ...learning,
-      {
-        id: data.id,
-        skill,
-        focus,
-        current_level: selectedLearnLevel,
-        learning_mode: selectedLearnMode,
-      },
-    ]);
+    setStoredSkillFocus(user.id, "learning", newRow.id, focus);
+    setLearning((prev) =>
+      prev.some((t) => t.id === newRow.id)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: newRow.id,
+              skill,
+              focus,
+              current_level: selectedLearnLevel,
+              learning_mode: selectedLearnMode,
+            },
+          ],
+    );
     setLearnInput("");
     setLearnFocusInput("");
     setLearnCategory("");
     setLearnMode("");
     setLearnLevel("");
     void invalidateAiSuggestionsCache();
+    invalidatePageCaches(user.id);
   };
 
   const removeTeach = async (id: string) => {
     const { error } = await supabase.from("user_teaching_skills").delete().eq("id", id);
     if (error) return toastError(error);
-    setTeaching(teaching.filter((t) => t.id !== id));
+    setTeaching((prev) => prev.filter((t) => t.id !== id));
     void invalidateAiSuggestionsCache();
+    invalidatePageCaches(user?.id);
   };
   const removeLearn = async (id: string) => {
     const { error } = await supabase.from("user_learning_skills").delete().eq("id", id);
     if (error) return toastError(error);
-    setLearning(learning.filter((t) => t.id !== id));
+    setLearning((prev) => prev.filter((t) => t.id !== id));
     void invalidateAiSuggestionsCache();
+    invalidatePageCaches(user?.id);
   };
 
   const updateTeachLevel = async (id: string, level: string) => {
@@ -712,7 +777,8 @@ function ProfilePage() {
       .update({ level: lvl })
       .eq("id", id);
     if (error) return toastError(error);
-    setTeaching(teaching.map((t) => (t.id === id ? { ...t, level: lvl } : t)));
+    setTeaching((prev) => prev.map((t) => (t.id === id ? { ...t, level: lvl } : t)));
+    invalidatePageCaches(user?.id);
   };
   const updateLearnLevel = async (id: string, level: string) => {
     const lvl = level as "basic" | "intermediate" | "advanced";
@@ -721,31 +787,60 @@ function ProfilePage() {
       .update({ current_level: lvl })
       .eq("id", id);
     if (error) return toastError(error);
-    setLearning(learning.map((t) => (t.id === id ? { ...t, current_level: lvl } : t)));
+    setLearning((prev) => prev.map((t) => (t.id === id ? { ...t, current_level: lvl } : t)));
+    invalidatePageCaches(user?.id);
   };
 
   const updateTeachMode = async (id: string, mode: LearningMode) => {
+    const previous = teaching.find((t) => t.id === id)?.teaching_mode;
     if (user) {
       setStoredSkillMethod(user.id, "teaching", id, mode);
     }
-    setTeaching(teaching.map((t) => (t.id === id ? { ...t, teaching_mode: mode } : t)));
+    setTeaching((prev) => prev.map((t) => (t.id === id ? { ...t, teaching_mode: mode } : t)));
     const { error } = await supabase
       .from("user_teaching_skills")
       .update({ teaching_mode: mode })
       .eq("id", id);
-    if (error) return;
+    if (error) {
+      // A missing teaching_mode column (migration drift) is expected — the
+      // localStorage fallback above already holds the choice. Anything else
+      // means the optimistic flip didn't stick: roll back and tell the user.
+      if (error.message.includes("teaching_mode")) return;
+      if (previous) {
+        setTeaching((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, teaching_mode: previous } : t)),
+        );
+        if (user) setStoredSkillMethod(user.id, "teaching", id, previous);
+      }
+      toastError(error);
+      return;
+    }
+    invalidatePageCaches(user?.id);
   };
 
   const updateLearnMode = async (id: string, mode: LearningMode) => {
+    const previous = learning.find((t) => t.id === id)?.learning_mode;
     if (user) {
       setStoredSkillMethod(user.id, "learning", id, mode);
     }
-    setLearning(learning.map((t) => (t.id === id ? { ...t, learning_mode: mode } : t)));
+    setLearning((prev) => prev.map((t) => (t.id === id ? { ...t, learning_mode: mode } : t)));
     const { error } = await supabase
       .from("user_learning_skills")
       .update({ learning_mode: mode })
       .eq("id", id);
-    if (error) return;
+    if (error) {
+      // See updateTeachMode: tolerate migration drift, roll back real failures.
+      if (error.message.includes("learning_mode")) return;
+      if (previous) {
+        setLearning((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, learning_mode: previous } : t)),
+        );
+        if (user) setStoredSkillMethod(user.id, "learning", id, previous);
+      }
+      toastError(error);
+      return;
+    }
+    invalidatePageCaches(user?.id);
   };
 
   const uploadAvatar = async (file: File) => {
@@ -782,6 +877,12 @@ function ProfilePage() {
       .update({ avatar_url: path })
       .eq("id", user.id);
     if (updateError) {
+      // The pointer never moved, so the freshly-uploaded object is
+      // unreachable — remove it rather than orphaning it in the bucket.
+      await supabase.storage
+        .from("avatars")
+        .remove([path])
+        .catch(() => null);
       setUploadingAvatar(false);
       return toastError(updateError);
     }
@@ -797,6 +898,7 @@ function ProfilePage() {
     setUploadingAvatar(false);
     setProfile({ ...profile, avatar_url: signedUrl });
     notifyProfileUpdated();
+    invalidatePageCaches(user.id);
     toast.success("Avatar updated");
   };
 
@@ -827,6 +929,7 @@ function ProfilePage() {
     setNameBioDirty(false);
     notifyProfileUpdated();
     void invalidateAiSuggestionsCache();
+    invalidatePageCaches(user.id);
     toast.success("Profile updated");
   };
 

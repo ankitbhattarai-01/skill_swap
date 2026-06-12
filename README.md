@@ -24,11 +24,11 @@ A peer-to-peer learning platform where users exchange skills as the currency ???
 
 ## Team
 
-| Member | Roles |
-|---|---|
-| **Utsab Karki** ([@UtsabKarki-01](https://github.com/UtsabKarki-01)) | Project Lead, Auth, AI Integration, Documentation |
-| **Suman Joshi** ([@SumanJoshi-01](https://github.com/SumanJoshi-01)) | Frontend, Profile/Explore/Dashboard, Deployment |
-| **Sulav Dyola** ([@sulavdyola01-hash](https://github.com/sulavdyola01-hash)) | Sessions, Messaging, Video, UI/UX |
+| Member                                                                           | Roles                                              |
+| -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **Utsab Karki** ([@UtsabKarki-01](https://github.com/UtsabKarki-01))             | Project Lead, Auth, AI Integration, Documentation  |
+| **Suman Joshi** ([@SumanJoshi-01](https://github.com/SumanJoshi-01))             | Frontend, Profile/Explore/Dashboard, Deployment    |
+| **Sulav Dyola** ([@sulavdyola01-hash](https://github.com/sulavdyola01-hash))     | Sessions, Messaging, Video, UI/UX                  |
 | **Ankit Bhattarai** ([@ankitbhattarai-01](https://github.com/ankitbhattarai-01)) | Database, Admin Panel, Security Hardening, Testing |
 
 ## Local Development
@@ -60,5 +60,3 @@ docs/
   jitsi-video.md
   compliance/      # GDPR, audit, RBAC docs
 ```
-
-

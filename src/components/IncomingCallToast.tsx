@@ -134,6 +134,7 @@ export function IncomingCallToast() {
     // every onAuthStateChange event (TOKEN_REFRESHED, USER_UPDATED, …) even
     // when the id is unchanged. Using [user] tore down + re-subscribed this
     // realtime channel 2–4 times during auth bootstrap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Start ringing whenever a call becomes visible; stop when it goes away.

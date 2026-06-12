@@ -167,6 +167,9 @@ function OnboardingPage() {
     if (!authLoading && !user && !emailRedirectPending) {
       navigate({ to: "/login", search: { redirect: "/onboarding" } });
     }
+    // user?.id only — auth events rotate the user object reference even when
+    // the underlying user hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, authLoading, emailRedirectPending, navigate]);
 
   useEffect(() => {
@@ -249,6 +252,8 @@ function OnboardingPage() {
       }
       setHydrated(true);
     })();
+    // user?.id only — see the auth-rotation note on the redirect effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, authLoading, navigate, hydrated]);
 
   const findOrCreateSkill = async (name: string, category: string): Promise<Skill | null> => {
@@ -637,14 +642,21 @@ function OnboardingPage() {
             )}
 
             {step === 3 && (
-              <div className="space-y-5">
-                <p className="text-sm text-muted-foreground">
+              <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-brand-blue" aria-hidden />
+                    <h3 className="text-sm font-semibold tracking-wide">Availability</h3>
+                  </div>
+                  <span className="text-xs text-muted-foreground">Your local clock</span>
+                </div>
+                <p className="mb-5 text-sm text-muted-foreground">
                   Let us know when you&apos;re free. The system uses this to suggest session times
                   that work for both you and the other party. You can skip this and set it up later
                   in your profile.
                 </p>
                 <AvailabilityEditor ref={availabilityRef} defaultMode="teach" hideSaveButton />
-              </div>
+              </section>
             )}
           </div>
 

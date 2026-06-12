@@ -53,6 +53,7 @@ import {
   ADMIN_FINANCE_DASHBOARD_KEY,
   adminErrorMessage,
   buildIdempotencyKey,
+  newIdempotencyNonce,
   hasAdminPermission,
   useAdminFinanceDashboard,
   useAdminPermissions,
@@ -152,6 +153,13 @@ function AdminFinancePage() {
   const [to, setTo] = useState(() => toLocalDateTimeString(new Date()));
   const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
+  // One idempotency nonce per request-dialog open: retries/double-clicks
+  // inside the same dialog send the same key (the server dedupes them), while
+  // a freshly opened dialog is a genuinely new logical operation.
+  const [requestNonce, setRequestNonce] = useState(() => newIdempotencyNonce());
+  useEffect(() => {
+    if (requestOpen) setRequestNonce(newIdempotencyNonce());
+  }, [requestOpen]);
   const selectedDecisionRequest = requests.find((request) => request.id === decision?.id);
   const selectedDecisionReason =
     payloadText(selectedDecisionRequest?.payload, "action_type") === "manual_adjustment"
@@ -237,6 +245,7 @@ function AdminFinancePage() {
   };
 
   const submitRequest = async () => {
+    if (busy) return;
     if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
       toast.error("Ticket reference and justification are required.");
       return;
@@ -269,7 +278,12 @@ function AdminFinancePage() {
             : "wallet:escrow_intervention",
         p_justification: justification.trim(),
         p_ticket_ref: ticketRef.trim(),
-        p_idempotency_key: buildIdempotencyKey("finance", targetUserId || sessionId, actionType),
+        p_idempotency_key: buildIdempotencyKey(
+          "finance",
+          targetUserId || sessionId,
+          actionType,
+          requestNonce,
+        ),
       });
       if (error) {
         toast.error(error.message);
@@ -288,7 +302,7 @@ function AdminFinancePage() {
   };
 
   const decide = async () => {
-    if (!decision) return;
+    if (!decision || busy) return;
     if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
       toast.error("Ticket reference and justification are required.");
       return;

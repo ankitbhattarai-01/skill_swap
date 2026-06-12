@@ -262,7 +262,7 @@ function AdminReportsPage() {
   };
 
   const submitStatusUpdate = async () => {
-    if (!pendingAction) return;
+    if (!pendingAction || busyId) return;
     if (justification.trim().length < 8) {
       toast.error("Add a justification of at least 8 characters.");
       return;
@@ -275,37 +275,45 @@ function AdminReportsPage() {
       return;
     }
 
+    // try/finally so a network throw can't strand the row's buttons disabled.
     setBusyId(pendingAction.reportId);
-    const { error } = await supabase.rpc("admin_update_report_status", {
-      p_report_id: pendingAction.reportId,
-      p_status: pendingAction.status,
-      p_reason_code: reasonCode,
-      p_justification: justification.trim(),
-      p_ticket_ref: ticketRef.trim() || null,
-      p_idempotency_key: buildIdempotencyKey(
-        "report-status",
-        pendingAction.reportId,
-        pendingAction.status,
-      ),
-      p_resolution: resolution,
-    });
-    setBusyId(null);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const { error } = await supabase.rpc("admin_update_report_status", {
+        p_report_id: pendingAction.reportId,
+        p_status: pendingAction.status,
+        p_reason_code: reasonCode,
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim() || null,
+        // Stable per (report, target status): retrying the same transition is
+        // the same logical operation and should be deduped server-side.
+        p_idempotency_key: buildIdempotencyKey(
+          "report-status",
+          pendingAction.reportId,
+          pendingAction.status,
+        ),
+        p_resolution: resolution,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      // Invalidate the shared TanStack Query cache so the next render reflects
+      // the new server-side status. Cheaper than the old hand-rolled state
+      // patch and keeps anyone else reading via the hook in sync too.
+      void queryClient.invalidateQueries({ queryKey: ADMIN_REPORTS_KEY(user?.id) });
+      toast.success(
+        pendingAction.status === "dismissed" && resolution === "bad_faith"
+          ? "Dismissed - strike issued to reporter"
+          : pendingAction.status === "resolved"
+            ? `Resolved - strike issued to reported user`
+            : `Marked ${pendingAction.status}`,
+      );
+      setPendingAction(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update the report.");
+    } finally {
+      setBusyId(null);
     }
-    // Invalidate the shared TanStack Query cache so the next render reflects
-    // the new server-side status. Cheaper than the old hand-rolled state
-    // patch and keeps anyone else reading via the hook in sync too.
-    void queryClient.invalidateQueries({ queryKey: ADMIN_REPORTS_KEY(user?.id) });
-    toast.success(
-      pendingAction.status === "dismissed" && resolution === "bad_faith"
-        ? "Dismissed - strike issued to reporter"
-        : pendingAction.status === "resolved"
-          ? `Resolved - strike issued to reported user`
-          : `Marked ${pendingAction.status}`,
-    );
-    setPendingAction(null);
   };
 
   if (authLoading || permissionsQuery.isLoading || authorized === null) {

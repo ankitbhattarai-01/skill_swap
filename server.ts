@@ -513,8 +513,13 @@ let clientLogGlobalNotified = false;
 function checkClientLogRate(
   ip: string,
   now: number,
-): { allowed: true } | { allowed: false; retryAfterSec: number; scope: "ip" | "global"; firstHit: boolean } {
-  if (clientLogGlobalWindowStart === 0 || now - clientLogGlobalWindowStart >= CLIENT_LOG_WINDOW_MS) {
+):
+  | { allowed: true }
+  | { allowed: false; retryAfterSec: number; scope: "ip" | "global"; firstHit: boolean } {
+  if (
+    clientLogGlobalWindowStart === 0 ||
+    now - clientLogGlobalWindowStart >= CLIENT_LOG_WINDOW_MS
+  ) {
     clientLogGlobalWindowStart = now;
     clientLogGlobalCount = 0;
     clientLogGlobalNotified = false;
@@ -672,11 +677,7 @@ export default {
   // Cloudflare Workers invoke fetch as (request, env, ctx). baseFetch's
   // declared type only takes (request, opts?), so we accept the CF shape
   // here and forward just the request to baseFetch.
-  async fetch(
-    request: Request,
-    _env: unknown,
-    context?: ExecutionContextLike,
-  ): Promise<Response> {
+  async fetch(request: Request, _env: unknown, context?: ExecutionContextLike): Promise<Response> {
     const startedAt = performance.now();
     const requestId = createRequestId();
 

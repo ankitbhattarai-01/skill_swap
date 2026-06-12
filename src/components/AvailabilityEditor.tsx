@@ -8,7 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -22,20 +21,21 @@ type LocalWindow = {
 };
 
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_OPTIONS = DAY_FULL.map((label, value) => ({ value, label }));
 
 const MODE_CONTENT = {
   teach: {
     label: "Teach",
     title: "Teaching hours",
-    subtitle: "When you're free to teach. Learners can only book sessions inside these windows.",
+    subtitle: "When learners can book you.",
     copyLabel: "Copy from learning",
     icon: BookOpen,
   },
   learn: {
     label: "Learn",
     title: "Learning hours",
-    subtitle:
-      "Optional. When you're free to learn. Shown on your profile so teachers know when to reach out.",
+    subtitle: "When you're free to learn.",
     copyLabel: "Copy from teaching",
     icon: GraduationCap,
   },
@@ -85,6 +85,14 @@ const PRESETS: { label: string; windows: LocalWindow[] }[] = [
   {
     label: "Daily evenings",
     windows: [0, 1, 2, 3, 4, 5, 6].map((d) => ({ day: d, startMin: 19 * 60, endMin: 21 * 60 })),
+  },
+  {
+    label: "Weekend mornings",
+    windows: [0, 6].map((d) => ({ day: d, startMin: 8 * 60, endMin: 12 * 60 })),
+  },
+  {
+    label: "Lunch breaks",
+    windows: [1, 2, 3, 4, 5].map((d) => ({ day: d, startMin: 12 * 60, endMin: 13 * 60 })),
   },
 ];
 
@@ -172,72 +180,44 @@ type ModePanelProps = {
   setWindows: React.Dispatch<React.SetStateAction<LocalWindow[]>>;
   dirty: boolean;
   setDirty: (v: boolean) => void;
-  saving: boolean;
-  onSave: () => void;
-  compact: boolean;
-  hideSaveButton: boolean;
 };
 
-function ModePanel({
-  mode,
-  windows,
-  setWindows,
-  dirty,
-  setDirty,
-  saving,
-  onSave,
-  compact,
-  hideSaveButton,
-}: ModePanelProps) {
+function ModePanel({ mode, windows, setWindows, dirty, setDirty }: ModePanelProps) {
   const modeContent = MODE_CONTENT[mode];
   const ModeIcon = modeContent.icon;
 
-  const groupedByDay = useMemo(() => {
-    const map: LocalWindow[][] = [[], [], [], [], [], [], []];
-    for (const w of windows) {
-      map[w.day].push(w);
-    }
-    map.forEach((arr) => arr.sort((a, b) => a.startMin - b.startMin));
-    return map;
-  }, [windows]);
-
   const stats = useMemo(() => {
-    const activeDays = groupedByDay.filter((day) => day.length > 0).length;
     const invalidCount = windows.filter((window) => window.endMin <= window.startMin).length;
-    return { activeDays, invalidCount };
-  }, [groupedByDay, windows]);
+    return { invalidCount };
+  }, [windows]);
 
   const markDirty = () => setDirty(true);
 
-  const addWindow = (day: number) => {
-    const existing = groupedByDay[day];
-    const last = existing.at(-1);
-    const startMin = last ? Math.min(last.endMin + 30, 22 * 60) : 19 * 60;
-    const endMin = Math.min(startMin + 2 * 60, 24 * 60);
-    setWindows((prev) => [...prev, { day, startMin, endMin }]);
+  // The week is shown as seven fixed rows (Sun–Sat). The model keeps one
+  // window per day, so each row maps to at most one window — enabling a day
+  // appends its window (default 6 AM–10 PM), disabling removes it. This keeps
+  // the layout predictable: no day dropdown, no "add row" guesswork.
+  const windowByDay = useMemo(() => {
+    const map = new Map<number, LocalWindow>();
+    for (const w of windows) map.set(w.day, w);
+    return map;
+  }, [windows]);
+
+  const enableDay = (day: number) => {
+    if (windowByDay.has(day)) return;
+    setWindows((prev) => [...prev, { day, startMin: 6 * 60, endMin: 22 * 60 }]);
     markDirty();
   };
 
-  const removeWindow = (day: number, index: number) => {
-    setWindows((prev) => {
-      let dayCount = -1;
-      return prev.filter((w) => {
-        if (w.day !== day) return true;
-        dayCount += 1;
-        return dayCount !== index;
-      });
-    });
+  const disableDay = (day: number) => {
+    setWindows((prev) => prev.filter((w) => w.day !== day));
     markDirty();
   };
 
-  const updateWindow = (day: number, index: number, patch: Partial<LocalWindow>) => {
-    setWindows((prev) => {
-      let dayCount = -1;
-      return prev.map((w) => {
+  const updateDay = (day: number, patch: Partial<LocalWindow>) => {
+    setWindows((prev) =>
+      prev.map((w) => {
         if (w.day !== day) return w;
-        dayCount += 1;
-        if (dayCount !== index) return w;
-
         const next = { ...w, ...patch };
         if (patch.startMin !== undefined && next.startMin >= next.endMin) {
           next.endMin = Math.min(next.startMin + 60, 24 * 60);
@@ -246,8 +226,8 @@ function ModePanel({
           next.startMin = Math.max(0, next.endMin - 60);
         }
         return next;
-      });
-    });
+      }),
+    );
     markDirty();
   };
 
@@ -256,10 +236,12 @@ function ModePanel({
     markDirty();
   };
 
-  const canSave = dirty && !saving && stats.invalidCount === 0;
+  // Days the learner sees as bookable — distinct days, since the model keeps
+  // one window per day. Counting raw windows could overcount past seven.
+  const activeDays = windowByDay.size;
 
   return (
-    <div className="space-y-5">
+    <section className="flex flex-col gap-5 rounded-2xl border border-border/70 bg-card/60 p-4 shadow-sm">
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
           <ModeIcon className="h-5 w-5" />
@@ -282,12 +264,12 @@ function ModePanel({
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-muted/25 p-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-muted/25 p-3">
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
           <Sparkles className="h-4 w-4 text-primary" />
           Quick sets
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {PRESETS.map((p) => (
             <Button
               key={p.label}
@@ -295,7 +277,7 @@ function ModePanel({
               variant="outline"
               size="sm"
               onClick={() => applyPreset(p.windows)}
-              className="h-9 rounded-full bg-background/70 px-3 text-xs"
+              className="h-9 w-full rounded-full bg-background/70 px-3 text-xs"
             >
               {p.label}
             </Button>
@@ -310,138 +292,117 @@ function ModePanel({
         </div>
       )}
 
-      <div
-        className={cn(
-          "grid gap-3",
-          compact ? "sm:grid-cols-2" : "md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4",
-        )}
-      >
-        {DAY_FULL.map((dayFull, d) => {
-          const dayWindows = groupedByDay[d];
-          const isActive = dayWindows.length > 0;
-
+      <div className="flex flex-col">
+        {DAY_OPTIONS.map((opt, rowIdx) => {
+          const w = windowByDay.get(opt.value);
+          const active = Boolean(w);
+          const invalid = w ? w.endMin <= w.startMin : false;
           return (
-            <section
-              key={d}
+            <div
+              key={opt.value}
               className={cn(
-                "flex min-h-[128px] flex-col rounded-2xl border bg-card/80 p-3 shadow-sm transition-colors",
-                isActive ? "border-primary/25" : "border-border/70",
+                "flex items-center gap-3 py-2",
+                rowIdx > 0 && "border-t border-border/50",
               )}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-foreground">{dayFull}</div>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => addWindow(d)}
-                  className="h-8 w-8 rounded-full"
-                  title={`Add ${DAY_FULL[d]} time`}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-
-              <div className="mt-3 flex flex-1 flex-col gap-2">
-                {dayWindows.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border/80 bg-background/45 px-3 py-5 text-sm text-muted-foreground">
-                    Off
-                  </div>
-                ) : (
-                  dayWindows.map((w, idx) => {
-                    const invalid = w.endMin <= w.startMin;
-                    return (
-                      <div
-                        key={idx}
-                        className={cn(
-                          "rounded-xl border bg-background/75 p-2",
-                          invalid ? "border-destructive/50" : "border-border/70",
-                        )}
-                      >
-                        <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5">
-                          <Select
-                            value={String(w.startMin)}
-                            onValueChange={(value) =>
-                              updateWindow(d, idx, { startMin: Number(value) })
-                            }
-                          >
-                            <SelectTrigger className="h-9 min-w-0 rounded-lg border-border/70 bg-card px-2 text-xs shadow-none">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-64 rounded-xl">
-                              {START_TIME_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={String(opt.value)}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-
-                          <span className="text-xs text-muted-foreground">to</span>
-
-                          <Select
-                            value={String(w.endMin)}
-                            onValueChange={(value) =>
-                              updateWindow(d, idx, { endMin: Number(value) })
-                            }
-                          >
-                            <SelectTrigger className="h-9 min-w-0 rounded-lg border-border/70 bg-card px-2 text-xs shadow-none">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-64 rounded-xl">
-                              {END_TIME_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={String(opt.value)}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => removeWindow(d, idx)}
-                            className="h-8 w-8 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            title="Remove time"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                        {invalid && (
-                          <p className="mt-1.5 text-xs text-destructive">End must be later.</p>
-                        )}
-                      </div>
-                    );
-                  })
+              <button
+                type="button"
+                onClick={() => (active ? disableDay(opt.value) : enableDay(opt.value))}
+                className={cn(
+                  "flex w-14 shrink-0 items-center gap-1.5 text-sm font-medium transition-colors",
+                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
-              </div>
-            </section>
+                title={active ? `Turn off ${opt.label}` : `Turn on ${opt.label}`}
+              >
+                <span
+                  className={cn(
+                    "h-2 w-2 shrink-0 rounded-full",
+                    active ? "bg-primary" : "bg-muted-foreground/30",
+                  )}
+                />
+                {DAY_SHORT[opt.value]}
+              </button>
+
+              {active && w ? (
+                <div className="flex flex-1 items-center gap-1.5">
+                  <Select
+                    value={String(w.startMin)}
+                    onValueChange={(value) => updateDay(opt.value, { startMin: Number(value) })}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        "h-9 min-w-0 flex-1 rounded-lg bg-card px-2.5 text-sm shadow-none",
+                        invalid ? "border-destructive/60" : "border-border/70",
+                      )}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64 rounded-xl">
+                      {START_TIME_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={String(o.value)}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <span className="shrink-0 text-xs text-muted-foreground">to</span>
+
+                  <Select
+                    value={String(w.endMin)}
+                    onValueChange={(value) => updateDay(opt.value, { endMin: Number(value) })}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        "h-9 min-w-0 flex-1 rounded-lg bg-card px-2.5 text-sm shadow-none",
+                        invalid ? "border-destructive/60" : "border-border/70",
+                      )}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64 rounded-xl">
+                      {END_TIME_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={String(o.value)}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => disableDay(opt.value)}
+                    className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    title={`Remove ${opt.label}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => enableDay(opt.value)}
+                  className="flex flex-1 items-center gap-1.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add time
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-background/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-auto rounded-2xl border border-border/70 bg-background/60 p-3">
         <p className="text-sm text-muted-foreground">
-          {windows.length > 0
-            ? `${windows.length} window${windows.length === 1 ? "" : "s"} across ${
-                stats.activeDays
-              } day${stats.activeDays === 1 ? "" : "s"}.`
-            : "No windows set yet."}
+          {activeDays > 0
+            ? `Available ${activeDays} day${activeDays === 1 ? "" : "s"} a week.`
+            : "No days turned on yet."}
         </p>
-        {!hideSaveButton && (
-          <Button
-            variant="hero"
-            onClick={onSave}
-            disabled={!canSave}
-            className="h-11 min-w-32 rounded-full"
-          >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {saving ? "Saving" : dirty ? "Save changes" : "Saved"}
-          </Button>
-        )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -458,12 +419,11 @@ export const AvailabilityEditor = forwardRef<
     /** Hide the per-mode "Save changes" button (the parent drives saving via ref). */
     hideSaveButton?: boolean;
   }
->(function AvailabilityEditor({ defaultMode = "teach", compact = false, hideSaveButton = false }, ref) {
-  const [mode, setMode] = useState<Mode>(defaultMode);
+>(function AvailabilityEditor({ compact = false, hideSaveButton = false }, ref) {
   const [teachWindows, setTeachWindows] = useState<LocalWindow[]>([]);
   const [learnWindows, setLearnWindows] = useState<LocalWindow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingMode, setSavingMode] = useState<Mode | null>(null);
+  const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState<{ teach: boolean; learn: boolean }>({
     teach: false,
     learn: false,
@@ -489,23 +449,29 @@ export const AvailabilityEditor = forwardRef<
     };
   }, []);
 
-  const saveFor = async (m: Mode) => {
-    const ws = m === "teach" ? teachWindows : learnWindows;
-    for (const w of ws) {
-      if (w.endMin <= w.startMin) {
-        toast.error("Each window's end must be after its start");
-        return;
+  // One button saves both teaching and learning windows together.
+  const saveAll = async () => {
+    for (const ws of [teachWindows, learnWindows]) {
+      for (const w of ws) {
+        if (w.endMin <= w.startMin) {
+          toast.error("Fix the highlighted time window before saving.");
+          return;
+        }
       }
     }
-    setSavingMode(m);
-    const { error } = await saveMode(m, ws);
-    setSavingMode(null);
+    setSaving(true);
+    const [teachRes, learnRes] = await Promise.all([
+      saveMode("teach", teachWindows),
+      saveMode("learn", learnWindows),
+    ]);
+    setSaving(false);
+    const error = teachRes.error || learnRes.error;
     if (error) {
       toast.error(error.message);
       return;
     }
-    toast.success(`${m === "teach" ? "Teaching" : "Learning"} availability saved`);
-    setDirty((d) => ({ ...d, [m]: false }));
+    toast.success("Availability saved");
+    setDirty({ teach: false, learn: false });
   };
 
   useImperativeHandle(
@@ -552,52 +518,43 @@ export const AvailabilityEditor = forwardRef<
     </div>
   );
 
+  const anyDirty = dirty.teach || dirty.learn;
+  const hasInvalid = [...teachWindows, ...learnWindows].some((w) => w.endMin <= w.startMin);
+
   return (
     <div className="space-y-5">
-      <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="space-y-5">
-        <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-background/55 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <TabsList className="grid h-11 w-full grid-cols-2 rounded-full bg-muted/70 p-1 sm:w-[320px]">
-            <TabsTrigger value="teach" className="rounded-full">
-              <BookOpen className="h-4 w-4" />
-              Teach
-            </TabsTrigger>
-            <TabsTrigger value="learn" className="rounded-full">
-              <GraduationCap className="h-4 w-4" />
-              Learn
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="teach" className="m-0">
-          <ModePanel
-            mode="teach"
-            windows={teachWindows}
-            setWindows={setTeachWindows}
-            dirty={dirty.teach}
-            setDirty={(v) => setDirty((d) => ({ ...d, teach: v }))}
-            saving={savingMode === "teach"}
-            onSave={() => saveFor("teach")}
-            compact={compact}
-            hideSaveButton={hideSaveButton}
-          />
-        </TabsContent>
-
-        <TabsContent value="learn" className="m-0">
-          <ModePanel
-            mode="learn"
-            windows={learnWindows}
-            setWindows={setLearnWindows}
-            dirty={dirty.learn}
-            setDirty={(v) => setDirty((d) => ({ ...d, learn: v }))}
-            saving={savingMode === "learn"}
-            onSave={() => saveFor("learn")}
-            compact={compact}
-            hideSaveButton={hideSaveButton}
-          />
-        </TabsContent>
-      </Tabs>
-
       {firstTimeHint}
+
+      <div className={cn("grid items-stretch gap-5", compact ? "" : "lg:grid-cols-2")}>
+        <ModePanel
+          mode="teach"
+          windows={teachWindows}
+          setWindows={setTeachWindows}
+          dirty={dirty.teach}
+          setDirty={(v) => setDirty((d) => ({ ...d, teach: v }))}
+        />
+        <ModePanel
+          mode="learn"
+          windows={learnWindows}
+          setWindows={setLearnWindows}
+          dirty={dirty.learn}
+          setDirty={(v) => setDirty((d) => ({ ...d, learn: v }))}
+        />
+      </div>
+
+      {!hideSaveButton && (
+        <div className="flex justify-end">
+          <Button
+            variant="hero"
+            onClick={saveAll}
+            disabled={!anyDirty || saving || hasInvalid}
+            className="h-11 min-w-32 rounded-full"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {saving ? "Saving" : anyDirty ? "Save changes" : "Saved"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 });
