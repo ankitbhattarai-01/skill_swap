@@ -282,8 +282,7 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: "Invalid JSON" });
   }
 
-  const notificationId =
-    typeof payload.notificationId === "string" ? payload.notificationId : null;
+  const notificationId = typeof payload.notificationId === "string" ? payload.notificationId : null;
   if (!notificationId) {
     return jsonResponse(400, { error: "notificationId is required" });
   }
@@ -310,6 +309,40 @@ Deno.serve(async (req) => {
     return jsonResponse(200, { skipped: "unsupported_type", type: notification.type });
   }
 
+  // ── Dedupe + delivery log ─────────────────────────────────────────────────
+  // Claim the notification by inserting its delivery row. The PRIMARY KEY on
+  // notification_id makes exactly one invocation win — a pg_net retry or a
+  // double trigger fire hits the conflict and exits instead of emailing the
+  // recipient twice. The row is then updated with the terminal outcome so
+  // "did that email actually go out?" is answerable from SQL.
+  // Degrades gracefully when the migration hasn't been applied yet: any error
+  // other than the unique conflict is logged and dispatch proceeds un-deduped.
+  let deliveryLogAvailable = true;
+  {
+    const { error: claimError } = await supabase
+      .from("session_email_deliveries")
+      .insert({ notification_id: notification.id, status: "pending" });
+    if (claimError) {
+      if (claimError.code === "23505") {
+        return jsonResponse(200, { skipped: "duplicate_dispatch" });
+      }
+      deliveryLogAvailable = false;
+      console.error("[send-session-email] delivery log unavailable", claimError);
+    }
+  }
+  const recordOutcome = async (
+    status: "sent" | "failed" | "skipped",
+    detail: string | null,
+    recipient: string | null = null,
+  ) => {
+    if (!deliveryLogAvailable) return;
+    const { error } = await supabase
+      .from("session_email_deliveries")
+      .update({ status, detail, recipient, updated_at: new Date().toISOString() })
+      .eq("notification_id", notification.id);
+    if (error) console.error("[send-session-email] delivery log update failed", error);
+  };
+
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id, full_name, email_notifications_enabled")
@@ -318,9 +351,11 @@ Deno.serve(async (req) => {
 
   if (profileError) {
     console.error("[send-session-email] profile lookup failed", profileError);
+    await recordOutcome("failed", "profile lookup failed");
     return jsonResponse(500, { error: "Profile lookup failed" });
   }
   if (profile && profile.email_notifications_enabled === false) {
+    await recordOutcome("skipped", "user_opted_out");
     return jsonResponse(200, { skipped: "user_opted_out" });
   }
 
@@ -328,6 +363,7 @@ Deno.serve(async (req) => {
     notification.user_id,
   );
   if (authError || !authUser?.user?.email) {
+    await recordOutcome("failed", "recipient email not found");
     return jsonResponse(404, { error: "Recipient email not found" });
   }
 
@@ -339,8 +375,14 @@ Deno.serve(async (req) => {
   } catch (error) {
     // SMTP errors can include the relay banner, auth method names, etc.
     console.error("[send-session-email] gmail send failed", error);
+    await recordOutcome(
+      "failed",
+      error instanceof Error ? error.message.slice(0, 500) : "smtp send failed",
+      authUser.user.email,
+    );
     return jsonResponse(502, { error: "Email send failed" });
   }
 
+  await recordOutcome("sent", null, authUser.user.email);
   return jsonResponse(200, { sent: true, to: authUser.user.email });
 });

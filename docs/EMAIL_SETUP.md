@@ -15,23 +15,30 @@ session insert/update
                                                          └─ private.dispatch_session_email
                                                                 └─ net.http_post (HMAC-signed)
                                                                        └─ Edge Function send-session-email
-                                                                              └─ Resend HTTP API
+                                                                              └─ Gmail SMTP (nodemailer + App Password)
                                                                                      └─ recipient inbox
 ```
 
 If any step is unconfigured, the rest of the system keeps working —
 notifications still land in-app, you just don't get an email.
 
+> History note: the pipeline originally shipped against Resend's HTTP API
+> (and migration `20260518000000_session_email_dispatch.sql` still mentions it
+> in a comment). The function now sends through Gmail SMTP; the steps below
+> reflect the current implementation.
+
 ---
 
-## 1. Create a Resend account
+## 1. Create a Gmail App Password
 
-1. Sign up at https://resend.com (free tier: 3,000 emails/month, 100/day).
-2. Verify a domain you control under **Domains** (recommended for production).
-   For testing you can use Resend's built-in `onresend.com` sender — no domain
-   verification needed, but limited to your account's email address.
-3. Create an API key under **API Keys** → **Create API Key** (full access).
-   Copy the `re_…` value once — Resend never shows it again.
+1. Use (or create) the Gmail account that will send the emails.
+2. Enable 2-Step Verification on the account — App Passwords require it.
+3. Go to https://myaccount.google.com/apppasswords and create an app password
+   (any name, e.g. "SkillSwap"). Copy the 16-character value — Google only
+   shows it once.
+
+> Gmail's normal account password will NOT work for SMTP; it must be an App
+> Password. Free Gmail caps sending at roughly 500 recipients/day.
 
 ## 2. Set Supabase secrets
 
@@ -40,8 +47,9 @@ project root:
 
 ```powershell
 supabase secrets set `
-  RESEND_API_KEY="re_paste_your_key_here" `
-  RESEND_FROM_EMAIL="SkillSwap <noreply@yourdomain.com>" `
+  GMAIL_USER="youraddress@gmail.com" `
+  GMAIL_APP_PASSWORD="the16charapppassword" `
+  GMAIL_FROM_NAME="SkillSwap Connect" `
   EMAIL_WEBHOOK_SECRET="paste_a_long_random_string_here" `
   APP_PUBLIC_URL="https://your-deployed-app.example.com"
 ```
@@ -98,7 +106,7 @@ to another) and watch:
 supabase functions logs send-session-email --tail
 ```
 
-You should see one POST per session_* notification with a `{ "sent": true }`
+You should see one POST per session\_\* notification with a `{ "sent": true }`
 response. If you see `401 Invalid signature`, the secret in step 4 doesn't
 match `EMAIL_WEBHOOK_SECRET` from step 2.
 
@@ -108,10 +116,7 @@ The migration adds a boolean column `profiles.email_notifications_enabled`
 (defaults to `true`). To wire it into the profile UI:
 
 ```ts
-await supabase
-  .from("profiles")
-  .update({ email_notifications_enabled: enabled })
-  .eq("id", userId);
+await supabase.from("profiles").update({ email_notifications_enabled: enabled }).eq("id", userId);
 ```
 
 The Edge Function checks this flag before sending — opted-out users still get
@@ -121,14 +126,29 @@ in-app notifications, they just don't get email.
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| No email, no log entry | Config row missing — re-run step 4 |
-| `401 Missing signature headers` | Calling the function directly from the browser/curl. Only the DB trigger is supposed to reach it. |
-| `401 Invalid signature` | `EMAIL_WEBHOOK_SECRET` ≠ `private.email_dispatch_config.shared_secret` |
-| `404 Recipient email not found` | User was deleted between trigger and dispatch — safe to ignore |
-| `502 Resend request failed 403` | API key revoked, or sending from an unverified domain |
-| `502 Resend request failed 422` | `RESEND_FROM_EMAIL` malformed — must be `Name <user@domain>` |
+| Symptom                                                                 | Likely cause                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| No email, no log entry                                                  | Config row missing — re-run step 4                                                                |
+| `401 Missing signature headers`                                         | Calling the function directly from the browser/curl. Only the DB trigger is supposed to reach it. |
+| `401 Invalid signature`                                                 | `EMAIL_WEBHOOK_SECRET` ≠ `private.email_dispatch_config.shared_secret`                            |
+| `404 Recipient email not found`                                         | User was deleted between trigger and dispatch — safe to ignore                                    |
+| `502 Email send failed` (logs show `Invalid login: 535`)                | `GMAIL_APP_PASSWORD` wrong/revoked, or 2-Step Verification was turned off                         |
+| `502 Email send failed` (logs show `Daily user sending limit exceeded`) | Gmail's daily send cap reached — wait 24h or move to a dedicated provider                         |
+| `200 { "skipped": "duplicate_dispatch" }`                               | Normal — a pg_net retry hit the per-notification dedupe in `public.session_email_deliveries`      |
+
+## Delivery log
+
+Every dispatch writes one row to `public.session_email_deliveries`
+(migration `20260611120000_session_email_deliveries.sql`), keyed by
+notification id — this is also what dedupes retries. To triage from the SQL
+editor (service role only; the table is not exposed to clients):
+
+```sql
+SELECT notification_id, recipient, status, detail, created_at
+FROM public.session_email_deliveries
+ORDER BY created_at DESC
+LIMIT 50;
+```
 
 ## Disabling the pipeline
 
