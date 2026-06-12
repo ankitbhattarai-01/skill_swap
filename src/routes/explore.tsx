@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +16,8 @@ import { useAuth } from "@/lib/auth-context";
 import { getOrCreateSession, requestSessionsForSlots, type SessionDuration } from "@/lib/sessions";
 import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
-import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
+import type { TeacherRating } from "@/lib/ratings";
+import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { TeacherRatingBadge } from "@/components/TeacherRatingBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import {
@@ -32,6 +33,7 @@ import {
   Search,
   MessageCircle,
   Calendar,
+  ArrowLeftRight,
   GraduationCap,
   Loader2,
   UserRound,
@@ -51,6 +53,12 @@ const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
 );
 import type { MultiSessionParams } from "@/components/SessionRequestDialog";
+
+// Lazy for the same reason: the swap dialog pulls in TeacherSlotPicker and
+// only mounts when a mutual-match card's swap button is clicked.
+const SwapProposalDialog = lazy(() =>
+  import("@/components/SwapProposalDialog").then((m) => ({ default: m.SwapProposalDialog })),
+);
 
 type ExploreMode = "teachers" | "learners";
 
@@ -104,6 +112,14 @@ type TeachingSkillRow = {
   level: "basic" | "intermediate" | "advanced";
   credits_per_hour: number;
   created_at: string;
+  // Server-computed "viewer wants to learn this" flag from the explore_teachers
+  // RPC. Optional so cached snapshots written before the flag existed still
+  // parse; isMatchForUser falls back to the local learning-skill set.
+  matches_viewer?: boolean;
+  // Server-computed "a direct swap is possible" flag: the viewer wants this
+  // skill AND this user wants something the viewer teaches. Optional for the
+  // same cached-snapshot reason; absent just hides the swap shortcut.
+  swap_match?: boolean;
   skills: { id: string; name: string; category: string | null } | null;
   profiles: {
     id: string;
@@ -118,6 +134,12 @@ type LearningSkillRow = {
   user_id: string;
   current_level: "basic" | "intermediate" | "advanced";
   created_at: string;
+  // Server-computed "viewer teaches this" flag from the explore_learners RPC.
+  matches_viewer?: boolean;
+  // Server-computed "a direct swap is possible" flag (mirror of the teacher
+  // card: viewer teaches this skill AND this user teaches something the
+  // viewer wants to learn).
+  swap_match?: boolean;
   skills: { id: string; name: string; category: string | null } | null;
   profiles: {
     id: string;
@@ -160,6 +182,7 @@ type ExploreCache = {
   savedAt: number;
   rows: TeachingSkillRow[];
   ratings: [string, TeacherRating][];
+  hasMore?: boolean;
 };
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -172,12 +195,14 @@ type ExploreSkillCardProps = {
   row: TeachingSkillRow;
   currentUserId: string | undefined;
   matchesUser: boolean;
+  swapMatch: boolean;
   openSession: OpenSessionInfo | undefined;
   rating: TeacherRating | undefined;
   messageBusy: boolean;
   requestBusy: boolean;
   onOpenChat: (row: TeachingSkillRow) => void;
   onRequestSession: (row: TeachingSkillRow) => void;
+  onProposeSwap: (userId: string, name: string | null) => void;
 };
 
 // Memoized to prevent the whole grid from re-rendering when only filter/search
@@ -186,12 +211,14 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
   row: r,
   currentUserId,
   matchesUser,
+  swapMatch,
   openSession,
   rating,
   messageBusy,
   requestBusy,
   onOpenChat,
   onRequestSession,
+  onProposeSwap,
 }: ExploreSkillCardProps) {
   const [reportOpen, setReportOpen] = useState(false);
   const hasOpenSession = Boolean(openSession);
@@ -275,6 +302,11 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             {openSession?.status === "pending" ? "Pending request" : "Session active"}
           </span>
         </div>
+      ) : currentUserId && swapMatch ? (
+        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
+          <ArrowLeftRight className="h-3 w-3" />
+          Mutual match — you can swap
+        </div>
       ) : currentUserId && matchesUser ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-cyan">
           <Sparkles className="h-3 w-3" />
@@ -313,6 +345,17 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             )}
           </Button>
         )}
+        {swapMatch && (
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Propose swap"
+            title="Propose a skill swap — teach each other, no credits"
+            onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
+          >
+            <ArrowLeftRight className="h-4 w-4" />
+          </Button>
+        )}
         {openSession ? (
           <Button variant="hero" size="sm" className="flex-1" asChild>
             <Link
@@ -349,16 +392,20 @@ type ExploreLearnerCardProps = {
   row: LearningSkillRow;
   currentUserId: string | undefined;
   matchesUser: boolean;
+  swapMatch: boolean;
   busy: boolean;
   onOffer: (row: LearningSkillRow) => void;
+  onProposeSwap: (userId: string, name: string | null) => void;
 };
 
 const ExploreLearnerCard = memo(function ExploreLearnerCard({
   row: r,
   currentUserId,
   matchesUser,
+  swapMatch,
   busy,
   onOffer,
+  onProposeSwap,
 }: ExploreLearnerCardProps) {
   const isSelf = currentUserId === r.user_id;
   return (
@@ -394,18 +441,34 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
         {r.profiles?.bio ?? ""}
       </p>
 
-      {matchesUser && (
+      {swapMatch ? (
+        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
+          <ArrowLeftRight className="h-3 w-3" />
+          Mutual match — you can swap
+        </div>
+      ) : matchesUser ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400">
           <Sparkles className="h-3 w-3" />
           You teach this
         </div>
-      )}
+      ) : null}
 
-      <div className="mt-auto pt-4">
+      <div className="mt-auto flex gap-2 pt-4">
+        {swapMatch && !isSelf && (
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Propose swap"
+            title="Propose a skill swap — teach each other, no credits"
+            onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
+          >
+            <ArrowLeftRight className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="hero"
           size="sm"
-          className="w-full"
+          className="flex-1"
           onClick={() => onOffer(r)}
           disabled={busy || isSelf}
         >
@@ -436,7 +499,11 @@ function getExploreCache() {
   }
 }
 
-function setExploreCache(rows: TeachingSkillRow[], ratings: Map<string, TeacherRating>) {
+function setExploreCache(
+  rows: TeachingSkillRow[],
+  ratings: Map<string, TeacherRating>,
+  hasMore: boolean,
+) {
   try {
     sessionStorage.setItem(
       EXPLORE_CACHE_KEY,
@@ -444,11 +511,140 @@ function setExploreCache(rows: TeachingSkillRow[], ratings: Map<string, TeacherR
         savedAt: Date.now(),
         rows,
         ratings: Array.from(ratings.entries()),
+        hasMore,
       } satisfies ExploreCache),
     );
   } catch {
     // Cache is only used to avoid skeleton flashes.
   }
+}
+
+// Page size for the server-side discovery RPCs. Each fetch asks for one extra
+// row to learn whether another page exists without a second count query.
+const EXPLORE_PAGE_SIZE = 24;
+
+function isAbortError(error: unknown) {
+  if (!error) return false;
+  const message =
+    error instanceof Error ? error.message : String((error as { message?: string }).message ?? "");
+  return message.includes("AbortError") || message.includes("aborted");
+}
+
+type DiscoveryPageParams = {
+  query: string;
+  category: string;
+  level: SkillLevelFilter;
+  matchOnly: boolean;
+  sort: string;
+  offset: number;
+  signal?: AbortSignal;
+};
+
+// One page of the teacher directory, filtered/ranked/paginated in Postgres by
+// the explore_teachers RPC. Rows are reshaped into the embedded-select shape
+// the cards already render; ratings ride along from the same query.
+async function fetchTeacherPage({
+  query,
+  category,
+  level,
+  matchOnly,
+  sort,
+  offset,
+  signal,
+}: DiscoveryPageParams) {
+  const rpc = supabase.rpc("explore_teachers", {
+    p_query: query.length > 0 ? query : null,
+    p_category: category !== "All" ? category : null,
+    p_level: level !== "all" ? level : null,
+    p_match_only: matchOnly,
+    p_sort: sort,
+    p_limit: EXPLORE_PAGE_SIZE + 1,
+    p_offset: offset,
+  });
+  const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
+  if (error) throw error;
+  const all = data ?? [];
+  const pageRows = all.slice(0, EXPLORE_PAGE_SIZE);
+  const rows: TeachingSkillRow[] = pageRows.map((r) => ({
+    id: r.id,
+    user_id: r.user_id,
+    level: r.level as TeachingSkillRow["level"],
+    credits_per_hour: r.credits_per_hour,
+    created_at: r.created_at,
+    matches_viewer: r.matches_viewer,
+    swap_match: r.swap_match,
+    skills: { id: r.skill_id, name: r.skill_name, category: r.skill_category },
+    profiles: { id: r.user_id, full_name: r.full_name, bio: r.bio, avatar_url: r.avatar_url },
+  }));
+  const ratings: [string, TeacherRating][] = pageRows
+    .filter((r) => Number(r.rating_count) > 0)
+    .map((r) => [r.user_id, { average: Number(r.rating_average), count: Number(r.rating_count) }]);
+  return { rows, ratings, hasMore: all.length > EXPLORE_PAGE_SIZE };
+}
+
+async function fetchLearnerPage({
+  query,
+  category,
+  level,
+  matchOnly,
+  sort,
+  offset,
+  signal,
+}: DiscoveryPageParams) {
+  const rpc = supabase.rpc("explore_learners", {
+    p_query: query.length > 0 ? query : null,
+    p_category: category !== "All" ? category : null,
+    p_level: level !== "all" ? level : null,
+    p_match_only: matchOnly,
+    p_sort: sort,
+    p_limit: EXPLORE_PAGE_SIZE + 1,
+    p_offset: offset,
+  });
+  const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
+  if (error) throw error;
+  const all = data ?? [];
+  const pageRows = all.slice(0, EXPLORE_PAGE_SIZE);
+  const rows: LearningSkillRow[] = pageRows.map((r) => ({
+    id: r.id,
+    user_id: r.user_id,
+    current_level: r.current_level as LearningSkillRow["current_level"],
+    created_at: r.created_at,
+    matches_viewer: r.matches_viewer,
+    swap_match: r.swap_match,
+    skills: { id: r.skill_id, name: r.skill_name, category: r.skill_category },
+    profiles: { id: r.user_id, full_name: r.full_name, bio: r.bio, avatar_url: r.avatar_url },
+  }));
+  return { rows, hasMore: all.length > EXPLORE_PAGE_SIZE };
+}
+
+// Swap raw storage paths for signed display URLs on a page of rows. Returns
+// the same shape so callers can drop the result straight into state.
+async function withSignedAvatars<T extends { profiles: ExploreProfile | null }>(
+  rows: T[],
+): Promise<T[]> {
+  const paths = Array.from(
+    new Set(rows.map((r) => r.profiles?.avatar_url).filter((p): p is string => Boolean(p))),
+  );
+  if (paths.length === 0) return rows;
+  const signed = await signAvatarUrls(paths, {
+    width: 128,
+    height: 128,
+    quality: 75,
+    resize: "cover",
+  });
+  return rows.map((row) =>
+    row.profiles
+      ? {
+          ...row,
+          profiles: {
+            ...row.profiles,
+            avatar_url: row.profiles.avatar_url
+              ? (signed.get(row.profiles.avatar_url) ?? null)
+              : null,
+          },
+        }
+      : row,
+  );
 }
 
 function ExplorePage() {
@@ -463,11 +659,21 @@ function ExplorePage() {
   const [intersections, setIntersections] = useState<Map<string, string | null>>(new Map());
   const [ratings, setRatings] = useState<Map<string, TeacherRating>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [teacherLoadingMore, setTeacherLoadingMore] = useState(false);
+  // Skill categories for the filter popover — the full catalog, fetched once,
+  // instead of just whatever categories appear on the loaded page.
+  const [categories, setCategories] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [requestRow, setRequestRow] = useState<TeachingSkillRow | null>(null);
   // Learner mode: rows of people seeking skills + the seeker we're offering help to.
   const [learnerRows, setLearnerRows] = useState<LearningSkillRow[]>([]);
+  const [learnerHasMore, setLearnerHasMore] = useState(false);
+  const [learnerLoadingMore, setLearnerLoadingMore] = useState(false);
   const [offerRow, setOfferRow] = useState<LearningSkillRow | null>(null);
+  // Swap shortcut from a mutual-match card — the dialog loads the full
+  // reciprocal match itself, so only the counterpart's id/name is needed.
+  const [swapTarget, setSwapTarget] = useState<{ userId: string; name?: string } | null>(null);
   const [myCredits, setMyCredits] = useState<number | null>(null);
   const [myLearningSkillIds, setMyLearningSkillIds] = useState<Set<string>>(new Set());
   // Skills the viewer can teach — used in learner mode to highlight rows that
@@ -492,7 +698,6 @@ function ExplorePage() {
   const setMatchOnly = (next: boolean) => updateSearch({ match: next ? true : undefined });
   const setMode = (next: ExploreMode) =>
     updateSearch({ mode: next === "learners" ? "learners" : undefined });
-  const setQuery = (next: string) => updateSearch({ q: next.length > 0 ? next : undefined });
   const setCategoryFilter = (next: string) =>
     updateSearch({ category: next === "All" ? undefined : next });
   const setLevelFilter = (next: SkillLevelFilter) =>
@@ -503,6 +708,27 @@ function ExplorePage() {
     const value = typeof next === "function" ? next(onlyAvailable) : next;
     updateSearch({ available: value ? true : undefined });
   };
+
+  // Search box: keep keystrokes local and only push to the URL (which drives
+  // the server-side query) after the user pauses, so we don't fire one RPC per
+  // character.
+  const [searchText, setSearchText] = useState(query);
+  useEffect(() => {
+    setSearchText(query);
+  }, [query]);
+  const pushQueryToUrl = useDebouncedCallback((next: string) => {
+    updateSearch({ q: next.length > 0 ? next : undefined });
+  }, 300);
+  const onSearchChange = (next: string) => {
+    setSearchText(next);
+    pushQueryToUrl(next);
+  };
+
+  // Server sort key. "available_soon" has no server-side ranking (next-slot
+  // needs teachers_free_time_status, which is too heavy to ORDER BY across all
+  // candidates) so it fetches by rating and reorders the page locally.
+  const serverSort =
+    sortOption === "newest" ? "newest" : sortOption === "default" ? "default" : "rated";
 
   useEffect(() => {
     if (!user) {
@@ -556,68 +782,113 @@ function ExplorePage() {
       alive = false;
       controller.abort();
     };
+  }, [user]);
+
+  // Monotonic tokens so a late response from a previous filter generation (or
+  // a stale "load more") can never clobber newer state.
+  const teacherSeqRef = useRef(0);
+  const learnerSeqRef = useRef(0);
+  // Teacher ids whose availability has already been requested — avoids
+  // re-fetching the same ids when more pages append.
+  const availabilityFetchedRef = useRef(new Set<string>());
+
+  // Availability is per-teacher, not per-filter; accumulate it as pages load.
+  const loadAvailabilityFor = useCallback(
+    async (teacherIds: string[], seq: number, signal?: AbortSignal) => {
+      if (!user) return;
+      const fresh = Array.from(new Set(teacherIds)).filter(
+        (id) => id !== user.id && !availabilityFetchedRef.current.has(id),
+      );
+      if (fresh.length === 0) return;
+      for (const id of fresh) availabilityFetchedRef.current.add(id);
+      // The RPC caps at 100 ids per call.
+      for (let i = 0; i < fresh.length; i += 100) {
+        const batch = fresh.slice(i, i + 100);
+        const rpc = supabase.rpc("teachers_free_time_status", {
+          p_teacher_ids: batch,
+          p_duration_minutes: 30,
+          p_horizon_days: 7,
+        });
+        const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
+        if (error || seq !== teacherSeqRef.current) return;
+        setIntersections((prev) => {
+          const next = new Map(prev);
+          for (const r of data ?? []) next.set(r.teacher_id, r.next_slot);
+          return next;
+        });
+      }
+    },
+    [user],
+  );
+
+  useEffect(() => {
+    // Availability is viewer-independent but only fetched for signed-in
+    // viewers; reset the dedupe set when the viewer changes.
+    availabilityFetchedRef.current = new Set();
+    setIntersections(new Map());
   }, [user?.id]);
 
-  // Load learners (people seeking skills) lazily — only when the user toggles
-  // to learner mode. Stays empty until then to save a round trip on first
-  // landing.
+  // Full category catalog for the filter popover, fetched once.
   useEffect(() => {
-    if (mode !== "learners") return;
     let alive = true;
     const controller = new AbortController();
     (async () => {
-      setLoading(true);
+      const { data, error } = await supabase
+        .from("skills")
+        .select("category")
+        .not("category", "is", null)
+        .limit(1000)
+        .abortSignal(controller.signal);
+      if (!alive || error) return;
+      setCategories(
+        Array.from(
+          new Set((data ?? []).map((r) => r.category).filter((c): c is string => Boolean(c))),
+        ).sort(),
+      );
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, []);
+
+  // Load learners (people seeking skills) lazily — only when the user toggles
+  // to learner mode. Filtered/paginated server-side by explore_learners.
+  useEffect(() => {
+    if (mode !== "learners") return;
+    const seq = ++learnerSeqRef.current;
+    let alive = true;
+    const controller = new AbortController();
+    setLoading(true);
+    (async () => {
       try {
-        const { data, error } = await supabase
-          .from("user_learning_skills")
-          .select(
-            "id, user_id, current_level, created_at, skills:skill_id(id, name, category), profiles:user_id(id, full_name, bio, avatar_url)",
-          )
-          .limit(60)
-          .abortSignal(controller.signal);
-        if (error) throw error;
-        if (!alive) return;
-        const learningRows = (data ?? []) as unknown as LearningSkillRow[];
-        // Dedupe profiles by id (a seeker with several wanted skills repeats).
-        const profileMap = new Map<string, ExploreProfile>();
-        for (const row of learningRows) {
-          if (row.profiles) profileMap.set(row.profiles.id, row.profiles);
-        }
-        const initial = learningRows.map((row) => ({
-          ...row,
-          profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
-        }));
-        setLearnerRows(initial);
+        const page = await fetchLearnerPage({
+          query,
+          category: categoryFilter,
+          level: levelFilter,
+          matchOnly,
+          sort: sortOption === "newest" ? "newest" : "default",
+          offset: 0,
+          signal: controller.signal,
+        });
+        if (!alive || seq !== learnerSeqRef.current) return;
+        // First paint without avatars (initials only) so cards show instantly.
+        setLearnerRows(
+          page.rows.map((row) => ({
+            ...row,
+            profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
+          })),
+        );
+        setLearnerHasMore(page.hasMore);
         setLoading(false);
 
-        const avatarPaths = Array.from(profileMap.values()).map((p) => p.avatar_url);
-        if (avatarPaths.length === 0) return;
-        const signed = await signAvatarUrls(avatarPaths, {
-          width: 128,
-          height: 128,
-          quality: 75,
-          resize: "cover",
-        });
-        if (!alive) return;
-        setLearnerRows(
-          learningRows.map((row) => {
-            const profile = row.profiles;
-            return {
-              ...row,
-              profiles: profile
-                ? {
-                    ...profile,
-                    avatar_url: profile.avatar_url
-                      ? (signed.get(profile.avatar_url) ?? null)
-                      : null,
-                  }
-                : null,
-            };
-          }),
-        );
+        const signedRows = await withSignedAvatars(page.rows);
+        if (!alive || seq !== learnerSeqRef.current) return;
+        setLearnerRows(signedRows);
       } catch (error) {
-        if (!alive) return;
+        if (!alive || seq !== learnerSeqRef.current || isAbortError(error)) return;
         toast.error(error instanceof Error ? error.message : "Could not load learners");
+        setLearnerRows([]);
         setLoading(false);
       }
     })();
@@ -625,145 +896,162 @@ function ExplorePage() {
       alive = false;
       controller.abort();
     };
-  }, [mode]);
+  }, [mode, query, categoryFilter, levelFilter, matchOnly, sortOption, user?.id]);
 
+  const loadMoreLearners = async () => {
+    if (learnerLoadingMore || !learnerHasMore || loading) return;
+    const seq = learnerSeqRef.current;
+    setLearnerLoadingMore(true);
+    try {
+      const page = await fetchLearnerPage({
+        query,
+        category: categoryFilter,
+        level: levelFilter,
+        matchOnly,
+        sort: sortOption === "newest" ? "newest" : "default",
+        offset: learnerRows.length,
+      });
+      if (seq !== learnerSeqRef.current) return;
+      const signedRows = await withSignedAvatars(page.rows);
+      if (seq !== learnerSeqRef.current) return;
+      setLearnerRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...signedRows.filter((r) => !seen.has(r.id))];
+      });
+      setLearnerHasMore(page.hasMore);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        toast.error(error instanceof Error ? error.message : "Could not load more learners");
+      }
+    } finally {
+      setLearnerLoadingMore(false);
+    }
+  };
+
+  // Teacher directory: one server-filtered page at a time. Re-runs whenever a
+  // server-relevant input changes; the seq token + abort controller make any
+  // in-flight previous load a no-op.
   useEffect(() => {
+    if (mode !== "teachers") return;
+    const seq = ++teacherSeqRef.current;
     let alive = true;
     const controller = new AbortController();
-    const cached = getExploreCache();
+
+    // The sessionStorage snapshot only matches the pristine view (no filters,
+    // default sort); anything else must hit the server.
+    const pristine =
+      query.length === 0 &&
+      categoryFilter === "All" &&
+      levelFilter === "all" &&
+      !matchOnly &&
+      sortOption === "default";
+    const cached = pristine ? getExploreCache() : null;
     if (cached) {
       setRows(cached.rows);
       setRatings(new Map(cached.ratings));
+      setHasMore(Boolean(cached.hasMore));
       setLoading(false);
+    } else {
+      setLoading(true);
     }
 
-    const loadExplore = async () => {
-      if (!cached) setLoading(true);
+    (async () => {
       try {
-        // profiles is embedded via the user_id → profiles FK so the names/bios
-        // arrive in the same round trip as the skills. Avatars are still signed
-        // separately below (they're storage paths, not display URLs).
-        const { data, error } = await supabase
-          .from("user_teaching_skills")
-          .select(
-            "id, user_id, level, credits_per_hour, created_at, skills:skill_id(id, name, category), profiles:user_id(id, full_name, bio, avatar_url)",
-          )
-          .limit(60)
-          .abortSignal(controller.signal);
-
-        if (error) throw error;
-        if (!alive) return;
-
-        const teachingRows = data as unknown as TeachingSkillRow[];
-        const userIds = Array.from(new Set(teachingRows.map((row) => row.user_id)));
-        // Dedupe profiles by id (a teacher with several skills repeats here) so
-        // the avatar signer only sees each path once.
-        const profileMap = new Map<string, ExploreProfile>();
-        for (const row of teachingRows) {
-          if (row.profiles) profileMap.set(row.profiles.id, row.profiles);
-        }
+        const page = await fetchTeacherPage({
+          query,
+          category: categoryFilter,
+          level: levelFilter,
+          matchOnly,
+          sort: serverSort,
+          offset: 0,
+          signal: controller.signal,
+        });
+        if (!alive || seq !== teacherSeqRef.current) return;
 
         // First paint without avatars (initials only) so cards show instantly;
         // signed avatar URLs are merged in once they resolve.
-        const initialRows = teachingRows.map((row) => ({
+        const initialRows = page.rows.map((row) => ({
           ...row,
           profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
         }));
-
         setRows(initialRows);
+        setRatings(new Map(page.ratings));
+        setHasMore(page.hasMore);
         setLoading(false);
-        setExploreCache(initialRows, new Map());
+        if (pristine) setExploreCache(initialRows, new Map(page.ratings), page.hasMore);
 
-        if (!userIds.length) return;
+        const signedRows = await withSignedAvatars(page.rows);
+        if (!alive || seq !== teacherSeqRef.current) return;
+        setRows(signedRows);
+        if (pristine) setExploreCache(signedRows, new Map(page.ratings), page.hasMore);
 
-        const profileAvatarPaths = Array.from(profileMap.values()).map((p) => p.avatar_url);
-        const [ratingResult, avatarResult] = await Promise.allSettled([
-          fetchTeacherRatings(userIds),
-          signAvatarUrls(profileAvatarPaths, {
-            width: 128,
-            height: 128,
-            quality: 75,
-            resize: "cover",
-          }),
-        ]);
-
-        if (!alive) return;
-
-        const ratingMap =
-          ratingResult.status === "fulfilled"
-            ? ratingResult.value
-            : new Map<string, TeacherRating>();
-        const signedUrlMap =
-          avatarResult.status === "fulfilled" ? avatarResult.value : new Map<string, string>();
-
-        const finalRows = teachingRows.map((row) => {
-          const profile = row.profiles;
-          return {
-            ...row,
-            profiles: profile
-              ? {
-                  ...profile,
-                  avatar_url: profile.avatar_url
-                    ? (signedUrlMap.get(profile.avatar_url) ?? null)
-                    : null,
-                }
-              : null,
-          };
-        });
-
-        setRows(finalRows);
-        setRatings(ratingMap);
-        setExploreCache(finalRows, ratingMap);
-
-        // Bulk teacher-availability lookup. Only makes sense if the viewer
-        // is signed in — anonymous explorers see the page without
-        // availability badges.
-        if (user) {
-          const uniqueTeacherIds = Array.from(new Set(userIds)).filter((id) => id !== user.id);
-          if (uniqueTeacherIds.length > 0) {
-            // Cap at the RPC's 100-ID limit; first page is usually fewer
-            // than that anyway.
-            const batch = uniqueTeacherIds.slice(0, 100);
-            const { data: intRows } = await supabase
-              .rpc("teachers_free_time_status", {
-                p_teacher_ids: batch,
-                p_duration_minutes: 30,
-                p_horizon_days: 7,
-              })
-              .abortSignal(controller.signal);
-            if (!alive) return;
-            const map = new Map<string, string | null>();
-            for (const r of intRows ?? []) {
-              map.set(r.teacher_id, r.next_slot);
-            }
-            setIntersections(map);
-          }
-        }
+        await loadAvailabilityFor(
+          page.rows.map((r) => r.user_id),
+          seq,
+          controller.signal,
+        );
       } catch (error) {
-        if (!alive) return;
+        if (!alive || seq !== teacherSeqRef.current || isAbortError(error)) return;
         toast.error(error instanceof Error ? error.message : "Could not load skills");
         if (!cached) setRows([]);
         setLoading(false);
       }
-    };
+    })();
 
-    void loadExplore();
     return () => {
       alive = false;
       controller.abort();
     };
-  }, []);
+  }, [
+    mode,
+    query,
+    categoryFilter,
+    levelFilter,
+    matchOnly,
+    serverSort,
+    sortOption,
+    user?.id,
+    loadAvailabilityFor,
+  ]);
 
-  const categories = useMemo(
-    () =>
-      Array.from(
-        new Set(rows.map((r) => r.skills?.category).filter((c): c is string => Boolean(c))),
-      ).sort(),
-    [rows],
-  );
+  const loadMoreTeachers = async () => {
+    if (teacherLoadingMore || !hasMore || loading) return;
+    const seq = teacherSeqRef.current;
+    setTeacherLoadingMore(true);
+    try {
+      const page = await fetchTeacherPage({
+        query,
+        category: categoryFilter,
+        level: levelFilter,
+        matchOnly,
+        sort: serverSort,
+        offset: rows.length,
+      });
+      if (seq !== teacherSeqRef.current) return;
+      const signedRows = await withSignedAvatars(page.rows);
+      if (seq !== teacherSeqRef.current) return;
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...signedRows.filter((r) => !seen.has(r.id))];
+      });
+      setRatings((prev) => new Map([...prev, ...page.ratings]));
+      setHasMore(page.hasMore);
+      void loadAvailabilityFor(
+        page.rows.map((r) => r.user_id),
+        seq,
+      );
+    } catch (error) {
+      if (!isAbortError(error)) {
+        toast.error(error instanceof Error ? error.message : "Could not load more skills");
+      }
+    } finally {
+      setTeacherLoadingMore(false);
+    }
+  };
 
   const isMatchForUser = useCallback(
-    (row: TeachingSkillRow) => Boolean(row.skills && myLearningSkillIds.has(row.skills.id)),
+    (row: TeachingSkillRow) =>
+      row.matches_viewer ?? Boolean(row.skills && myLearningSkillIds.has(row.skills.id)),
     [myLearningSkillIds],
   );
 
@@ -777,118 +1065,51 @@ function ExplorePage() {
     [intersections],
   );
 
-  const filtered = useMemo(
-    () =>
-      rows
-        .filter((r) => {
-          if (user && r.user_id === user.id) return false;
-          if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
-          if (levelFilter !== "all" && r.level !== levelFilter) return false;
-          if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
-          if (matchOnly && !isMatchForUser(r)) return false;
-          if (!query) return true;
-          const q = query.toLowerCase();
-          return (
-            r.skills?.name.toLowerCase().includes(q) ||
-            r.skills?.category?.toLowerCase().includes(q) ||
-            r.profiles?.full_name?.toLowerCase().includes(q)
-          );
-        })
-        .sort((a, b) => {
-          if (sortOption === "available_soon") {
-            // Teachers with a known next-free slot come first, ordered by
-            // soonest. Teachers without posted free times fall to the bottom.
-            const aSlot = intersectionSlotMs(a.user_id);
-            const bSlot = intersectionSlotMs(b.user_id);
-            if (aSlot != null && bSlot != null) return aSlot - bSlot;
-            if (aSlot != null) return -1;
-            if (bSlot != null) return 1;
-            // Tie-breaker: rating.
-            const aAvg = ratings.get(a.user_id)?.average ?? 0;
-            const bAvg = ratings.get(b.user_id)?.average ?? 0;
-            return bAvg - aAvg;
-          }
-          if (sortOption === "rated") {
-            const aAvg = ratings.get(a.user_id)?.average ?? 0;
-            const bAvg = ratings.get(b.user_id)?.average ?? 0;
-            if (aAvg !== bAvg) return bAvg - aAvg;
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          }
-          if (sortOption === "newest") {
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          }
-          // default: skill match > rating > recency.
-          //
-          // Availability is deliberately NOT a ranking factor here even though
-          // it's shown as a badge and drives the explicit "Available soonest"
-          // sort. teachers_free_time_status resolves a second or two after
-          // first paint, and ranking on it made the whole grid visibly
-          // reshuffle once it landed. Match + rating come from much faster
-          // lookups, keeping the order stable.
-          const aMatch = isMatchForUser(a) ? 1 : 0;
-          const bMatch = isMatchForUser(b) ? 1 : 0;
-          if (aMatch !== bMatch) return bMatch - aMatch;
-          const aAvg = ratings.get(a.user_id)?.average ?? 0;
-          const bAvg = ratings.get(b.user_id)?.average ?? 0;
-          if (aAvg !== bAvg) return bAvg - aAvg;
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-        }),
-    [
-      rows,
-      user,
-      categoryFilter,
-      levelFilter,
-      onlyAvailable,
-      matchOnly,
-      query,
-      sortOption,
-      ratings,
-      isMatchForUser,
-      intersectionSlotMs,
-    ],
-  );
+  // Search / category / level / match filtering and the default / rated /
+  // newest orderings now happen server-side in explore_teachers. Locally we
+  // only hide the viewer's own rows (a cached snapshot can predate sign-in),
+  // apply the availability toggle, and reorder for "available soonest" —
+  // whose next-slot signal arrives per page after first paint.
+  const filtered = useMemo(() => {
+    const visible = rows.filter((r) => {
+      if (user && r.user_id === user.id) return false;
+      if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
+      return true;
+    });
+    if (sortOption !== "available_soon") return visible;
+    return [...visible].sort((a, b) => {
+      // Teachers with a known next-free slot come first, ordered by
+      // soonest. Teachers without posted free times fall to the bottom.
+      const aSlot = intersectionSlotMs(a.user_id);
+      const bSlot = intersectionSlotMs(b.user_id);
+      if (aSlot != null && bSlot != null) return aSlot - bSlot;
+      if (aSlot != null) return -1;
+      if (bSlot != null) return 1;
+      // Tie-breaker: rating.
+      const aAvg = ratings.get(a.user_id)?.average ?? 0;
+      const bAvg = ratings.get(b.user_id)?.average ?? 0;
+      return bAvg - aAvg;
+    });
+  }, [rows, user, onlyAvailable, sortOption, ratings, intersectionSlotMs]);
 
   const learnerMatchesMe = useCallback(
-    (row: LearningSkillRow) => Boolean(row.skills && myTeachingPrices.has(row.skills.id)),
+    (row: LearningSkillRow) =>
+      row.matches_viewer ?? Boolean(row.skills && myTeachingPrices.has(row.skills.id)),
     [myTeachingPrices],
   );
 
   const filteredLearners = useMemo(
-    () =>
-      learnerRows
-        .filter((r) => {
-          if (user && r.user_id === user.id) return false;
-          if (categoryFilter !== "All" && r.skills?.category !== categoryFilter) return false;
-          if (levelFilter !== "all" && r.current_level !== levelFilter) return false;
-          if (matchOnly && !learnerMatchesMe(r)) return false;
-          if (!query) return true;
-          const q = query.toLowerCase();
-          return (
-            r.skills?.name.toLowerCase().includes(q) ||
-            r.skills?.category?.toLowerCase().includes(q) ||
-            r.profiles?.full_name?.toLowerCase().includes(q)
-          );
-        })
-        .sort((a, b) => {
-          if (sortOption === "newest") {
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          }
-          // default: skills the viewer can teach come first, then newest
-          const aMatch = learnerMatchesMe(a) ? 1 : 0;
-          const bMatch = learnerMatchesMe(b) ? 1 : 0;
-          if (aMatch !== bMatch) return bMatch - aMatch;
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-        }),
-    [
-      learnerRows,
-      user,
-      categoryFilter,
-      levelFilter,
-      matchOnly,
-      query,
-      sortOption,
-      learnerMatchesMe,
-    ],
+    () => learnerRows.filter((r) => !(user && r.user_id === user.id)),
+    [learnerRows, user],
+  );
+
+  const proposeSwapTo = useCallback(
+    (userId: string, name: string | null) => {
+      requireAuth(() => {
+        setSwapTarget({ userId, name: name ?? undefined });
+      }, "Sign in to propose a swap.");
+    },
+    [requireAuth],
   );
 
   const offerHelp = useCallback(
@@ -1087,8 +1308,8 @@ function ExplorePage() {
               <div className="relative w-full md:max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  value={searchText}
+                  onChange={(e) => onSearchChange(e.target.value)}
                   placeholder="Search skills, people, categories…"
                   className="pl-9 h-11 glass border-white/10"
                 />
@@ -1353,29 +1574,45 @@ function ExplorePage() {
               </Button>
             </div>
           ) : (
-            <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filtered.map((r, i) => (
-                <div
-                  key={r.id}
-                  className="animate-fade-up h-full"
-                  style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
-                >
-                  <ExploreSkillCard
-                    row={r}
-                    currentUserId={user?.id}
-                    matchesUser={isMatchForUser(r)}
-                    openSession={
-                      r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
-                    }
-                    rating={ratings.get(r.user_id)}
-                    messageBusy={busyAction === `message-${r.id}`}
-                    requestBusy={busyAction === `request-${r.id}`}
-                    onOpenChat={openChat}
-                    onRequestSession={requestSession}
-                  />
+            <>
+              <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filtered.map((r, i) => (
+                  <div
+                    key={r.id}
+                    className="animate-fade-up h-full"
+                    style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+                  >
+                    <ExploreSkillCard
+                      row={r}
+                      currentUserId={user?.id}
+                      matchesUser={isMatchForUser(r)}
+                      swapMatch={Boolean(user) && Boolean(r.swap_match)}
+                      openSession={
+                        r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
+                      }
+                      rating={ratings.get(r.user_id)}
+                      messageBusy={busyAction === `message-${r.id}`}
+                      requestBusy={busyAction === `request-${r.id}`}
+                      onOpenChat={openChat}
+                      onRequestSession={requestSession}
+                      onProposeSwap={proposeSwapTo}
+                    />
+                  </div>
+                ))}
+              </div>
+              {hasMore && (
+                <div className="mt-8 flex justify-center">
+                  <Button
+                    variant="outline"
+                    disabled={teacherLoadingMore}
+                    onClick={() => void loadMoreTeachers()}
+                  >
+                    {teacherLoadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Load more teachers
+                  </Button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )
         ) : filteredLearners.length === 0 ? (
           <div
@@ -1390,23 +1627,39 @@ function ExplorePage() {
             </p>
           </div>
         ) : (
-          <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredLearners.map((r, i) => (
-              <div
-                key={r.id}
-                className="animate-fade-up h-full"
-                style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
-              >
-                <ExploreLearnerCard
-                  row={r}
-                  currentUserId={user?.id}
-                  matchesUser={learnerMatchesMe(r)}
-                  busy={busyAction === `offer-${r.id}`}
-                  onOffer={offerHelp}
-                />
+          <>
+            <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredLearners.map((r, i) => (
+                <div
+                  key={r.id}
+                  className="animate-fade-up h-full"
+                  style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+                >
+                  <ExploreLearnerCard
+                    row={r}
+                    currentUserId={user?.id}
+                    matchesUser={learnerMatchesMe(r)}
+                    swapMatch={Boolean(user) && Boolean(r.swap_match)}
+                    busy={busyAction === `offer-${r.id}`}
+                    onOffer={offerHelp}
+                    onProposeSwap={proposeSwapTo}
+                  />
+                </div>
+              ))}
+            </div>
+            {learnerHasMore && (
+              <div className="mt-8 flex justify-center">
+                <Button
+                  variant="outline"
+                  disabled={learnerLoadingMore}
+                  onClick={() => void loadMoreLearners()}
+                >
+                  {learnerLoadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Load more learners
+                </Button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </section>
 
@@ -1448,6 +1701,19 @@ function ExplorePage() {
             learnerId={offerRow.user_id}
             teacherId={user?.id}
             onConfirm={confirmOffer}
+          />
+        </Suspense>
+      )}
+
+      {swapTarget && (
+        <Suspense fallback={null}>
+          <SwapProposalDialog
+            open={swapTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setSwapTarget(null);
+            }}
+            otherUserId={swapTarget.userId}
+            otherName={swapTarget.name}
           />
         </Suspense>
       )}
