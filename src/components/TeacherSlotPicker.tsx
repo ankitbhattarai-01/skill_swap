@@ -67,6 +67,10 @@ export function TeacherSlotPicker({
   compact = false,
 }: Props) {
   const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>([]);
+  // The current user's own committed sessions (as teacher or learner). Blocked
+  // from selection so you can't book a slot you're already busy in — the
+  // teacher-window fetch only knows the OTHER person's calendar.
+  const [myBusy, setMyBusy] = useState<{ start: number; end: number }[]>([]);
   const [showCustom, setShowCustom] = useState(false);
   const [windowsLoading, setWindowsLoading] = useState(false);
   // Distinguishes "the fetch failed" from "the teacher genuinely has no free
@@ -83,16 +87,18 @@ export function TeacherSlotPicker({
   // other times on the same day stay available.
   const excludeKey = (excludeTimes ?? []).join(",");
   const intervalKey = (excludeIntervals ?? []).map((i) => `${i.start}:${i.end}`).join(",");
+  const myBusyKey = myBusy.map((i) => `${i.start}:${i.end}`).join(",");
   const isSlotBlocked = useMemo(() => {
     const blockedStarts = excludeKey ? excludeKey.split(",").map(Number) : [];
-    const intervals = intervalKey
-      ? intervalKey.split(",").map((pair) => pair.split(":").map(Number))
-      : [];
+    const parseIntervals = (key: string) =>
+      key ? key.split(",").map((pair) => pair.split(":").map(Number)) : [];
+    // The caller's own bookings block the same way explicit excludeIntervals do.
+    const intervals = [...parseIntervals(intervalKey), ...parseIntervals(myBusyKey)];
     const durMs = durationMinutes * 60 * 1000;
     return (timeMs: number) =>
       blockedStarts.some((t) => timeMs < t + durMs && timeMs + durMs > t) ||
       intervals.some(([s, e]) => timeMs < e && timeMs + durMs > s);
-  }, [excludeKey, intervalKey, durationMinutes]);
+  }, [excludeKey, intervalKey, myBusyKey, durationMinutes]);
 
   // Fetch the teacher's free windows for the next horizon. One fetch per
   // (teacher, active) — duration filtering happens per-render on the client.
@@ -132,6 +138,36 @@ export function TeacherSlotPicker({
       controller.abort();
     };
   }, [active, teacherId, retryNonce]);
+
+  // Fetch the caller's own committed sessions so their busy times are blocked in
+  // every mode (constrained or not). Best-effort: on error we just don't add
+  // any extra blocks — the server-side double-booking trigger still backstops.
+  useEffect(() => {
+    if (!active) {
+      setMyBusy([]);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    (async () => {
+      const { data, error } = await supabase
+        .rpc("get_my_busy_intervals", { p_horizon_days: HORIZON_DAYS })
+        .abortSignal(controller.signal);
+      if (!alive) return;
+      setMyBusy(
+        error || !data
+          ? []
+          : data.map((row) => ({
+              start: new Date(row.busy_start).getTime(),
+              end: new Date(row.busy_end).getTime(),
+            })),
+      );
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [active, retryNonce]);
 
   // First free start on each of the next N distinct days — surfaced as quick
   // "Best times" chips, so the suggestions spread across different days

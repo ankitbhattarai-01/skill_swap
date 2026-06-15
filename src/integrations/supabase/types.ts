@@ -965,6 +965,12 @@ export type Database = {
         };
         Returns: { window_start: string; window_end: string }[];
       };
+      get_my_busy_intervals: {
+        Args: {
+          p_horizon_days?: number;
+        };
+        Returns: { busy_start: string; busy_end: string }[];
+      };
       propose_track: {
         Args: {
           p_teacher_id: string;

@@ -62,6 +62,17 @@ export function useHeaderProfile() {
     // synchronously instead of flashing a skeleton. Without this we lose the
     // instant-paint behaviour the previous useState+sessionStorage block had.
     initialData: userId ? readSessionCache(userId) : undefined,
+    // ...but treat that seeded value as already stale. By default initialData
+    // is considered fresh, so it would sit untouched for the full staleTime —
+    // which meant a user promoted to admin while logged in kept rendering the
+    // pre-promotion is_admin=false (no Admin link) until the cache expired or
+    // sessionStorage was cleared. Backdating the timestamp keeps the instant
+    // paint (the cached value is still returned immediately) but forces a
+    // background revalidation on the first mount after each page load, so
+    // is_admin (and name/avatar) refresh promptly. In-app navigation reuses
+    // the in-memory cache rather than initialData, so this does not re-issue
+    // the RPCs on every header remount — only once per full load.
+    initialDataUpdatedAt: 0,
     queryFn: async () => {
       if (!userId) {
         return { full_name: null, avatar_url: null, is_admin: false };
