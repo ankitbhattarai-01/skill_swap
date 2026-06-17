@@ -83,6 +83,47 @@ const LEVEL_COLORS: Record<SkillLevel, string> = {
   advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
 };
 
+const LEVEL_ORDER: SkillLevel[] = ["basic", "intermediate", "advanced"];
+const LEVEL_LABELS: Record<SkillLevel, string> = {
+  basic: "Basic",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+};
+const levelRank = (level: SkillLevel) => LEVEL_ORDER.indexOf(level);
+
+// A skill can appear in both lists, but you can't learn what you already teach
+// at the same (or lower) level — learning must sit at least one level above
+// teaching. `relation` is read from the perspective of the list being edited:
+// learning entries must stay "above" the matching teach level, teaching entries
+// must stay "below" the matching learn level.
+function allowedLevelsFor(
+  skillId: string,
+  crossEntries: LevelEntry[] | undefined,
+  relation: "above" | "below",
+): SkillLevel[] {
+  const cross = crossEntries?.find((c) => c.skill.id === skillId);
+  if (!cross) return LEVEL_ORDER;
+  return LEVEL_ORDER.filter((level) =>
+    relation === "above"
+      ? levelRank(level) > levelRank(cross.level)
+      : levelRank(level) < levelRank(cross.level),
+  );
+}
+
+// Options for an existing entry's level select: the constrained set, but always
+// keep the entry's own current level so the trigger never renders blank (e.g.
+// for legacy data saved before this rule existed).
+function levelOptionsFor(
+  current: SkillLevel,
+  skillId: string,
+  crossEntries: LevelEntry[] | undefined,
+  relation: "above" | "below",
+): SkillLevel[] {
+  const allowed = allowedLevelsFor(skillId, crossEntries, relation);
+  if (allowed.includes(current)) return allowed;
+  return LEVEL_ORDER.filter((l) => allowed.includes(l) || l === current);
+}
+
 const SKILL_METHOD_STORE_PREFIX = "skillswap-skill-methods";
 const SKILL_FOCUS_STORE_PREFIX = "skillswap-skill-focus";
 
@@ -143,7 +184,7 @@ function OnboardingPage() {
   const [bio, setBio] = useState("");
   const [teaching, setTeaching] = useState<LevelEntry[]>([]);
   const [learning, setLearning] = useState<LevelEntry[]>([]);
-  const [mode, setMode] = useState<LearningMode>("collaboration");
+  const [mode, setMode] = useState<LearningMode>("teaching");
   const [saving, setSaving] = useState(false);
   const [teachInput, setTeachInput] = useState("");
   const [learnInput, setLearnInput] = useState("");
@@ -249,7 +290,7 @@ function OnboardingPage() {
         if (p) {
           setFullName(p.full_name ?? "");
           setBio(p.bio ?? "");
-          setMode(p.learning_mode ?? "collaboration");
+          setMode(p.learning_mode ?? "teaching");
         }
 
         setTeaching(savedTeaching);
@@ -283,11 +324,26 @@ function OnboardingPage() {
     const skill = await findOrCreateSkill(nameOverride ?? teachInput, teachCategory || "Other");
     if (!skill) return;
     if (teaching.find((t) => t.skill.id === skill.id)) return;
+
+    // Keep teaching at least one level below the same skill on the learn side.
+    let level = (teachLevel || "basic") as SkillLevel;
+    const learned = learning.find((l) => l.skill.id === skill.id);
+    if (learned) {
+      const maxRank = levelRank(learned.level) - 1;
+      if (maxRank < levelRank("basic")) {
+        toast.error(
+          `You're learning ${skill.name} at basic level — teach it only once you're past the level you're learning.`,
+        );
+        return;
+      }
+      if (levelRank(level) > maxRank) level = LEVEL_ORDER[maxRank];
+    }
+
     setTeaching([
       ...teaching,
       {
         skill,
-        level: (teachLevel || "basic") as SkillLevel,
+        level,
         focus: teachFocus.trim(),
         mode: (teachMode || "teaching") as LearningMode,
       },
@@ -303,11 +359,27 @@ function OnboardingPage() {
     const skill = await findOrCreateSkill(nameOverride ?? learnInput, learnCategory || "Other");
     if (!skill) return;
     if (learning.find((t) => t.skill.id === skill.id)) return;
+
+    // Learning must be at least one level above the same skill on the teach side
+    // (e.g. teaching basic ⇒ learn intermediate/advanced, never basic).
+    let level = (learnLevel || "basic") as SkillLevel;
+    const taught = teaching.find((t) => t.skill.id === skill.id);
+    if (taught) {
+      const minRank = levelRank(taught.level) + 1;
+      if (minRank > levelRank("advanced")) {
+        toast.error(
+          `You already teach ${skill.name} at advanced level — there's no higher level to learn.`,
+        );
+        return;
+      }
+      if (levelRank(level) < minRank) level = LEVEL_ORDER[minRank];
+    }
+
     setLearning([
       ...learning,
       {
         skill,
-        level: (learnLevel || "basic") as SkillLevel,
+        level,
         focus: learnFocus.trim(),
         mode: (learnMode || "teaching") as LearningMode,
       },
@@ -603,6 +675,8 @@ function OnboardingPage() {
                     entries={teaching}
                     setEntries={setTeaching}
                     allSkills={allSkills}
+                    crossEntries={learning}
+                    crossRelation="below"
                   />
                 </section>
 
@@ -638,6 +712,8 @@ function OnboardingPage() {
                     entries={learning}
                     setEntries={setLearning}
                     allSkills={allSkills}
+                    crossEntries={teaching}
+                    crossRelation="above"
                   />
                 </section>
               </div>
@@ -720,11 +796,7 @@ function OnboardingPage() {
                   Continue
                 </Button>
               ) : (
-                <Button
-                  variant="hero"
-                  onClick={finish}
-                  disabled={saving || !stepComplete[step]}
-                >
+                <Button variant="hero" onClick={finish} disabled={saving || !stepComplete[step]}>
                   {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                   Finish setup
                 </Button>
@@ -757,6 +829,8 @@ function SkillPicker({
   entries,
   setEntries,
   allSkills,
+  crossEntries,
+  crossRelation,
 }: {
   kind: "teaching" | "learning";
   placeholder: string;
@@ -777,11 +851,23 @@ function SkillPicker({
   entries: LevelEntry[];
   setEntries: (e: LevelEntry[]) => void;
   allSkills: Skill[];
+  crossEntries: LevelEntry[];
+  crossRelation: "above" | "below";
 }) {
   const emptyText =
     kind === "teaching"
       ? "No skills yet. Add one you can teach."
       : "No skills yet. Add one you want help with.";
+
+  // Levels offered for the add form depend on whether the typed skill already
+  // exists in the other list (e.g. teaching Flute basic ⇒ only intermediate /
+  // advanced are offered when adding Flute to learn).
+  const typedSkillId = allSkills.find(
+    (s) => s.name.trim().toLowerCase() === input.trim().toLowerCase(),
+  )?.id;
+  const addFormLevels = typedSkillId
+    ? allowedLevelsFor(typedSkillId, crossEntries, crossRelation)
+    : LEVEL_ORDER;
   return (
     <div className="space-y-3">
       {entries.length === 0 ? (
@@ -817,9 +903,13 @@ function SkillPicker({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="basic">Basic</SelectItem>
-                      <SelectItem value="intermediate">Intermediate</SelectItem>
-                      <SelectItem value="advanced">Advanced</SelectItem>
+                      {levelOptionsFor(e.level, e.skill.id, crossEntries, crossRelation).map(
+                        (lvl) => (
+                          <SelectItem key={lvl} value={lvl}>
+                            {LEVEL_LABELS[lvl]}
+                          </SelectItem>
+                        ),
+                      )}
                     </SelectContent>
                   </Select>
                   <Select
@@ -903,9 +993,11 @@ function SkillPicker({
                 <SelectValue placeholder={levelPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="basic">Basic</SelectItem>
-                <SelectItem value="intermediate">Intermediate</SelectItem>
-                <SelectItem value="advanced">Advanced</SelectItem>
+                {addFormLevels.map((lvl) => (
+                  <SelectItem key={lvl} value={lvl}>
+                    {LEVEL_LABELS[lvl]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={category} onValueChange={setCategory}>
