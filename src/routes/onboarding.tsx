@@ -279,8 +279,8 @@ function OnboardingPage() {
     return data;
   };
 
-  const addTeach = async () => {
-    const skill = await findOrCreateSkill(teachInput, teachCategory || "Other");
+  const addTeach = async (nameOverride?: string) => {
+    const skill = await findOrCreateSkill(nameOverride ?? teachInput, teachCategory || "Other");
     if (!skill) return;
     if (teaching.find((t) => t.skill.id === skill.id)) return;
     setTeaching([
@@ -299,8 +299,8 @@ function OnboardingPage() {
     setTeachMode("");
   };
 
-  const addLearn = async () => {
-    const skill = await findOrCreateSkill(learnInput, learnCategory || "Other");
+  const addLearn = async (nameOverride?: string) => {
+    const skill = await findOrCreateSkill(nameOverride ?? learnInput, learnCategory || "Other");
     if (!skill) return;
     if (learning.find((t) => t.skill.id === skill.id)) return;
     setLearning([
@@ -773,7 +773,7 @@ function SkillPicker({
   setCategory: (v: string) => void;
   modeValue: LearningMode | "";
   setModeValue: (v: LearningMode | "") => void;
-  onAdd: () => void;
+  onAdd: (nameOverride?: string) => void;
   entries: LevelEntry[];
   setEntries: (e: LevelEntry[]) => void;
   allSkills: Skill[];
@@ -869,12 +869,13 @@ function SkillPicker({
             skills={allSkills}
             value={input}
             onChange={setInput}
+            onCommit={(name) => onAdd(name)}
             excludeIds={entries.map((e) => e.skill.id)}
             placeholder={placeholder}
           />
           <Button
             variant={input.trim() ? "hero" : "outline"}
-            onClick={onAdd}
+            onClick={() => onAdd()}
             type="button"
             disabled={!input.trim()}
             className="h-10 px-4"

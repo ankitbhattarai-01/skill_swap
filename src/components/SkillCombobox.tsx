@@ -18,6 +18,12 @@ type SkillComboboxProps = {
   value: string;
   /** Called with the picked name — an existing catalog skill or a new custom one. */
   onChange: (name: string) => void;
+  /**
+   * Called when the user commits a skill by pressing Enter in the search box.
+   * Receives the chosen name so the parent can add it without waiting for the
+   * `onChange` state update to flush.
+   */
+  onCommit?: (name: string) => void;
   /** Skill ids already added; hidden from the list so they can't be picked twice. */
   excludeIds?: string[];
   placeholder?: string;
@@ -30,6 +36,7 @@ export function SkillCombobox({
   skills,
   value,
   onChange,
+  onCommit,
   excludeIds = [],
   placeholder = "Search a skill…",
   className,
@@ -73,6 +80,15 @@ export function SkillCombobox({
           type="button"
           role="combobox"
           aria-expanded={open}
+          onKeyDown={(e) => {
+            // After picking from the list the popover closes and focus returns
+            // here — let Enter add the chosen skill instead of reopening it.
+            if (e.key === "Enter" && !open && onCommit && value.trim()) {
+              e.preventDefault();
+              e.stopPropagation();
+              onCommit(value);
+            }
+          }}
           className={cn(
             "glass flex h-10 w-full items-center justify-between gap-2 rounded-md border border-white/10 px-3 text-left text-sm outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring",
             className,
@@ -98,9 +114,22 @@ export function SkillCombobox({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && trimmed && !hasExactMatch) {
+                if (e.key === "Enter" && trimmed) {
                   e.preventDefault();
-                  choose(trimmed);
+                  // Resolve to a catalog skill's canonical name when it matches,
+                  // otherwise commit the typed text as a new custom skill.
+                  const exact = skills.find(
+                    (s) => s.name.toLowerCase() === trimmed.toLowerCase(),
+                  );
+                  const name = exact ? exact.name : trimmed;
+                  if (onCommit) {
+                    onChange(name);
+                    setQuery("");
+                    setOpen(false);
+                    onCommit(name);
+                  } else {
+                    choose(name);
+                  }
                 }
               }}
               placeholder={placeholder}

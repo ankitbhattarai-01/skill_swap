@@ -591,11 +591,11 @@ function ProfilePage() {
     return data;
   };
 
-  const addTeach = async () => {
+  const addTeach = async (nameOverride?: string) => {
     if (!user) return;
     const selectedTeachMode = teachMode || "teaching";
     const selectedTeachLevel = teachLevel || "basic";
-    const skill = await findOrCreate(teachInput, teachCategory || "Other");
+    const skill = await findOrCreate(nameOverride ?? teachInput, teachCategory || "Other");
     if (!skill) return;
     const existing = teaching.find((t) => t.skill.id === skill.id);
     if (existing) {
@@ -674,11 +674,11 @@ function ProfilePage() {
     invalidatePageCaches(user.id);
   };
 
-  const addLearn = async () => {
+  const addLearn = async (nameOverride?: string) => {
     if (!user) return;
     const selectedLearnMode = learnMode || "teaching";
     const selectedLearnLevel = learnLevel || "basic";
-    const skill = await findOrCreate(learnInput, learnCategory || "Other");
+    const skill = await findOrCreate(nameOverride ?? learnInput, learnCategory || "Other");
     if (!skill) return;
     const existing = learning.find((t) => t.skill.id === skill.id);
     if (existing) {
@@ -1127,6 +1127,7 @@ function ProfilePage() {
                   skills={allSkills}
                   value={teachInput}
                   onChange={setTeachInput}
+                  onCommit={(name) => addTeach(name)}
                   excludeIds={teaching.map((t) => t.skill.id)}
                   placeholder="Add a skill you teach…"
                 />
@@ -1299,6 +1300,7 @@ function ProfilePage() {
                   skills={allSkills}
                   value={learnInput}
                   onChange={setLearnInput}
+                  onCommit={(name) => addLearn(name)}
                   excludeIds={learning.map((l) => l.skill.id)}
                   placeholder="Add a skill you want to learn…"
                 />
