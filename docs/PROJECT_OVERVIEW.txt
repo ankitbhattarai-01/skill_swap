@@ -380,7 +380,6 @@ match.ts               Peer/skill matching
 jitsi.ts               Video room URL generation
 jitsi-token.ts         JaaS token client wrapper
 ratings.ts             Review/rating UX helpers
-skill-paths.ts         Skill progression graph (synced with Edge Function)
 ai-suggestions.ts      Client wrapper for generate-suggestions
 n8n.ts                 Authenticated n8n-webhook calls
 captcha.ts             Turnstile/hCaptcha integration
@@ -524,9 +523,16 @@ CSP (server.ts) allows:
 
 Optional feature flag: features.ai_suggestions.enabled
 
-  - Edge Function calls Gemini with user's profile + real platform signals
-  - Grounded to avoid hallucinated skill names not on platform
-  - SKILL_PROGRESSIONS duplicated in Edge Function (keep in sync with skill-paths.ts)
+  - Edge Function calls Groq/Gemini with user's profile + real platform signals
+  - Two-layer grounding so a tile can never name a skill/person/number not on
+    the platform:
+      1. Related-skill hints are derived from the live catalog (same-category +
+         co-occurrence), never a hardcoded list, so they only ever name real
+         catalog skills (covers music and tech alike).
+      2. Every model suggestion passes a strict validator (validateSuggestion):
+         off-catalog skill guard, catalog cross-talk guard, number guard, name
+         guard, and text<->link consistency. Anything ungrounded is dropped and
+         replaced by a deterministic, grounded template (deterministicSuggestions).
   - Results cached in ai_suggestions table per user
 
 --- 7.6 n8n Automation (Optional) ---
