@@ -8,7 +8,6 @@ type OAuthStartResult = {
 
 const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
-  github: "GitHub",
 };
 
 function couldNotStartMessage(provider: Provider): string {
@@ -43,8 +42,4 @@ async function prepareOAuth(provider: Provider, redirectTo: string): Promise<OAu
 
 export function prepareGoogleOAuth(redirectTo: string): Promise<OAuthStartResult> {
   return prepareOAuth("google", redirectTo);
-}
-
-export function prepareGitHubOAuth(redirectTo: string): Promise<OAuthStartResult> {
-  return prepareOAuth("github", redirectTo);
 }
