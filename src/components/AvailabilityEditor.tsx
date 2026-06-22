@@ -71,6 +71,14 @@ const END_TIME_OPTIONS = makeTimeOptions(true);
 
 const PRESETS: { label: string; windows: LocalWindow[] }[] = [
   {
+    label: "Every day",
+    windows: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+      day: d,
+      startMin: 6 * 60,
+      endMin: 23 * 60 + 30,
+    })),
+  },
+  {
     label: "Weekday evenings",
     windows: [1, 2, 3, 4, 5].map((d) => ({ day: d, startMin: 19 * 60, endMin: 22 * 60 })),
   },
@@ -89,10 +97,6 @@ const PRESETS: { label: string; windows: LocalWindow[] }[] = [
   {
     label: "Weekend mornings",
     windows: [0, 6].map((d) => ({ day: d, startMin: 8 * 60, endMin: 12 * 60 })),
-  },
-  {
-    label: "Lunch breaks",
-    windows: [1, 2, 3, 4, 5].map((d) => ({ day: d, startMin: 12 * 60, endMin: 13 * 60 })),
   },
 ];
 

@@ -2476,8 +2476,12 @@ function InsightTile({
     );
   }
   if (action.kind === "skills") {
+    // "Add a teaching/learning skill" tiles. Skills are added and managed on the
+    // user's own profile page — /skills is the PUBLIC catalog browse, not a
+    // place to edit your own skills — so route to /profile, which is where the
+    // message ("add a teaching skill") actually leads.
     return (
-      <Link to="/skills" preload="intent" className={tileClass}>
+      <Link to="/profile" preload="intent" className={tileClass}>
         {inner}
       </Link>
     );

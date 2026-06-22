@@ -551,13 +551,13 @@ function OnboardingPage() {
   const hasAvailability = availability.teach > 0 || availability.learn > 0;
   const stepComplete = [
     fullName.trim().length > 0 && bio.trim().length > 0,
-    hasTeaching && hasLearning,
+    hasTeaching || hasLearning,
     true,
     hasAvailability,
   ];
   const stepHint = [
     "Add your name and a short bio to continue.",
-    "Add at least one skill you teach and one you want to learn.",
+    "Add at least one skill you teach or one you want to learn.",
     "",
     "Add at least one availability window to finish.",
   ];
