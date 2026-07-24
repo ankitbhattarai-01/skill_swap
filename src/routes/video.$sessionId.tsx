@@ -595,7 +595,15 @@ function VideoCallPage() {
             <MonitorUp className="h-4 w-4" />
             {sharing ? "Stop Sharing" : "Share Screen"}
           </Button>
-          {notesEnabled && <SessionNotesRecorder recorder={notesRecorder} disabled={!callReady} />}
+          {notesEnabled && (
+            <SessionNotesRecorder
+              recorder={notesRecorder}
+              disabled={!callReady}
+              sessionId={session.id}
+              selfUserId={user?.id}
+              peerName={isTeacher ? session.learnerName : session.teacherName}
+            />
+          )}
           <Button variant="destructive" onClick={hangUp} disabled={!callReady}>
             <PhoneOff className="h-4 w-4" />
             Leave

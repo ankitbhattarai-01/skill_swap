@@ -19,13 +19,13 @@ export type SessionNotesRecorder = {
   elapsedMs: number;
   notes: SessionNotes | null;
   supported: boolean;
-  /** Opens the consent dialog. Recording only starts once consent is given. */
-  requestStart: () => void;
-  /** Begins capture. Called by the consent dialog, not directly by the route. */
+  /**
+   * Begins capture. Called by the recorder component once the other
+   * participant has accepted the consent request, from the click on
+   * "Start recording" (getDisplayMedia needs a fresh user gesture).
+   */
   begin: () => Promise<void>;
   stopAndGenerate: () => Promise<void>;
-  consentOpen: boolean;
-  setConsentOpen: (open: boolean) => void;
 };
 
 /**
@@ -46,7 +46,6 @@ export function useSessionNotesRecorder(input: {
   const [status, setStatus] = useState<NotesRecorderStatus>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [notes, setNotes] = useState<SessionNotes | null>(null);
-  const [consentOpen, setConsentOpen] = useState(false);
   const recordingRef = useRef<ActiveRecording | null>(null);
   // Guards against the double-stop that happens when the user clicks Stop and
   // the call's hangup handler also fires.
@@ -143,24 +142,13 @@ export function useSessionNotesRecorder(input: {
     };
   }, []);
 
-  const requestStart = useCallback(() => {
-    if (!supported) {
-      toast.error("Recording needs Chrome or Edge on desktop.");
-      return;
-    }
-    setConsentOpen(true);
-  }, [supported]);
-
   return {
     status,
     isActive,
     elapsedMs,
     notes,
     supported,
-    requestStart,
     begin,
     stopAndGenerate,
-    consentOpen,
-    setConsentOpen,
   };
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +9,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { SessionNotesRecorder as SessionNotesRecorderState } from "@/lib/use-session-notes-recorder";
-import { Circle, Loader2, Sparkles } from "lucide-react";
+import { useRecordingConsent } from "@/lib/recording-consent";
+import { Check, Circle, Loader2, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 function formatElapsed(ms: number) {
   const total = Math.floor(ms / 1000);
@@ -22,99 +23,176 @@ function formatElapsed(ms: number) {
 type Props = {
   recorder: SessionNotesRecorderState;
   disabled?: boolean;
+  sessionId: string;
+  selfUserId: string | undefined;
+  /** Display name of the other participant, used in the consent prompts. */
+  peerName: string;
 };
 
-export function SessionNotesRecorder({ recorder, disabled }: Props) {
-  const [consentChecked, setConsentChecked] = useState(false);
-  const { status, elapsedMs, supported, consentOpen, setConsentOpen } = recorder;
+export function SessionNotesRecorder({
+  recorder,
+  disabled,
+  sessionId,
+  selfUserId,
+  peerName,
+}: Props) {
+  const { status, elapsedMs, supported } = recorder;
+  const consent = useRecordingConsent({ sessionId, selfUserId });
+  const [askOpen, setAskOpen] = useState(false);
 
-  if (!supported) return null;
+  const closeAsk = () => {
+    setAskOpen(false);
+    consent.reset();
+  };
+
+  const startRequest = () => {
+    if (!supported) {
+      toast.error("Recording needs Chrome or Edge on desktop.");
+      return;
+    }
+    setAskOpen(true);
+    consent.request();
+  };
+
+  const beginRecording = () => {
+    setAskOpen(false);
+    consent.reset();
+    void recorder.begin();
+  };
 
   return (
     <>
-      {/* 'ready' is included so a second stretch of the same call can be
-          recorded — the notes are regenerated from the newer audio. */}
-      {status === "idle" || status === "failed" || status === "ready" ? (
-        <Button variant="outline" onClick={recorder.requestStart} disabled={disabled}>
-          <Sparkles className="h-4 w-4" />
-          {status === "failed" ? "Retry AI Notes" : status === "ready" ? "Record again" : "AI Notes"}
-        </Button>
-      ) : null}
+      {supported && (
+        <>
+          {/* 'ready' is included so a second stretch of the same call can be
+              recorded — the notes are regenerated from the newer audio. */}
+          {status === "idle" || status === "failed" || status === "ready" ? (
+            <Button variant="outline" onClick={startRequest} disabled={disabled}>
+              <Sparkles className="h-4 w-4" />
+              {status === "failed"
+                ? "Retry AI Notes"
+                : status === "ready"
+                  ? "Record again"
+                  : "AI Notes"}
+            </Button>
+          ) : null}
 
-      {status === "recording" ? (
-        <Button variant="destructive" onClick={() => void recorder.stopAndGenerate()}>
-          <Circle className="h-3 w-3 animate-pulse fill-current" />
-          Stop &amp; Summarize
-          <span className="ml-1 tabular-nums opacity-80">{formatElapsed(elapsedMs)}</span>
-        </Button>
-      ) : null}
+          {status === "recording" ? (
+            <Button variant="destructive" onClick={() => void recorder.stopAndGenerate()}>
+              <Circle className="h-3 w-3 animate-pulse fill-current" />
+              Stop &amp; Summarize
+              <span className="ml-1 tabular-nums opacity-80">{formatElapsed(elapsedMs)}</span>
+            </Button>
+          ) : null}
 
-      {status === "processing" ? (
-        <Button variant="outline" disabled>
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Generating notes…
-        </Button>
-      ) : null}
+          {status === "processing" ? (
+            <Button variant="outline" disabled>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Generating notes…
+            </Button>
+          ) : null}
 
-      <Dialog open={consentOpen} onOpenChange={setConsentOpen}>
-        <DialogContent className="sm:max-w-lg">
+          {/* Asker side: we've asked the peer and are waiting on their answer. */}
+          <Dialog open={askOpen} onOpenChange={(open) => (open ? null : closeAsk())}>
+            <DialogContent className="sm:max-w-sm">
+              {consent.outgoing === "accepted" ? (
+                <>
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Check className="h-5 w-5 text-emerald-500" />
+                      {peerName} is in
+                    </DialogTitle>
+                    <DialogDescription className="pt-1">
+                      When the screen picker opens, choose <strong>This tab</strong> and turn on{" "}
+                      <strong>Also share tab audio</strong> so both voices are captured.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={closeAsk}>
+                      Cancel
+                    </Button>
+                    <Button variant="hero" onClick={beginRecording}>
+                      <Sparkles className="h-4 w-4" />
+                      Start recording
+                    </Button>
+                  </DialogFooter>
+                </>
+              ) : consent.outgoing === "declined" ? (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>Maybe next time</DialogTitle>
+                    <DialogDescription className="pt-1">
+                      {peerName} would rather not record this session.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={closeAsk}>
+                      Got it
+                    </Button>
+                  </DialogFooter>
+                </>
+              ) : consent.outgoing === "timeout" ? (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>No answer yet</DialogTitle>
+                    <DialogDescription className="pt-1">
+                      {peerName} hasn’t responded — they may not be at their screen right now.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={closeAsk}>
+                      Close
+                    </Button>
+                    <Button variant="hero" onClick={() => consent.request()}>
+                      Ask again
+                    </Button>
+                  </DialogFooter>
+                </>
+              ) : (
+                <>
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-brand-purple" />
+                      Asking {peerName}…
+                    </DialogTitle>
+                    <DialogDescription className="pt-1">
+                      They’ll get a quick allow-or-decline. Recording only starts once they say yes.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={closeAsk}>
+                      Cancel
+                    </Button>
+                  </DialogFooter>
+                </>
+              )}
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
+
+      {/* Responder side: the peer asked to record. Rendered regardless of local
+          recording support — saying yes doesn't require the ability to record.
+          Dismissing (Escape / click-away) counts as "not now", the safe default. */}
+      <Dialog open={consent.incoming} onOpenChange={(open) => (open ? null : consent.decline())}>
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Record this session for AI notes?</DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-3 pt-1 text-sm">
-                <p>
-                  SkillSwap will capture the call audio, turn it into structured study notes, and
-                  then delete the recording. Only the notes are kept.
-                </p>
-                <ul className="space-y-1.5 text-muted-foreground">
-                  <li className="flex gap-2">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-purple/60" />
-                    <span>
-                      The other participant sees a “recording in progress” banner for the whole
-                      call.
-                    </span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-purple/60" />
-                    <span>The audio is deleted as soon as the notes are generated.</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-purple/60" />
-                    <span>Both of you can download the notes as a PDF afterwards.</span>
-                  </li>
-                </ul>
-                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-100">
-                  In the share dialog, pick <strong>This Tab</strong> and turn on{" "}
-                  <strong>Also share tab audio</strong>. Without it only your own voice is recorded.
-                </p>
-              </div>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-brand-purple" />
+              {peerName} wants to record for AI notes
+            </DialogTitle>
+            <DialogDescription className="pt-1">
+              SkillSwap turns the call audio into study notes, then deletes the recording. You’ll
+              both be able to download the notes.
             </DialogDescription>
           </DialogHeader>
-
-          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 p-3 text-sm">
-            <Checkbox
-              checked={consentChecked}
-              onCheckedChange={(value) => setConsentChecked(value === true)}
-              className="mt-0.5"
-            />
-            <span>I have my session partner’s agreement to record this call for AI notes.</span>
-          </label>
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConsentOpen(false)}>
-              Cancel
+            <Button variant="outline" onClick={consent.decline}>
+              Not now
             </Button>
-            <Button
-              variant="hero"
-              disabled={!consentChecked}
-              onClick={() => {
-                setConsentOpen(false);
-                setConsentChecked(false);
-                void recorder.begin();
-              }}
-            >
-              <Sparkles className="h-4 w-4" />
-              Start recording
+            <Button variant="hero" onClick={consent.accept}>
+              <Check className="h-4 w-4" />
+              Allow
             </Button>
           </DialogFooter>
         </DialogContent>

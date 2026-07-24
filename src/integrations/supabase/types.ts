@@ -1877,6 +1877,10 @@ export type Database = {
         Args: { p_session_id: string };
         Returns: undefined;
       };
+      emit_recording_consent: {
+        Args: { p_session_id: string; p_kind: string };
+        Returns: undefined;
+      };
       complete_onboarding: {
         Args: Record<string, never>;
         Returns: boolean;
