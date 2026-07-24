@@ -21,8 +21,19 @@ import { sendCallRinging } from "@/lib/call-signals";
 import { startRingback, stopRingback } from "@/lib/sounds";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useFeatureEnabled } from "@/lib/feature-flags";
+import { useRecordingWatcher } from "@/lib/recording-signal";
+import { SessionNotesRecorder } from "@/components/SessionNotesRecorder";
+import { useSessionNotesRecorder } from "@/lib/use-session-notes-recorder";
 import type { Enums } from "@/integrations/supabase/types";
-import { ArrowLeft, MessageCircle, MonitorUp, PhoneOff, VideoOff } from "lucide-react";
+import {
+  ArrowLeft,
+  Circle,
+  Loader2,
+  MessageCircle,
+  MonitorUp,
+  PhoneOff,
+  VideoOff,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/video/$sessionId")({
@@ -87,6 +98,21 @@ function VideoCallPage() {
   const apiRef = useRef<JitsiExternalApiInstance | null>(null);
 
   const isTeacher = Boolean(session && user && session.teacher_id === user.id);
+
+  const notesEnabled = useFeatureEnabled("features.session_notes.enabled", true);
+  const notesRecorder = useSessionNotesRecorder({
+    sessionId,
+    userId: user?.id,
+    displayName: viewer?.displayName ?? "Your session partner",
+  });
+  // The Jitsi effect below closes over `handleLeft` once; a ref keeps that
+  // handler pointed at the current recorder state instead of the state at
+  // mount, so ending a call always flushes a recording that is actually live.
+  const notesRecorderRef = useRef(notesRecorder);
+  notesRecorderRef.current = notesRecorder;
+
+  // Banner for the participant who is NOT recording.
+  const peerRecordingName = useRecordingWatcher({ sessionId, selfUserId: user?.id });
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -311,10 +337,21 @@ function VideoCallPage() {
       stopHeartbeat();
       void supabase.rpc("record_session_leave", { p_session_id: session.id });
     };
+    const goToSession = () => {
+      navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
+    };
     const handleLeft = () => {
       if (cancelled) return;
       recordLeave();
-      navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
+      // If a recording is still running when the call ends, hold the user here
+      // while we stop, upload, and generate. Navigating immediately would
+      // unmount the recorder mid-flight and throw the capture away — the
+      // effect cleanup calls cancel(). The overlay below explains the wait.
+      if (notesRecorderRef.current.isActive) {
+        void notesRecorderRef.current.stopAndGenerate().finally(goToSession);
+        return;
+      }
+      goToSession();
     };
     const handleScreenShare = (payload: unknown) => {
       const on = Boolean(
@@ -558,6 +595,7 @@ function VideoCallPage() {
             <MonitorUp className="h-4 w-4" />
             {sharing ? "Stop Sharing" : "Share Screen"}
           </Button>
+          {notesEnabled && <SessionNotesRecorder recorder={notesRecorder} disabled={!callReady} />}
           <Button variant="destructive" onClick={hangUp} disabled={!callReady}>
             <PhoneOff className="h-4 w-4" />
             Leave
@@ -576,8 +614,33 @@ function VideoCallPage() {
         </div>
       )}
 
+      {/* Consent is one-sided by nature: only the recorder ticks the box, but
+          the recording captures both voices. This banner is the other half of
+          that consent, so nobody is recorded without knowing. */}
+      {peerRecordingName && (
+        <div className="mb-3 flex items-center gap-2.5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-900 dark:text-red-100">
+          <Circle className="h-3 w-3 shrink-0 animate-pulse fill-current" />
+          <span>
+            <span className="font-medium">{peerRecordingName} is recording this call</span> to
+            generate AI session notes. The recording is deleted once the notes are made.
+          </span>
+        </div>
+      )}
+
       <section className="relative min-h-0 flex-1 overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
         <div ref={containerRef} className="h-full w-full" />
+        {notesRecorder.status === "processing" && (
+          // Shown after hangup while we finish the upload + generation. The
+          // route deliberately delays navigation until this resolves.
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/85 px-6 text-center backdrop-blur-sm">
+            <Loader2 className="h-7 w-7 animate-spin text-brand-purple" />
+            <p className="text-sm font-medium">Generating your session notes…</p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              This usually takes under a minute. The recording is deleted as soon as the notes are
+              ready.
+            </p>
+          </div>
+        )}
         {connecting && (
           // Scrim sits on top of whatever Jitsi has painted into the iframe
           // (often a near-black backdrop), so we tint it with a theme-aware
