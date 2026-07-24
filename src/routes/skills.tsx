@@ -51,7 +51,7 @@ function usePublicSkills() {
     (async () => {
       try {
         const [skillsRes, teachingRes] = await Promise.all([
-          supabase.from("skills").select("id, name, category").order("name"),
+          supabase.from("skills").select("id, name, category").eq("is_active", true).order("name"),
           supabase.from("user_teaching_skills").select("skill_id").limit(5000),
         ]);
 
