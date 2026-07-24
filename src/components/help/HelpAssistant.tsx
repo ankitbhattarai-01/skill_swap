@@ -17,13 +17,6 @@ import {
 } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { TOUR_CARDS, type TourCard } from "@/lib/help/tour-content";
 import { FAQ_CATEGORIES, FAQ_ENTRIES } from "@/lib/help/faq-content";
@@ -51,16 +44,7 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
     return window.localStorage.getItem(VOICE_PREF_KEY) !== "off";
   });
   const navigate = useNavigate();
-  const {
-    speakingId,
-    ready: voiceReady,
-    voices,
-    selectedVoiceName,
-    selectVoice,
-    previewVoice,
-    speak,
-    stop,
-  } = useSpeech();
+  const { speakingId, ready: voiceReady, speak, stop } = useSpeech();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -146,38 +130,6 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
               </button>
             )}
           </div>
-          {voiceReady && voiceEnabled && voices.length > 0 && (
-            <div className="mt-3 flex items-center gap-2">
-              <Select value={selectedVoiceName ?? undefined} onValueChange={selectVoice}>
-                <SelectTrigger className="h-9 flex-1 rounded-xl bg-card/50 text-xs">
-                  <SelectValue placeholder="Choose voice" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {voices.map((v) => (
-                    <SelectItem key={v.name} value={v.name} className="text-xs">
-                      <span className="flex items-center gap-2">
-                        {v.natural && (
-                          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                            Natural
-                          </span>
-                        )}
-                        {v.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <button
-                type="button"
-                onClick={previewVoice}
-                className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-border/50 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="Preview this voice"
-              >
-                <Play className="h-3 w-3" />
-                Try
-              </button>
-            </div>
-          )}
         </SheetHeader>
 
         <Tabs

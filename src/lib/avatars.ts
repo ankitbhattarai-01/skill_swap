@@ -21,16 +21,34 @@ type AvatarCacheEntry = {
 // a cheap LRU without an external dependency.
 const memoryCache = new Map<string, AvatarCacheEntry>();
 
-function readStoredCache() {
+// In-memory mirror of the sessionStorage blob, plus the pending-flush handle.
+//
+// Every getCachedAvatar() miss used to JSON.parse the whole blob and every
+// cacheAvatar() re-serialized it, so signing one page of avatars (the dashboard
+// signs ~20 across its teacher and seeker tiles) meant ~40 parse/stringify
+// passes over as many as 500 long signed URLs — all on the main thread, right
+// when the match tiles were trying to paint. Parse once, keep the mirror
+// authoritative, and write back on a single coalesced flush.
+//
+// sessionStorage is per-tab, so nothing outside this module can write behind
+// the mirror's back.
+let storedCache: Record<string, AvatarCacheEntry> | null = null;
+let flushHandle: number | null = null;
+
+function readStoredCache(): Record<string, AvatarCacheEntry> {
+  if (storedCache) return storedCache;
+  // No memo without a window: keep returning a throwaway so a later
+  // (hydrated) call still reads the real blob.
   if (typeof window === "undefined") return {};
   try {
-    return JSON.parse(window.sessionStorage.getItem(AVATAR_CACHE_KEY) ?? "{}") as Record<
+    storedCache = JSON.parse(window.sessionStorage.getItem(AVATAR_CACHE_KEY) ?? "{}") as Record<
       string,
       AvatarCacheEntry
     >;
   } catch {
-    return {};
+    storedCache = {};
   }
+  return storedCache;
 }
 
 // Prunes the stored cache to AVATAR_STORAGE_CACHE_MAX entries, keeping the
@@ -45,13 +63,22 @@ function pruneStoredCache(cache: Record<string, AvatarCacheEntry>) {
   return Object.fromEntries(fresh.slice(0, AVATAR_STORAGE_CACHE_MAX));
 }
 
-function writeStoredCache(cache: Record<string, AvatarCacheEntry>) {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(pruneStoredCache(cache)));
-  } catch {
-    // Cache writes are only a speed boost.
-  }
+// Persists the mirror once per burst rather than once per avatar. A page that
+// signs 20 avatars now pays for one prune + one stringify instead of 20 of
+// each. Losing the tail of a burst to a navigation just costs a cache miss.
+function scheduleStoredCacheFlush() {
+  if (typeof window === "undefined" || flushHandle !== null) return;
+  flushHandle = window.setTimeout(() => {
+    flushHandle = null;
+    try {
+      const pruned = pruneStoredCache(storedCache ?? {});
+      // Adopt the pruned copy so expired entries leave the mirror too.
+      storedCache = pruned;
+      window.sessionStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(pruned));
+    } catch {
+      // Cache writes are only a speed boost.
+    }
+  }, 250);
 }
 
 function touchMemoryEntry(path: string, entry: AvatarCacheEntry) {
@@ -78,8 +105,7 @@ function getCachedAvatar(path: string) {
   // Stale memory entry — drop it so we don't keep it pinned past TTL.
   if (memory) memoryCache.delete(path);
 
-  const stored = readStoredCache();
-  const entry = stored[path];
+  const entry = readStoredCache()[path];
   if (!entry || now - entry.savedAt >= AVATAR_CACHE_MAX_AGE_MS) return null;
 
   memoryCache.set(path, entry);
@@ -92,9 +118,10 @@ function cacheAvatar(path: string, signedUrl: string) {
   memoryCache.delete(path);
   memoryCache.set(path, entry);
   evictMemoryIfNeeded();
-  const stored = readStoredCache();
-  stored[path] = entry;
-  writeStoredCache(stored);
+  // Mirror updated synchronously so the next getCachedAvatar() hits even
+  // before the batched flush below has run.
+  readStoredCache()[path] = entry;
+  scheduleStoredCacheFlush();
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number) {
@@ -207,6 +234,23 @@ export async function signAvatarUrls(
     }
   } catch {
     return map;
+  }
+  return map;
+}
+
+// Cache-only lookup: the signed URLs already held in memory / sessionStorage
+// for these paths, with no network call at all. List pages use it to decide
+// whether they can paint avatars in their FIRST render instead of rendering
+// initials and then repainting the whole grid once the async signer resolves.
+export function cachedAvatarUrls(
+  paths: (string | null | undefined)[],
+  transform?: AvatarTransform,
+) {
+  const map = new Map<string, string>();
+  for (const path of paths) {
+    if (!path) continue;
+    const cached = getCachedAvatar(transformCacheKey(path, transform));
+    if (cached) map.set(path, cached);
   }
   return map;
 }

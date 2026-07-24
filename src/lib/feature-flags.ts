@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 export type FeatureFlags = {
   "features.ai_suggestions.enabled"?: { enabled?: boolean };
   "features.video_calls.enabled"?: { enabled?: boolean };
+  "features.session_notes.enabled"?: { enabled?: boolean };
   "features.public_explore.enabled"?: { enabled?: boolean };
   "signup.starting_credits"?: { value?: number };
   "sessions.default_credits_per_hour"?: { value?: number };

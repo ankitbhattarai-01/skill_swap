@@ -524,18 +524,21 @@ export type Database = {
           category: string | null;
           created_at: string;
           id: string;
+          is_active: boolean;
           name: string;
         };
         Insert: {
           category?: string | null;
           created_at?: string;
           id?: string;
+          is_active?: boolean;
           name: string;
         };
         Update: {
           category?: string | null;
           created_at?: string;
           id?: string;
+          is_active?: boolean;
           name?: string;
         };
         Relationships: [];
@@ -794,6 +797,117 @@ export type Database = {
         };
         Relationships: [];
       };
+      session_notes: {
+        Row: {
+          id: string;
+          session_id: string;
+          requested_by: string;
+          status: string;
+          notes: Json | null;
+          error: string | null;
+          model: string | null;
+          duration_ms: number | null;
+          created_at: string;
+          generated_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          requested_by: string;
+          status?: string;
+          notes?: Json | null;
+          error?: string | null;
+          model?: string | null;
+          duration_ms?: number | null;
+          created_at?: string;
+          generated_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          requested_by?: string;
+          status?: string;
+          notes?: Json | null;
+          error?: string | null;
+          model?: string | null;
+          duration_ms?: number | null;
+          created_at?: string;
+          generated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      skill_verification_attempts: {
+        Row: {
+          id: string;
+          user_id: string;
+          skill_id: string;
+          level: string;
+          status: string;
+          score: number | null;
+          total: number;
+          model: string | null;
+          created_at: string;
+          completed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          skill_id: string;
+          level: string;
+          status?: string;
+          score?: number | null;
+          total: number;
+          model?: string | null;
+          created_at?: string;
+          completed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          skill_id?: string;
+          level?: string;
+          status?: string;
+          score?: number | null;
+          total?: number;
+          model?: string | null;
+          created_at?: string;
+          completed_at?: string | null;
+        };
+        Relationships: [];
+      };
+      skill_verifications: {
+        Row: {
+          id: string;
+          user_id: string;
+          skill_id: string;
+          level: string;
+          score: number;
+          total: number;
+          attempt_id: string | null;
+          verified_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          skill_id: string;
+          level: string;
+          score: number;
+          total: number;
+          attempt_id?: string | null;
+          verified_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          skill_id?: string;
+          level?: string;
+          score?: number;
+          total?: number;
+          attempt_id?: string | null;
+          verified_at?: string;
+        };
+        Relationships: [];
+      };
       call_decline_signals: {
         Row: {
           id: string;
@@ -823,11 +937,53 @@ export type Database = {
           },
         ];
       };
+      practice_progress: {
+        Row: {
+          attempted: number;
+          id: string;
+          level: string;
+          skill_id: string;
+          solved: number;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          attempted?: number;
+          id?: string;
+          level: string;
+          skill_id: string;
+          solved?: number;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          attempted?: number;
+          id?: string;
+          level?: string;
+          skill_id?: string;
+          solved?: number;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "practice_progress_skill_id_fkey";
+            columns: ["skill_id"];
+            isOneToOne: false;
+            referencedRelation: "skills";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      record_practice_answer: {
+        Args: { p_skill_id: string; p_level: string; p_correct: boolean };
+        Returns: { solved: number; attempted: number }[];
+      };
       accept_session: {
         Args: { p_session_id: string; p_meet_link?: string | null };
         Returns: Database["public"]["Tables"]["sessions"]["Row"];

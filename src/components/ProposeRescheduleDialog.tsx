@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { Calendar, Loader2 } from "lucide-react";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,9 +10,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { TeacherSlotPicker } from "@/components/TeacherSlotPicker";
 import { supabase } from "@/integrations/supabase/client";
+import { SlotPickerSkeleton } from "@/components/SlotPickerSkeleton";
+import { preloadSlotPicker } from "@/lib/warm-dialog-chunks";
 import { toast } from "sonner";
+
+// ~78 KB of calendar + availability code that nobody sees until the dialog is
+// opened. As a static import it was downloaded and parsed on every visit to the
+// session detail page (and the dashboard), because this component sits behind a
+// button that is always rendered. Radix already unmounts DialogContent while
+// closed, so splitting it out costs nothing at open time beyond one chunk fetch.
+//
+// "Beyond one chunk fetch" turned out to be the whole problem: that fetch
+// landed *after* the dialog had already animated open, so the panel opened at
+// the height of the fallback and then jumped. The trigger below now preloads on
+// hover/focus — which precedes the click by a comfortable margin — and the
+// fallback is height-matched for the times it doesn't.
+const TeacherSlotPicker = lazy(() =>
+  import("@/components/TeacherSlotPicker").then((m) => ({ default: m.TeacherSlotPicker })),
+);
 
 // Shared "Propose a new time" trigger + dialog. Used both on the session
 // Details page (RescheduleSection) and inline on the dashboard "Up next" card
@@ -78,6 +94,8 @@ export function ProposeRescheduleDialog({
         variant={buttonVariant}
         size={buttonSize}
         className={buttonClassName}
+        onPointerEnter={preloadSlotPicker}
+        onFocus={preloadSlotPicker}
         onClick={() => setOpen(true)}
       >
         {buttonIcon}
@@ -99,14 +117,16 @@ export function ProposeRescheduleDialog({
                 Only times inside the teacher's free window are shown.
               </p>
               <div className="mt-2">
-                <TeacherSlotPicker
-                  teacherId={teacherId}
-                  durationMinutes={durationMinutes}
-                  value={date}
-                  onChange={setDate}
-                  onValidityChange={setValid}
-                  active={open}
-                />
+                <Suspense fallback={<SlotPickerSkeleton />}>
+                  <TeacherSlotPicker
+                    teacherId={teacherId}
+                    durationMinutes={durationMinutes}
+                    value={date}
+                    onChange={setDate}
+                    onValidityChange={setValid}
+                    active={open}
+                  />
+                </Suspense>
               </div>
             </div>
             <div>

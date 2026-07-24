@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,10 +12,12 @@ import {
   Clock,
   Coins,
   Gift,
+  Plus,
+  Receipt,
   RotateCcw,
-  Sparkles,
   TrendingDown,
   TrendingUp,
+  Wallet,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -29,7 +31,6 @@ export const Route = createFileRoute("/credits")({
 
 type Profile = {
   full_name: string | null;
-  credits: number;
   created_at: string;
 };
 
@@ -74,11 +75,49 @@ type TransactionItem = {
   counterpartyName?: string | null;
 };
 
+const CREDITS_CACHE_PREFIX = "skillswap-credits-cache";
+const CREDITS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
+type CreditsCache = {
+  savedAt: number;
+  profile: Profile;
+  transactions: TransactionItem[];
+};
+
+function getCreditsCache(userId: string) {
+  try {
+    const raw = sessionStorage.getItem(`${CREDITS_CACHE_PREFIX}-${userId}`);
+    if (!raw) return null;
+    const cache = JSON.parse(raw) as CreditsCache;
+    if (Date.now() - cache.savedAt > CREDITS_CACHE_MAX_AGE_MS) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+function setCreditsCache(userId: string, cache: Omit<CreditsCache, "savedAt">) {
+  try {
+    sessionStorage.setItem(
+      `${CREDITS_CACHE_PREFIX}-${userId}`,
+      JSON.stringify({ ...cache, savedAt: Date.now() } satisfies CreditsCache),
+    );
+  } catch {
+    // Cache is only a speed boost; ignore quota/private-mode failures.
+  }
+}
+
 function CreditsPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { data: liveCreditBalance } = useMyCreditBalance();
   const [profile, setProfile] = useState<Profile | null>(null);
+  // Mirrors `profile` so loadCredits can tell (without adding it as a dep)
+  // whether the page already has painted content — from a previous load or
+  // from the cache-hydration effect below — and skip re-showing the skeleton
+  // on a background revalidation.
+  const profileRef = useRef<Profile | null>(null);
+  profileRef.current = profile;
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -92,16 +131,14 @@ function CreditsPage() {
 
   const loadCredits = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    setLoading((current) => (profileRef.current ? false : current));
     try {
       const [
         { data: profileData, error: profileError },
-        { data: creditBalance, error: balanceError },
         { data: transactionData, error: transactionError },
         { data: sessionData, error: sessionError },
       ] = await Promise.all([
         supabase.from("profiles").select("full_name, created_at").eq("id", user.id).maybeSingle(),
-        supabase.rpc("my_credit_balance"),
         supabase
           .from("credit_transactions")
           .select(
@@ -122,7 +159,6 @@ function CreditsPage() {
       ]);
 
       if (profileError) throw profileError;
-      if (balanceError) throw balanceError;
       if (transactionError) throw transactionError;
       if (sessionError) throw sessionError;
 
@@ -240,12 +276,10 @@ function CreditsPage() {
       const profileRow: Profile = profileData
         ? {
             full_name: (profileData as { full_name: string | null }).full_name,
-            credits: creditBalance ?? 0,
             created_at: (profileData as { created_at: string }).created_at,
           }
         : {
             full_name: null,
-            credits: creditBalance ?? 0,
             created_at: new Date().toISOString(),
           };
       const bonus: TransactionItem = {
@@ -256,8 +290,10 @@ function CreditsPage() {
         kind: "bonus",
       };
 
+      const nextTransactions = [...(fromLedger.length ? fromLedger : fallbackFromSessions), bonus];
       setProfile(profileRow);
-      setTransactions([...(fromLedger.length ? fromLedger : fallbackFromSessions), bonus]);
+      setTransactions(nextTransactions);
+      setCreditsCache(user.id, { profile: profileRow, transactions: nextTransactions });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load credits");
       setTransactions([]);
@@ -267,6 +303,20 @@ function CreditsPage() {
     // user.id is the only field read above — depending on the whole user object
     // re-created loadCredits on every auth event, which made the
     // useEffect(loadCredits) below refire and double-fetch the page on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Hydrate from the last successful snapshot before the network round-trip
+  // resolves, so a revisit within the TTL paints real numbers immediately
+  // instead of the skeleton — same trade-off dashboard/explore already make.
+  useEffect(() => {
+    if (!user) return;
+    const cache = getCreditsCache(user.id);
+    if (!cache) return;
+    setProfile(cache.profile);
+    setTransactions(cache.transactions);
+    setLoading(false);
+    // user?.id only — see the auth-rotation note on loadCredits above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -348,7 +398,7 @@ function CreditsPage() {
   );
 
   if (authLoading || loading || !profile) {
-    return <PageLoading variant="hero-stats" />;
+    return <PageLoading variant="credits" />;
   }
 
   return (
@@ -361,7 +411,7 @@ function CreditsPage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="flex items-start gap-4">
                 <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
-                  <Coins className="h-5 w-5 text-brand-purple" />
+                  <Wallet className="h-5 w-5 text-brand-purple" />
                 </div>
                 <div>
                   <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
@@ -377,7 +427,7 @@ function CreditsPage() {
                 preload="intent"
                 className="inline-flex items-center gap-2 self-start rounded-full border border-brand-purple/30 bg-brand-purple/10 px-4 py-2 text-sm font-medium text-brand-purple transition-all hover:bg-brand-purple/20 hover:shadow-glow md:self-auto"
               >
-                <Sparkles className="h-4 w-4" />
+                <Plus className="h-4 w-4" />
                 Earn more
               </Link>
             </div>
@@ -385,7 +435,7 @@ function CreditsPage() {
             <div className="grid gap-3 lg:grid-cols-3">
               <SummaryCard
                 label="Current Balance"
-                value={liveCreditBalance ?? profile.credits}
+                value={liveCreditBalance ?? 0}
                 caption="Available to spend"
                 tone="balance"
                 icon={Coins}
@@ -412,7 +462,7 @@ function CreditsPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">
-                <Coins className="h-4 w-4 text-brand-cyan" />
+                <Receipt className="h-4 w-4 text-brand-cyan" />
               </div>
               <h2 className="text-lg font-semibold leading-tight">Transaction History</h2>
             </div>
@@ -428,7 +478,7 @@ function CreditsPage() {
             {sortedTransactions.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-center">
                 <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-purple/15">
-                  <Coins className="h-5 w-5 text-brand-purple" />
+                  <Receipt className="h-5 w-5 text-brand-purple" />
                 </div>
                 <h3 className="mt-4 text-lg font-semibold">No credit activity yet</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -501,7 +551,7 @@ function SummaryCard({
         </div>
         <div
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-110",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
             toneStyles.badge,
           )}
         >
@@ -558,7 +608,7 @@ function TransactionRow({ transaction }: { transaction: TransactionItem }) {
     <>
       <div
         className={cn(
-          "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-110",
+          "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl",
           styles.badge,
         )}
       >

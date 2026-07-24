@@ -252,6 +252,7 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
       const { data } = await supabase
         .from("skills")
         .select("category")
+        .eq("is_active", true)
         .not("category", "is", null)
         .limit(200);
       if (cancelled) return;
@@ -335,6 +336,7 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
           ? supabase
               .from("skills")
               .select("id, name, category")
+              .eq("is_active", true)
               .or(`name.ilike.%${safeTerm}%,category.ilike.%${safeTerm}%`)
               .limit(6)
           : Promise.resolve({ data: [], error: null });
@@ -758,7 +760,7 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
           role="listbox"
           className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/60 bg-background/95 shadow-xl backdrop-blur-xl"
         >
-          <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border/60 px-2 py-2">
+          <div className="scroll-slim flex items-center gap-1.5 overflow-x-auto border-b border-border/60 px-2 py-2">
             {SCOPES.map((s) => (
               <button
                 key={s.key}
@@ -780,7 +782,10 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
             ))}
           </div>
 
-          <div ref={listRef} className="max-h-[60vh] overflow-y-auto p-2">
+          <div
+            ref={listRef}
+            className="scroll-slim max-h-[42vh] overflow-y-auto overscroll-contain p-2"
+          >
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -891,29 +896,6 @@ export function GlobalSearch({ compact = false }: { compact?: boolean }) {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="hidden items-center justify-between border-t border-border/60 px-3 py-2 text-[10px] text-muted-foreground md:flex">
-            <span className="flex items-center gap-3">
-              <span>
-                <kbd className="rounded border border-border bg-muted px-1 font-mono">↑↓</kbd>{" "}
-                navigate
-              </span>
-              <span>
-                <kbd className="rounded border border-border bg-muted px-1 font-mono">↵</kbd> open
-              </span>
-              <span>
-                <kbd className="rounded border border-border bg-muted px-1 font-mono">Tab</kbd>{" "}
-                scope
-              </span>
-              <span>
-                <kbd className="rounded border border-border bg-muted px-1 font-mono">Esc</kbd>{" "}
-                close
-              </span>
-            </span>
-            <span>
-              {flat.length} result{flat.length === 1 ? "" : "s"}
-            </span>
           </div>
         </div>
       )}

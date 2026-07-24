@@ -4,7 +4,7 @@ import { invalidatePageCaches } from "@/lib/page-caches";
 const OPEN_SESSION_STATUSES = ["pending", "accepted", "active"] as const;
 const CHAT_SESSION_STATUSES = ["accepted", "active"] as const;
 
-export const SESSION_DURATIONS = [30, 60, 90] as const;
+export const SESSION_DURATIONS = [20, 30, 60] as const;
 export type SessionDuration = (typeof SESSION_DURATIONS)[number];
 
 export function computeSessionCredits(creditsPerHour: number, durationMinutes: SessionDuration) {

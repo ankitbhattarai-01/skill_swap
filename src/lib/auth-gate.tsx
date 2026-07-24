@@ -57,7 +57,7 @@ export function AuthGateProvider({ children }: { children: ReactNode }) {
     <AuthGateContext.Provider value={value}>
       {children}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="glass-strong border-white/10 sm:max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl gradient-brand shadow-glow">
               <Lock className="h-6 w-6 text-white" />

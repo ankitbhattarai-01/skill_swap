@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarIcon, Clock, Loader2, Sparkles } from "lucide-react";
+import { CalendarIcon, Clock } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -10,17 +10,46 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
+import { SuggestionChipsSkeleton } from "@/components/SlotPickerSkeleton";
+import {
+  AVAILABILITY_HORIZON_DAYS,
+  type BusyInterval,
+  fetchMyBusyIntervals,
+  fetchTeacherWindows,
+  peekMyBusyIntervals,
+  peekTeacherWindows,
+} from "@/lib/availability-cache";
 import {
   TIME_STEP_MIN,
   type TeacherWindow,
   computeValidStartsForDay,
   formatPretty,
+  sameLocalDay,
   timeLabel,
 } from "@/lib/availability";
 
-const HORIZON_DAYS = 14;
+// Owned by the cache module, not by this file: a caller that prefetches on
+// behalf of a picker has to ask for the same horizon or it warms the wrong key.
+const HORIZON_DAYS = AVAILABILITY_HORIZON_DAYS;
 const SUGGESTED_COUNT = 3;
+
+/** Local midnight of `d`, as a timestamp. The key every per-day lookup uses. */
+function dayKeyOf(d: Date): number {
+  const key = new Date(d);
+  key.setHours(0, 0, 0, 0);
+  return key.getTime();
+}
+
+// Day half of a suggestion chip. "Today"/"Tomorrow" read faster than a date and
+// keep the chip narrow enough that all SUGGESTED_COUNT chips fit on one row.
+function dayLabel(d: Date): string {
+  const today = new Date();
+  if (sameLocalDay(d, today)) return "Today";
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (sameLocalDay(d, tomorrow)) return "Tomorrow";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
 
 type Props = {
   // When supplied, the picker fetches the teacher's free `teach` windows
@@ -66,13 +95,24 @@ export function TeacherSlotPicker({
   preferAfter,
   compact = false,
 }: Props) {
-  const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>([]);
+  // Seeded straight from the availability cache so a reopened dialog paints its
+  // real slots on the first frame. Without this the panel animated in as a
+  // spinner, then grew by the height of the suggestion chips a moment later —
+  // and because a dialog is centred, growing means re-centring, which is the
+  // jump the user sees.
+  const [teacherWindows, setTeacherWindows] = useState<TeacherWindow[]>(
+    () => (active && teacherId ? peekTeacherWindows(teacherId, HORIZON_DAYS) : undefined) ?? [],
+  );
   // The current user's own committed sessions (as teacher or learner). Blocked
   // from selection so you can't book a slot you're already busy in — the
   // teacher-window fetch only knows the OTHER person's calendar.
-  const [myBusy, setMyBusy] = useState<{ start: number; end: number }[]>([]);
+  const [myBusy, setMyBusy] = useState<BusyInterval[]>(
+    () => (active ? peekMyBusyIntervals(HORIZON_DAYS) : undefined) ?? [],
+  );
   const [showCustom, setShowCustom] = useState(false);
-  const [windowsLoading, setWindowsLoading] = useState(false);
+  const [windowsLoading, setWindowsLoading] = useState(() =>
+    Boolean(active && teacherId && !peekTeacherWindows(teacherId, HORIZON_DAYS)),
+  );
   // Distinguishes "the fetch failed" from "the teacher genuinely has no free
   // times" so we don't tell the learner the teacher is unavailable when it was
   // really a network/RPC error.
@@ -102,40 +142,35 @@ export function TeacherSlotPicker({
 
   // Fetch the teacher's free windows for the next horizon. One fetch per
   // (teacher, active) — duration filtering happens per-render on the client.
+  // Goes through the shared cache, which both de-duplicates the two pickers a
+  // swap dialog mounts side by side and skips the request entirely on a reopen.
   useEffect(() => {
     if (!active || !teacherId) {
       setTeacherWindows([]);
       setWindowsError(false);
+      setWindowsLoading(false);
+      return;
+    }
+    const cached = peekTeacherWindows(teacherId, HORIZON_DAYS);
+    if (cached) {
+      // Same array identity as the seed above, so React bails out of this
+      // render rather than kicking off another pass mid-animation.
+      setTeacherWindows(cached);
+      setWindowsError(false);
+      setWindowsLoading(false);
       return;
     }
     let alive = true;
-    const controller = new AbortController();
-    (async () => {
-      setWindowsLoading(true);
-      setWindowsError(false);
-      const { data, error } = await supabase
-        .rpc("get_teacher_windows", {
-          p_teacher_id: teacherId,
-          p_horizon_days: HORIZON_DAYS,
-        })
-        .abortSignal(controller.signal);
+    setWindowsLoading(true);
+    setWindowsError(false);
+    void fetchTeacherWindows(teacherId, HORIZON_DAYS).then((windows) => {
       if (!alive) return;
-      if (error || !data) {
-        setTeacherWindows([]);
-        setWindowsError(true);
-      } else {
-        setTeacherWindows(
-          data.map((row) => ({
-            start: new Date(row.window_start),
-            end: new Date(row.window_end),
-          })),
-        );
-      }
+      setTeacherWindows(windows ?? []);
+      setWindowsError(windows == null);
       setWindowsLoading(false);
-    })();
+    });
     return () => {
       alive = false;
-      controller.abort();
     };
   }, [active, teacherId, retryNonce]);
 
@@ -147,47 +182,53 @@ export function TeacherSlotPicker({
       setMyBusy([]);
       return;
     }
+    const cached = peekMyBusyIntervals(HORIZON_DAYS);
+    if (cached) {
+      setMyBusy(cached);
+      return;
+    }
     let alive = true;
-    const controller = new AbortController();
-    (async () => {
-      const { data, error } = await supabase
-        .rpc("get_my_busy_intervals", { p_horizon_days: HORIZON_DAYS })
-        .abortSignal(controller.signal);
-      if (!alive) return;
-      setMyBusy(
-        error || !data
-          ? []
-          : data.map((row) => ({
-              start: new Date(row.busy_start).getTime(),
-              end: new Date(row.busy_end).getTime(),
-            })),
-      );
-    })();
+    void fetchMyBusyIntervals(HORIZON_DAYS).then((intervals) => {
+      if (alive) setMyBusy(intervals);
+    });
     return () => {
       alive = false;
-      controller.abort();
     };
   }, [active, retryNonce]);
 
-  // First free start on each of the next N distinct days — surfaced as quick
-  // "Best times" chips, so the suggestions spread across different days
-  // instead of clustering 10 minutes apart on the same one. Recomputed when
-  // duration changes since shorter sessions fit in more places.
-  const suggestedSlots = useMemo<Date[]>(() => {
+  // Every day in the horizon walked exactly once, with the starts that fit this
+  // duration. Previously "best times", "which calendar days are dead" and "what
+  // times can I pick today" each ran their own day loop over the same windows —
+  // three passes, thousands of throwaway Date objects, re-run on every render
+  // caused by the auto-fill below. Now the walk is one memo keyed only on the
+  // windows and the duration, and the three views are cheap filters over it.
+  const dayPlan = useMemo<{ key: number; starts: Date[] }[]>(() => {
     if (!constrainPicker) return [];
-    const out: Date[] = [];
-    const horizonEnd = new Date();
-    horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
+    const out: { key: number; starts: Date[] }[] = [];
     const cursor = new Date();
     cursor.setHours(0, 0, 0, 0);
-    while (cursor <= horizonEnd && out.length < SUGGESTED_COUNT) {
-      const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
-      const first = starts.find((s) => !isSlotBlocked(s.getTime()));
-      if (first) out.push(first);
+    for (let i = 0; i <= HORIZON_DAYS; i++) {
+      out.push({
+        key: cursor.getTime(),
+        starts: computeValidStartsForDay(teacherWindows, cursor, durationMinutes),
+      });
       cursor.setDate(cursor.getDate() + 1);
     }
     return out;
-  }, [constrainPicker, teacherWindows, durationMinutes, isSlotBlocked]);
+  }, [constrainPicker, teacherWindows, durationMinutes]);
+
+  // First free start on each of the next N distinct days — surfaced as quick
+  // "Best times" chips, so the suggestions spread across different days
+  // instead of clustering 10 minutes apart on the same one.
+  const suggestedSlots = useMemo<Date[]>(() => {
+    const out: Date[] = [];
+    for (const day of dayPlan) {
+      if (out.length >= SUGGESTED_COUNT) break;
+      const first = day.starts.find((s) => !isSlotBlocked(s.getTime()));
+      if (first) out.push(first);
+    }
+    return out;
+  }, [dayPlan, isSlotBlocked]);
 
   const scheduleDate = value;
   const scheduleInPast =
@@ -199,27 +240,19 @@ export function TeacherSlotPicker({
   const validStarts = useMemo<Date[]>(() => {
     if (!constrainPicker) return [];
     if (!scheduleDate || Number.isNaN(scheduleDate.getTime())) return [];
-    return computeValidStartsForDay(teacherWindows, scheduleDate, durationMinutes).filter(
-      (s) => !isSlotBlocked(s.getTime()),
-    );
-  }, [constrainPicker, teacherWindows, scheduleDate, durationMinutes, isSlotBlocked]);
+    const day = dayPlan.find((d) => d.key === dayKeyOf(scheduleDate));
+    return (day?.starts ?? []).filter((s) => !isSlotBlocked(s.getTime()));
+  }, [constrainPicker, dayPlan, scheduleDate, isSlotBlocked]);
 
   // Set of local-day timestamps within the horizon that have at least one
   // valid start. Used to gray out dead days in the calendar.
   const validDayKeys = useMemo<Set<number>>(() => {
-    if (!constrainPicker) return new Set();
     const keys = new Set<number>();
-    const horizonEnd = new Date();
-    horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
-    const cursor = new Date();
-    cursor.setHours(0, 0, 0, 0);
-    while (cursor <= horizonEnd) {
-      const starts = computeValidStartsForDay(teacherWindows, cursor, durationMinutes);
-      if (starts.some((s) => !isSlotBlocked(s.getTime()))) keys.add(cursor.getTime());
-      cursor.setDate(cursor.getDate() + 1);
+    for (const day of dayPlan) {
+      if (day.starts.some((s) => !isSlotBlocked(s.getTime()))) keys.add(day.key);
     }
     return keys;
-  }, [constrainPicker, teacherWindows, durationMinutes, isSlotBlocked]);
+  }, [dayPlan, isSlotBlocked]);
 
   const selectedStartMatchesValid =
     !constrainPicker ||
@@ -242,20 +275,16 @@ export function TeacherSlotPicker({
     // consecutive adds then walk across available days instead of stacking
     // later times onto the same day.
     if (preferAfter != null) {
-      const horizonEnd = new Date();
-      horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
-      const cursor = new Date(preferAfter);
-      cursor.setHours(0, 0, 0, 0);
-      cursor.setDate(cursor.getDate() + 1);
-      while (cursor <= horizonEnd) {
-        const first = computeValidStartsForDay(teacherWindows, cursor, durationMinutes).find(
-          (s) => !isSlotBlocked(s.getTime()),
-        );
+      const after = new Date(preferAfter);
+      after.setHours(0, 0, 0, 0);
+      const cutoff = after.getTime();
+      for (const day of dayPlan) {
+        if (day.key <= cutoff) continue;
+        const first = day.starts.find((s) => !isSlotBlocked(s.getTime()));
         if (first) {
           onChange(first);
           return;
         }
-        cursor.setDate(cursor.getDate() + 1);
       }
       // No free day left after the latest slot — fall through to the earliest
       // suggestion so the picker never strands on an invalid value.
@@ -279,62 +308,90 @@ export function TeacherSlotPicker({
     onChange(merged);
   };
 
+  // The full date/time controls only show in non-compact mode, or once the
+  // compact picker's "Custom…" toggle is on.
+  const showFullPicker = !compact || showCustom;
+  // Height is only worth holding open where a message is actually expected:
+  // with a teacher constraining the picker, the echoed date always lands.
+  const reserveStatusLine = constrainPicker && showFullPicker;
+  const statusLine = scheduleInPast ? (
+    <p className="text-destructive">Pick a time in the future.</p>
+  ) : showFullPicker &&
+    constrainPicker &&
+    !windowsLoading &&
+    !windowsError &&
+    scheduleDate != null &&
+    validStarts.length === 0 ? (
+    <p className="text-destructive">
+      Teacher isn't free for a {durationMinutes}-min session on{" "}
+      {scheduleDate.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })}
+      . Pick another day.
+    </p>
+  ) : showFullPicker && scheduleDate && selectedStartMatchesValid ? (
+    <p className="text-muted-foreground">{formatPretty(scheduleDate)}</p>
+  ) : null;
+
   return (
     <div className="space-y-2">
       {teacherId && (
         <div>
           {windowsLoading ? (
-            <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Loading teacher's free times…
-            </p>
+            <SuggestionChipsSkeleton withCustomToggle={compact} />
           ) : suggestedSlots.length > 0 ? (
-            <div className="flex items-start gap-1.5">
-              <span className="inline-flex shrink-0 items-center gap-1 py-1 text-[11px] text-muted-foreground">
-                <Sparkles className="h-3 w-3 text-brand-purple" />
-                Best times:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-              {suggestedSlots.map((d) => {
-                const isSel =
-                  compact && scheduleDate != null && d.getTime() === scheduleDate.getTime();
-                return (
-                  <button
-                    key={d.getTime()}
-                    type="button"
-                    onClick={() => onChange(new Date(d))}
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                      isSel
-                        ? "border-brand-purple bg-brand-purple text-white shadow-sm"
-                        : "border-brand-purple/30 bg-brand-purple/10 text-brand-purple hover:bg-brand-purple/20",
-                    )}
-                  >
-                    {d.toLocaleString(undefined, {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </button>
-                );
-              })}
+            // Label drops above the chips on narrow screens so the 3-up row
+            // keeps the full width there too.
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <span className="shrink-0 text-[11px] text-muted-foreground">Best times:</span>
+              {/* Fixed 3-up row rather than wrapping chips: every suggestion stays
+                  on one line, so the third never drops below the others. */}
+              <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
+                {suggestedSlots.map((d) => {
+                  const isSel = scheduleDate != null && d.getTime() === scheduleDate.getTime();
+                  return (
+                    <button
+                      key={d.getTime()}
+                      type="button"
+                      onClick={() => onChange(new Date(d))}
+                      className={cn(
+                        "min-w-0 rounded-xl border px-1.5 py-1 text-center leading-tight transition-colors",
+                        isSel
+                          ? "border-brand-purple bg-brand-purple text-white shadow-sm"
+                          : "border-brand-purple/30 bg-brand-purple/10 text-brand-purple hover:bg-brand-purple/20",
+                      )}
+                    >
+                      <span className="block truncate text-[11px] font-semibold">
+                        {dayLabel(d)}
+                      </span>
+                      <span
+                        className={cn(
+                          "block truncate text-[10px]",
+                          isSel ? "text-white/80" : "opacity-80",
+                        )}
+                      >
+                        {timeLabel(d)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
               {compact && (
                 <button
                   type="button"
                   onClick={() => setShowCustom((v) => !v)}
                   className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                    "shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                     showCustom
-                      ? "border-white/25 bg-white/10 text-foreground"
-                      : "border-white/10 bg-white/5 text-muted-foreground hover:bg-white/10",
+                      ? "border-brand-purple/40 bg-brand-purple/10 text-foreground"
+                      : "border-border bg-muted text-muted-foreground hover:border-brand-purple/40 hover:text-foreground",
                   )}
                 >
                   Custom…
                 </button>
               )}
-              </div>
             </div>
           ) : windowsError ? (
             <p className="text-xs text-destructive">
@@ -355,142 +412,130 @@ export function TeacherSlotPicker({
         </div>
       )}
 
-      {(!compact || showCustom) && (
-      <div className="grid grid-cols-[1fr_auto] gap-2">
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-left text-sm outline-none transition-colors hover:border-brand-purple/40 hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-brand-purple/40"
+      {showFullPicker && (
+        <div className="grid grid-cols-[1fr_auto] gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2.5 text-left text-sm outline-none transition-colors hover:border-brand-purple/40 hover:bg-brand-purple/[0.07] focus-visible:ring-2 focus-visible:ring-brand-purple/40"
+              >
+                <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                {scheduleDate && !Number.isNaN(scheduleDate.getTime()) ? (
+                  <span>
+                    {scheduleDate.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Pick a date</span>
+                )}
+              </button>
+            </PopoverTrigger>
+            {/* No backdrop-blur here: --popover is 95%+ opaque, so the blur was
+              invisible but still forced the browser to re-read and re-filter
+              everything behind the panel on every frame of its open animation. */}
+            <PopoverContent
+              className="w-auto overflow-hidden rounded-2xl border border-border bg-popover p-0 shadow-glow"
+              align="start"
             >
-              <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-              {scheduleDate && !Number.isNaN(scheduleDate.getTime()) ? (
-                <span>
-                  {scheduleDate.toLocaleDateString(undefined, {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">Pick a date</span>
-              )}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            className="w-auto overflow-hidden rounded-2xl border border-white/10 bg-popover/95 p-0 shadow-glow backdrop-blur-xl"
-            align="start"
-          >
-            <Calendar
-              className="bg-transparent"
-              mode="single"
-              selected={scheduleDate ?? undefined}
-              onSelect={(day) => {
-                if (!day) return;
-                const merged = new Date(day);
-                if (constrainPicker) {
-                  // Snap time to the first valid start on the chosen day so the
-                  // time field never holds an invalid value.
-                  const starts = computeValidStartsForDay(
-                    teacherWindows,
-                    merged,
-                    durationMinutes,
-                  ).filter((s) => !isSlotBlocked(s.getTime()));
-                  if (starts.length > 0) {
-                    merged.setHours(starts[0].getHours(), starts[0].getMinutes(), 0, 0);
+              <Calendar
+                className="bg-transparent"
+                mode="single"
+                selected={scheduleDate ?? undefined}
+                onSelect={(day) => {
+                  if (!day) return;
+                  const merged = new Date(day);
+                  if (constrainPicker) {
+                    // Snap time to the first valid start on the chosen day so the
+                    // time field never holds an invalid value.
+                    const starts = (
+                      dayPlan.find((d) => d.key === dayKeyOf(merged))?.starts ?? []
+                    ).filter((s) => !isSlotBlocked(s.getTime()));
+                    if (starts.length > 0) {
+                      merged.setHours(starts[0].getHours(), starts[0].getMinutes(), 0, 0);
+                    } else {
+                      merged.setHours(0, 0, 0, 0);
+                    }
                   } else {
-                    merged.setHours(0, 0, 0, 0);
+                    const base = scheduleDate ?? new Date();
+                    merged.setHours(base.getHours(), base.getMinutes(), 0, 0);
                   }
-                } else {
-                  const base = scheduleDate ?? new Date();
-                  merged.setHours(base.getHours(), base.getMinutes(), 0, 0);
-                }
-                onChange(merged);
-              }}
-              disabled={(date) => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                if (date < today) return true;
-                if (constrainPicker) {
-                  const key = new Date(date);
-                  key.setHours(0, 0, 0, 0);
-                  return !validDayKeys.has(key.getTime());
-                }
-                return false;
-              }}
-              initialFocus
-            />
-          </PopoverContent>
-        </Popover>
+                  onChange(merged);
+                }}
+                disabled={(date) => {
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  if (date < today) return true;
+                  if (constrainPicker) return !validDayKeys.has(dayKeyOf(date));
+                  return false;
+                }}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
 
-        <Select
-          value={
-            scheduleDate && !Number.isNaN(scheduleDate.getTime())
-              ? `${String(scheduleDate.getHours()).padStart(2, "0")}:${String(scheduleDate.getMinutes()).padStart(2, "0")}`
-              : ""
-          }
-          onValueChange={(val) => {
-            const [hh, mm] = val.split(":").map(Number);
-            applyTime(hh, mm);
-          }}
-          disabled={constrainPicker && validStarts.length === 0}
-        >
-          <SelectTrigger className="h-auto min-w-[120px] rounded-xl border-white/10 bg-white/5 px-3 py-2.5 text-sm hover:border-brand-purple/40 hover:bg-white/[0.08]">
-            <span className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <SelectValue placeholder="Time" />
-            </span>
-          </SelectTrigger>
-          <SelectContent className="max-h-64 rounded-xl border-white/10">
-            {constrainPicker
-              ? validStarts.map((t) => {
-                  const v = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-                  return (
-                    <SelectItem key={v} value={v}>
-                      {timeLabel(t)}
-                    </SelectItem>
-                  );
-                })
-              : // Fallback: 10-min options across the day when we have no
-                // teacher-availability constraint to apply.
-                Array.from({ length: (24 * 60) / TIME_STEP_MIN }).map((_, i) => {
-                  const total = i * TIME_STEP_MIN;
-                  const h = Math.floor(total / 60);
-                  const m = total % 60;
-                  const v = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-                  const period = h < 12 ? "AM" : "PM";
-                  const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
-                  return (
-                    <SelectItem key={v} value={v}>
-                      {`${hh}:${String(m).padStart(2, "0")} ${period}`}
-                    </SelectItem>
-                  );
-                })}
-          </SelectContent>
-        </Select>
-      </div>
+          <Select
+            value={
+              scheduleDate && !Number.isNaN(scheduleDate.getTime())
+                ? `${String(scheduleDate.getHours()).padStart(2, "0")}:${String(scheduleDate.getMinutes()).padStart(2, "0")}`
+                : ""
+            }
+            onValueChange={(val) => {
+              const [hh, mm] = val.split(":").map(Number);
+              applyTime(hh, mm);
+            }}
+            disabled={constrainPicker && validStarts.length === 0}
+          >
+            <SelectTrigger className="h-auto min-w-[120px] rounded-xl border-border bg-muted px-3 py-2.5 text-sm hover:border-brand-purple/40 hover:bg-brand-purple/[0.07]">
+              <span className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <SelectValue placeholder="Time" />
+              </span>
+            </SelectTrigger>
+            <SelectContent className="max-h-64 rounded-xl border-border">
+              {constrainPicker
+                ? validStarts.map((t) => {
+                    const v = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+                    return (
+                      <SelectItem key={v} value={v}>
+                        {timeLabel(t)}
+                      </SelectItem>
+                    );
+                  })
+                : // Fallback: 10-min options across the day when we have no
+                  // teacher-availability constraint to apply.
+                  Array.from({ length: (24 * 60) / TIME_STEP_MIN }).map((_, i) => {
+                    const total = i * TIME_STEP_MIN;
+                    const h = Math.floor(total / 60);
+                    const m = total % 60;
+                    const v = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                    const period = h < 12 ? "AM" : "PM";
+                    const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                    return (
+                      <SelectItem key={v} value={v}>
+                        {`${hh}:${String(m).padStart(2, "0")} ${period}`}
+                      </SelectItem>
+                    );
+                  })}
+            </SelectContent>
+          </Select>
+        </div>
       )}
 
-      {(!compact || showCustom) && scheduleDate && selectedStartMatchesValid && !scheduleInPast && (
-        <p className="text-xs text-muted-foreground">{formatPretty(scheduleDate)}</p>
+      {/* One status region instead of three sibling paragraphs, and — whenever
+          the full picker is on screen — one line of height held open for it
+          from the start. The echoed date lands here a beat after the windows
+          load and the auto-fill runs; as a conditional paragraph, its arrival
+          grew the panel and re-centred it, which is the second bump you felt
+          after opening a booking dialog. Reserved, the text just fades in. */}
+      {(reserveStatusLine || statusLine) && (
+        <div className={cn("text-xs", reserveStatusLine && "min-h-4")} aria-live="polite">
+          {statusLine}
+        </div>
       )}
-      {scheduleInPast && <p className="text-xs text-destructive">Pick a time in the future.</p>}
-      {(!compact || showCustom) &&
-        constrainPicker &&
-        !windowsLoading &&
-        !windowsError &&
-        scheduleDate != null &&
-        validStarts.length === 0 && (
-          <p className="text-xs text-destructive">
-            Teacher isn't free for a {durationMinutes}-min session on{" "}
-            {scheduleDate.toLocaleDateString(undefined, {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-            })}
-            . Pick another day.
-          </p>
-        )}
     </div>
   );
 }

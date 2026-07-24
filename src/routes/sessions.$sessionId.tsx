@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,31 +12,21 @@ import { canJoinSession, describeJoinWindow } from "@/lib/sessions";
 import { isUuid } from "@/lib/uuid";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { RescheduleSection } from "@/components/RescheduleSection";
+import { SessionNotesPanel } from "@/components/SessionNotesPanel";
 import type { Enums } from "@/integrations/supabase/types";
-import {
-  ArrowLeft,
-  CalendarClock,
-  Check,
-  Clock,
-  Coins,
-  GraduationCap,
-  Layers,
-  Loader2,
-  MessageCircle,
-  ShieldAlert,
-  Sparkles,
-  Users,
-  Video,
-  X,
-} from "lucide-react";
+// Same rule as the sessions list: the only icons left are the back arrow and
+// the join button. A per-card icon made every section look machine-stamped.
+import { ArrowLeft, Loader2, Video } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
 import { playCancelChime } from "@/lib/sounds";
 import { markSelfAction } from "@/lib/self-action";
+import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
 import { useInvalidateMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import { querySessionById, type RawSessionRow as SharedRawSessionRow } from "@/lib/session-queries";
+import { SESSION_DETAIL_CACHE_PREFIX } from "@/lib/page-caches";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   head: () => ({ meta: [{ title: "Session - SkillSwap" }] }),
@@ -83,6 +73,51 @@ async function querySessionRow(sessionId: string) {
   return row as RawSessionRow | null;
 }
 
+// Same trick dashboard/explore/credits use: keep the last successful payload in
+// sessionStorage so re-entering a session paints instantly instead of sitting
+// on the skeleton for the whole fetch. The fetch still runs on every mount —
+// the snapshot only decides whether the user stares at placeholders while it
+// does. Scoped to the viewer so a cached payload can never render for someone
+// who isn't a participant.
+const SESSION_DETAIL_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
+type SessionDetailCache = {
+  savedAt: number;
+  session: SessionRow;
+  planSiblings: PlanSibling[];
+};
+
+function sessionDetailCacheKey(sessionId: string, userId: string) {
+  return `${SESSION_DETAIL_CACHE_PREFIX}-${userId}-${sessionId}`;
+}
+
+function getSessionDetailCache(sessionId: string, userId: string): SessionDetailCache | null {
+  try {
+    const raw = sessionStorage.getItem(sessionDetailCacheKey(sessionId, userId));
+    if (!raw) return null;
+    const cache = JSON.parse(raw) as SessionDetailCache;
+    if (Date.now() - cache.savedAt > SESSION_DETAIL_CACHE_MAX_AGE_MS) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionDetailCache(
+  sessionId: string,
+  userId: string,
+  cache: Omit<SessionDetailCache, "savedAt">,
+) {
+  try {
+    sessionStorage.setItem(
+      sessionDetailCacheKey(sessionId, userId),
+      JSON.stringify({ ...cache, savedAt: Date.now() }),
+    );
+  } catch {
+    // Cache is only a speed boost; ignore quota/private-mode failures.
+  }
+}
+
 function SessionPage() {
   const { sessionId } = Route.useParams();
   const { user, loading: authLoading } = useAuth();
@@ -93,6 +128,11 @@ function SessionPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [scheduleDraft, setScheduleDraft] = useState("");
+  // Do we already have something on screen? Drives two things: whether a load
+  // shows the skeleton at all, and whether a stale in-flight response is still
+  // allowed to win (see loadTokenRef).
+  const hasSessionRef = useRef(false);
+  const loadTokenRef = useRef(0);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -110,9 +150,30 @@ function SessionPage() {
       navigate({ to: "/dashboard" });
       return;
     }
-    setLoading(true);
+    const token = ++loadTokenRef.current;
+    const isCurrent = () => token === loadTokenRef.current;
+
+    // Paint the last known payload first. Everything below still runs — this
+    // only decides whether the wait happens behind a skeleton or behind real
+    // content. It also lets the two child cards (RescheduleSection,
+    // SessionNotesPanel) mount and start their own queries immediately rather
+    // than after the whole load resolves.
+    if (!hasSessionRef.current) {
+      const cached = getSessionDetailCache(sessionId, user.id);
+      if (cached) {
+        setSession(cached.session);
+        setPlanSiblings(cached.planSiblings);
+        hasSessionRef.current = true;
+      }
+    }
+    // Never blank out content we're already showing — a refetch after
+    // accept/cancel/reschedule used to drop the whole page back to the
+    // skeleton and read as a full page reload.
+    setLoading(!hasSessionRef.current);
+
     try {
       const row = await querySessionRow(sessionId);
+      if (!isCurrent()) return;
 
       if (!row) {
         toast.error("Session not found");
@@ -126,10 +187,33 @@ function SessionPage() {
         return;
       }
 
-      const { data: people } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("id", [row.learner_id, row.teacher_id]);
+      // Both follow-ups depend on the row but not on each other, so issue them
+      // together. Awaiting the profiles query before even starting the sibling
+      // one turned this into a three-request chain.
+      //
+      // Promise.resolve() is load-bearing: a PostgrestFilterBuilder is lazy and
+      // only sends its request when something calls .then(). Just assigning the
+      // builders would leave the sibling query sitting idle behind the profiles
+      // await, i.e. exactly the serial behaviour we're removing.
+      const peoplePromise = Promise.resolve(
+        supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", [row.learner_id, row.teacher_id]),
+      );
+      // Sibling sessions in the same booking plan, for the progress card.
+      const siblingsPromise = row.batch_id
+        ? Promise.resolve(
+            supabase
+              .from("sessions")
+              .select("id, scheduled_at, status")
+              .eq("batch_id", row.batch_id)
+              .order("scheduled_at", { ascending: true }),
+          )
+        : null;
+
+      const { data: people } = await peoplePromise;
+      if (!isCurrent()) return;
       const names = new Map(
         (people ?? []).map((person) => [person.id, person.full_name ?? "Student"]),
       );
@@ -146,33 +230,42 @@ function SessionPage() {
             })
           : row.meet_link;
 
-      setSession({
+      const nextSession: SessionRow = {
         ...row,
         batch_id: row.batch_id ?? null,
         meet_link: derivedLink,
         learnerName: names.get(row.learner_id) ?? "Student",
         teacherName: names.get(row.teacher_id) ?? "Student",
-      });
-
-      // Sibling sessions in the same booking plan, for the progress card.
-      if (row.batch_id) {
-        const { data: siblings } = await supabase
-          .from("sessions")
-          .select("id, scheduled_at, status")
-          .eq("batch_id", row.batch_id)
-          .order("scheduled_at", { ascending: true });
-        setPlanSiblings((siblings ?? []) as PlanSibling[]);
-      } else {
-        setPlanSiblings([]);
-      }
+      };
+      setSession(nextSession);
+      hasSessionRef.current = true;
+      // Everything the page needs to render is in hand — the plan card is the
+      // only thing still outstanding, and it's optional, so don't hold the
+      // first paint for it.
       setLoading(false);
+
+      const nextSiblings = siblingsPromise
+        ? (((await siblingsPromise).data ?? []) as PlanSibling[])
+        : [];
+      if (!isCurrent()) return;
+      setPlanSiblings(nextSiblings);
+      setSessionDetailCache(sessionId, user.id, {
+        session: nextSession,
+        planSiblings: nextSiblings,
+      });
     } catch (error) {
+      if (!isCurrent()) return;
       toastError(error, "Could not load session");
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // A different session id means the on-screen payload belongs to the old
+    // one, so the skeleton is correct again until the new row lands.
+    hasSessionRef.current = false;
+    setSession(null);
+    setPlanSiblings([]);
     void loadSession();
     // user?.id (not user) — auth token refreshes rotate the user object
     // reference without changing the user; depending on the object re-ran
@@ -237,6 +330,8 @@ function SessionPage() {
       if (error) return toast.error(error.message);
       markSelfAction(session.id, ["session_completed"]);
       void invalidateCreditBalance();
+      // Completion changes streak/momentum signals — regenerate suggestions.
+      void invalidateAiSuggestionsCache();
       // During pending_review this routes through the attendance rule, so the
       // outcome might be a refund (no-show) rather than a transfer. Use a
       // neutral success message and let the history page show the detail.
@@ -362,6 +457,14 @@ function SessionPage() {
   const isAcceptedSession = session.status === "accepted" || session.status === "active";
   const isInReview = session.status === "pending_review";
   const isDisputed = session.status === "disputed";
+  // Finished for good — nothing left to join, schedule, or act on. These
+  // sessions previously still rendered the live "Video room" card ("your
+  // secure video room is ready") which is both wrong and the main reason the
+  // completed view read as a stack of empty white boxes.
+  const isFinished =
+    session.status === "completed" ||
+    session.status === "cancelled" ||
+    session.status === "rejected";
   // Early-release flow during accepted/active: only the learner may complete
   // before the scheduled end, AND only after the session's halfway point
   // (scheduled_at + duration/2) has passed. The server
@@ -394,7 +497,15 @@ function SessionPage() {
   const planPct = isPlan ? Math.round((planCompleted / planSiblings.length) * 100) : 0;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="relative min-h-screen flex flex-col">
+      {/* Ambient page wash. Without it the white glass cards sit on a plain
+          white page and the whole detail view reads as a blank sheet — most
+          noticeable on completed sessions, where the cards carry little
+          content. Light mode only; dark mode gets its depth from surfaces. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 dark:hidden bg-[radial-gradient(at_10%_0%,rgba(124,58,237,0.10),transparent_45%),radial-gradient(at_90%_5%,rgba(16,185,129,0.09),transparent_45%),radial-gradient(at_55%_95%,rgba(167,139,250,0.09),transparent_50%)]"
+      />
       <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6">
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
@@ -413,38 +524,24 @@ function SessionPage() {
                     All sessions
                   </Link>
                 </Button>
-                <h1 className="text-3xl md:text-4xl font-bold leading-tight">
-                  <span className="gradient-brand-text">
-                    {session.skills?.name ?? "Skill session"}
-                  </span>
+                <h1 className="text-3xl font-semibold leading-tight tracking-tight md:text-4xl">
+                  {session.skills?.name ?? "Skill session"}
                 </h1>
                 <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-                  <span className="font-medium text-foreground/80">{session.learnerName}</span>{" "}
-                  learns from{" "}
-                  <span className="font-medium text-foreground/80">{session.teacherName}</span>
+                  <span className="font-medium text-foreground">{session.learnerName}</span> is
+                  learning from{" "}
+                  <span className="font-medium text-foreground">{session.teacherName}</span>
                 </p>
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  {scheduledLabel && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                      <CalendarClock className="h-3.5 w-3.5 text-brand-purple" />
-                      {scheduledLabel}
-                    </span>
-                  )}
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                    <Clock className="h-3.5 w-3.5 text-brand-cyan" />
-                    {session.duration_minutes} min
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                    <Coins className="h-3.5 w-3.5 text-amber-400" />
-                    {session.credits} credits
-                  </span>
-                  {isPlan && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-purple/25 bg-brand-purple/10 px-2.5 py-1 text-brand-purple">
-                      <Layers className="h-3.5 w-3.5" />
-                      Plan · {planCompleted}/{planSiblings.length} done
-                    </span>
-                  )}
-                </div>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {[
+                    scheduledLabel ?? "No time set yet",
+                    `${session.duration_minutes} min`,
+                    `${session.credits} credits`,
+                    isPlan ? `${planCompleted} of ${planSiblings.length} in this plan done` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
               </div>
               <Badge
                 className={cn(
@@ -467,21 +564,13 @@ function SessionPage() {
         <div className="grid lg:grid-cols-3 gap-4">
           <section className="lg:col-span-2 space-y-4">
             {isPlan && (
-              <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
-                <div className="mb-4 flex items-center gap-3">
-                  <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
-                    <Layers className="h-4 w-4 text-brand-purple" />
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <h2 className="text-lg font-semibold leading-tight">Learning plan</h2>
-                    <span className="text-xs text-muted-foreground">
-                      {planCompleted}/{planSiblings.length} completed
-                    </span>
-                  </div>
-                </div>
-                <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+              <div className="animate-fade-up glass-gradient rounded-3xl border border-white/10 p-6 md:p-7">
+                <SectionTitle note={`${planCompleted} of ${planSiblings.length} done`}>
+                  Learning plan
+                </SectionTitle>
+                <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan transition-all"
+                    className="h-full rounded-full bg-primary transition-all"
                     style={{ width: `${planPct}%` }}
                   />
                 </div>
@@ -494,7 +583,7 @@ function SessionPage() {
                         key={sibling.id}
                         className={cn(
                           "flex items-center justify-between gap-3 px-3 py-2.5",
-                          isCurrent && "bg-brand-purple/10",
+                          isCurrent && "bg-muted/60",
                         )}
                       >
                         <Link
@@ -517,7 +606,9 @@ function SessionPage() {
                                 })
                               : "Unscheduled"}
                             {isCurrent && (
-                              <span className="ml-1.5 text-xs text-brand-purple">· this one</span>
+                              <span className="ml-1.5 text-xs text-muted-foreground">
+                                · this one
+                              </span>
                             )}
                           </span>
                         </Link>
@@ -535,63 +626,33 @@ function SessionPage() {
                 </ul>
               </div>
             )}
-            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
-              <div className="mb-5 flex items-center gap-3">
-                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
-                  <Sparkles className="h-4 w-4 text-brand-purple" />
-                </div>
-                <h2 className="text-lg font-semibold leading-tight">Session details</h2>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <InfoBlock
-                  label="Learner"
-                  value={session.learnerName}
-                  icon={<GraduationCap className="h-4 w-4 text-brand-cyan" />}
-                  tone="cyan"
-                />
-                <InfoBlock
-                  label="Teacher"
-                  value={session.teacherName}
-                  icon={<Users className="h-4 w-4 text-brand-purple" />}
-                  tone="purple"
-                />
-                <InfoBlock
-                  label="Skill"
-                  value={session.skills?.name ?? "Skill"}
-                  icon={<Sparkles className="h-4 w-4 text-brand-purple" />}
-                  tone="purple"
-                />
-                <InfoBlock
-                  label="Duration"
-                  value={`${session.duration_minutes} min`}
-                  icon={<Clock className="h-4 w-4 text-brand-cyan" />}
-                  tone="cyan"
-                />
-                <InfoBlock
-                  label="Credits"
-                  value={`${session.credits} credits`}
-                  icon={<Coins className="h-4 w-4 text-amber-400" />}
-                  tone="amber"
-                />
-              </div>
+            <div className="animate-fade-up glass-gradient rounded-3xl border border-white/10 p-6 md:p-7">
+              <SectionTitle>Session details</SectionTitle>
+              <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+                <Field label="Learner" value={session.learnerName} />
+                <Field label="Teacher" value={session.teacherName} />
+                <Field label="Skill" value={session.skills?.name ?? "Skill"} />
+                <Field label="Duration" value={`${session.duration_minutes} min`} />
+                <Field label="Credits" value={`${session.credits} credits`} />
+                {session.skills?.category && (
+                  <Field label="Category" value={session.skills.category} />
+                )}
+              </dl>
             </div>
 
-            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
-                  <CalendarClock className="h-4 w-4 text-brand-purple" />
-                </div>
-                <h2 className="text-lg font-semibold leading-tight">Schedule</h2>
-              </div>
+            <div className="animate-fade-up glass-gradient rounded-3xl border border-white/10 p-6 md:p-7">
+              <SectionTitle>{isFinished ? "When it happened" : "Schedule"}</SectionTitle>
               <p className="text-sm text-muted-foreground">
                 {session.scheduled_at
                   ? new Date(session.scheduled_at).toLocaleString(undefined, {
                       dateStyle: "full",
                       timeStyle: "short",
                     })
-                  : isTeacher
-                    ? "Pick a date and time to let the learner know when to join."
-                    : "The teacher hasn't scheduled this session yet."}
+                  : isFinished
+                    ? "This session was never scheduled."
+                    : isTeacher
+                      ? "Pick a date and time to let the learner know when to join."
+                      : "The teacher hasn't scheduled this session yet."}
               </p>
               {/* Direct schedule edit only on pending sessions — once accepted,
                   changes must go through the two-sided propose_reschedule flow. */}
@@ -631,300 +692,278 @@ function SessionPage() {
               )}
             </div>
 
-            <div className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-cyan/15">
-                  <Video className="h-4 w-4 text-brand-cyan" />
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-lg font-semibold leading-tight">Video Room</h2>
-                  <span className="text-xs text-muted-foreground">Jitsi</span>
-                </div>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {session.meet_link
-                  ? "Your secure video room is ready."
-                  : session.status === "pending"
-                    ? "Waiting for the teacher to accept before creating the video room."
-                    : "The video room will be created automatically when available."}
-              </p>
-              {isAcceptedSession &&
-                (getVideoRoomUrl({
-                  link: session.meet_link,
-                  sessionId: session.id,
-                  skillName: session.skills?.name,
-                }) ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {joinAllowed ? (
-                      <Button variant="hero" asChild>
-                        <Link
-                          to="/video/$sessionId"
-                          preload="intent"
-                          params={{ sessionId: session.id }}
-                        >
+            {/* Hidden once the session is over — meet_link survives completion,
+                so this card used to claim the room was "ready" for sessions
+                that had already ended. */}
+            {!isFinished && (
+              <div className="animate-fade-up glass-gradient rounded-3xl border border-white/10 p-6 md:p-7">
+                <SectionTitle>Video room</SectionTitle>
+                <p className="text-sm text-muted-foreground">
+                  {session.meet_link
+                    ? "Your room is ready. It opens shortly before the start time."
+                    : session.status === "pending"
+                      ? "A room appears here once the teacher accepts."
+                      : "A room will be set up for you automatically."}
+                </p>
+                {isAcceptedSession &&
+                  (getVideoRoomUrl({
+                    link: session.meet_link,
+                    sessionId: session.id,
+                    skillName: session.skills?.name,
+                  }) ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {joinAllowed ? (
+                        <Button variant="hero" asChild>
+                          <Link
+                            to="/video/$sessionId"
+                            preload="intent"
+                            params={{ sessionId: session.id }}
+                          >
+                            <Video className="h-4 w-4" />
+                            Join session
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button variant="hero" disabled title={joinHint ?? "Not in session window"}>
                           <Video className="h-4 w-4" />
-                          Join Session
-                        </Link>
-                      </Button>
-                    ) : (
-                      <Button variant="hero" disabled title={joinHint ?? "Not in session window"}>
-                        <Video className="h-4 w-4" />
-                        {joinHint ?? "Join Session"}
-                      </Button>
-                    )}
-                  </div>
-                ) : (
+                          {joinHint ?? "Join session"}
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      variant="hero"
+                      className="mt-4"
+                      onClick={() =>
+                        toast.error("Video room is unavailable. Try opening the session again.")
+                      }
+                    >
+                      <Video className="h-4 w-4" />
+                      Join session
+                    </Button>
+                  ))}
+              </div>
+            )}
+
+            <aside className="animate-fade-up glass-gradient rounded-3xl border border-white/10 p-6 md:p-7 space-y-3">
+              <SectionTitle className="mb-4">Actions</SectionTitle>
+              {isPendingSwap && (
+                <div className="rounded-xl border border-brand-purple/25 bg-brand-purple/[0.06] px-4 py-3 text-sm">
+                  <p className="font-medium">This is a skill swap.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Accept or decline both sides at once from the Skill swaps card on your{" "}
+                    <Link to="/dashboard" className="text-brand-purple hover:underline">
+                      dashboard
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+              {canRespondToPending && (
+                <>
                   <Button
                     variant="hero"
-                    className="mt-4"
-                    onClick={() =>
-                      toast.error("Video room is unavailable. Try opening the session again.")
-                    }
+                    className="w-full"
+                    onClick={acceptSession}
+                    disabled={busy === "accept"}
                   >
-                    <Video className="h-4 w-4" />
-                    Join Session
+                    {busy === "accept" && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Accept
                   </Button>
-                ))}
-            </div>
-          </section>
-
-          <aside className="animate-fade-up glass rounded-3xl border border-white/10 p-6 md:p-7 space-y-3 lg:sticky lg:top-6 h-fit">
-            <div className="mb-2 flex items-center gap-3">
-              <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand-purple/15">
-                <ShieldAlert className="h-4 w-4 text-brand-purple" />
-              </div>
-              <h2 className="text-lg font-semibold leading-tight">Actions</h2>
-            </div>
-            {isPendingSwap && (
-              <div className="rounded-xl border border-brand-purple/25 bg-brand-purple/[0.06] px-4 py-3 text-sm">
-                <p className="font-medium">This is a skill swap.</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Accept or decline both sides at once from the Skill swaps card on your{" "}
-                  <Link to="/dashboard" className="text-brand-purple hover:underline">
-                    dashboard
-                  </Link>
-                  .
-                </p>
-              </div>
-            )}
-            {canRespondToPending && (
-              <>
-                <Button
-                  variant="hero"
-                  className="w-full"
-                  onClick={acceptSession}
-                  disabled={busy === "accept"}
-                >
-                  {busy === "accept" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4" />
-                  )}
-                  Accept
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={rejectSession}
-                  disabled={Boolean(busy)}
-                >
-                  <X className="h-4 w-4" />
-                  Reject
-                </Button>
-              </>
-            )}
-            {canCancelPending && (
-              <ConfirmAction
-                title="Cancel this pending session?"
-                description="The other person will no longer see this pending session. You can create a new one anytime."
-                confirmLabel="Cancel"
-                cancelLabel="Keep it"
-                destructive
-                onConfirm={cancelSession}
-              >
-                <Button variant="outline" className="w-full" disabled={busy === "cancel"}>
-                  {busy === "cancel" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <X className="h-4 w-4" />
-                  )}
-                  Cancel Request
-                </Button>
-              </ConfirmAction>
-            )}
-            {(isAcceptedSession || isInReview || isDisputed) && (
-              <Button variant="outline" className="w-full" asChild>
-                <Link to="/messages" search={{ s: session.id }}>
-                  <MessageCircle className="h-4 w-4" />
-                  Open Chat
-                </Link>
-              </Button>
-            )}
-            {isInReview && (
-              <>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={rejectSession}
+                    disabled={Boolean(busy)}
+                  >
+                    Decline
+                  </Button>
+                </>
+              )}
+              {canCancelPending && (
                 <ConfirmAction
-                  title="Confirm this session is settled?"
-                  description={
-                    "We'll release escrow based on who attended the call. If both showed up, the teacher receives the credits. " +
-                    "If someone didn't show, you'll be refunded automatically."
-                  }
-                  confirmLabel="All good, settle now"
+                  title="Cancel this pending session?"
+                  description="The other person will no longer see this pending session. You can create a new one anytime."
+                  confirmLabel="Cancel"
+                  cancelLabel="Keep it"
+                  destructive
+                  onConfirm={cancelSession}
+                >
+                  <Button variant="outline" className="w-full" disabled={busy === "cancel"}>
+                    {busy === "cancel" && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Cancel request
+                  </Button>
+                </ConfirmAction>
+              )}
+              {(isAcceptedSession || isInReview || isDisputed) && (
+                <Button variant="outline" className="w-full" asChild>
+                  <Link to="/messages" search={{ s: session.id }}>
+                    Message {isTeacher ? session.learnerName : session.teacherName}
+                  </Link>
+                </Button>
+              )}
+              {isInReview && (
+                <>
+                  <ConfirmAction
+                    title="Confirm this session is settled?"
+                    description={
+                      "We'll release escrow based on who attended the call. If both showed up, the teacher receives the credits. " +
+                      "If someone didn't show, you'll be refunded automatically."
+                    }
+                    confirmLabel="All good, settle now"
+                    onConfirm={completeSession}
+                  >
+                    <Button variant="hero" className="w-full" disabled={busy === "complete"}>
+                      {busy === "complete" && <Loader2 className="h-4 w-4 animate-spin" />}
+                      All good, settle it
+                    </Button>
+                  </ConfirmAction>
+                  <ConfirmAction
+                    title="Flag this session for review?"
+                    description={
+                      "Escrow stays frozen until a moderator reviews the case. Please also file a report so admins have context."
+                    }
+                    confirmLabel="Flag for review"
+                    cancelLabel="Never mind"
+                    destructive
+                    onConfirm={disputeSession}
+                  >
+                    <Button variant="outline" className="w-full" disabled={busy === "dispute"}>
+                      {busy === "dispute" && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Something went wrong
+                    </Button>
+                  </ConfirmAction>
+                  <p className="text-xs text-muted-foreground">
+                    We&apos;ll auto-settle this session in 24h if no one acts. Outcome is based on
+                    attendance.
+                  </p>
+                </>
+              )}
+              {isDisputed && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                  This session is frozen pending admin review. Credits stay in escrow until
+                  resolved.
+                </div>
+              )}
+              {!isSwap &&
+                isAcceptedSession &&
+                !isTeacher &&
+                !earlyReleaseUnlocked &&
+                earlyReleaseUnlockAt && (
+                  <p className="text-xs text-muted-foreground">
+                    Early release becomes available at{" "}
+                    {new Date(earlyReleaseUnlockAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}{" "}
+                    (halfway through the planned {session.duration_minutes} min), and only if both
+                    of you have spent at least that much time in the video room. Otherwise credits
+                    release automatically after the scheduled end.
+                  </p>
+                )}
+              {canEarlyRelease && (
+                <ConfirmAction
+                  title="Release credits to your teacher now?"
+                  description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room, otherwise the release will be blocked and credits will release automatically once the session wraps up.`}
+                  confirmLabel="Release now"
                   onConfirm={completeSession}
                 >
                   <Button variant="hero" className="w-full" disabled={busy === "complete"}>
                     {busy === "complete" && <Loader2 className="h-4 w-4 animate-spin" />}
-                    <Check className="h-4 w-4" />
-                    All Good
+                    Release credits now
                   </Button>
                 </ConfirmAction>
+              )}
+              {isAcceptedSession && (
                 <ConfirmAction
-                  title="Flag this session for review?"
-                  description={
-                    "Escrow stays frozen until a moderator reviews the case. Please also file a report so admins have context."
+                  title={
+                    isSwap
+                      ? "Cancel this skill swap?"
+                      : sessionStartPassed
+                        ? "End this session?"
+                        : "Cancel this session?"
                   }
-                  confirmLabel="Flag for review"
-                  cancelLabel="Never mind"
+                  description={
+                    isSwap
+                      ? "This session is one half of a skill swap, so cancelling calls off both linked sessions. No credits are involved."
+                      : sessionStartPassed
+                        ? `The session has already started, so the ${session.credits} escrowed credits are settled based on who attended the call — they may transfer to the teacher, be refunded, or split. There's no blanket refund after the start time.`
+                        : `Cancelling will refund the ${session.credits} credits held in escrow back to the learner. You can re-request later if plans change.`
+                  }
+                  confirmLabel={
+                    isSwap
+                      ? "Cancel swap"
+                      : sessionStartPassed
+                        ? "End and settle"
+                        : "Cancel session"
+                  }
+                  cancelLabel="Keep it"
                   destructive
-                  onConfirm={disputeSession}
+                  onConfirm={cancelSession}
                 >
-                  <Button variant="outline" className="w-full" disabled={busy === "dispute"}>
-                    {busy === "dispute" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <X className="h-4 w-4" />
-                    )}
-                    Something's Wrong
+                  <Button variant="outline" className="w-full" disabled={busy === "cancel"}>
+                    {busy === "cancel" && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {isSwap ? "Cancel swap" : sessionStartPassed ? "End session" : "Cancel session"}
                   </Button>
                 </ConfirmAction>
-                <p className="text-xs text-muted-foreground">
-                  We&apos;ll auto-settle this session in 24h if no one acts. Outcome is based on
-                  attendance.
-                </p>
-              </>
-            )}
-            {isDisputed && (
-              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                This session is frozen pending admin review. Credits stay in escrow until resolved.
-              </div>
-            )}
-            {!isSwap && isAcceptedSession && !isTeacher && !earlyReleaseUnlocked && earlyReleaseUnlockAt && (
+              )}
+              {user?.id && (
+                <ReportDialog
+                  reportedUserId={isTeacher ? session.learner_id : session.teacher_id}
+                  sessionId={session.id}
+                  label="Report"
+                />
+              )}
               <p className="text-xs text-muted-foreground">
-                Early release becomes available at{" "}
-                {new Date(earlyReleaseUnlockAt).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}{" "}
-                (halfway through the planned {session.duration_minutes} min), and only if both of
-                you have spent at least that much time in the video room. Otherwise credits release
-                automatically after the scheduled end.
+                {isFinished
+                  ? "This session is closed, so there's nothing left to accept, cancel, or settle. You can still report a problem."
+                  : "Chat is tied to this session. Credits transfer only when the session is completed."}
               </p>
-            )}
-            {canEarlyRelease && (
-              <ConfirmAction
-                title="Release credits to your teacher now?"
-                description={`This sends ${session.credits} credits to ${session.teacherName} immediately. Both of you must have attended at least half the planned ${session.duration_minutes} minutes in the video room, otherwise the release will be blocked and credits will release automatically once the session wraps up.`}
-                confirmLabel="Release now"
-                onConfirm={completeSession}
-              >
-                <Button variant="hero" className="w-full" disabled={busy === "complete"}>
-                  {busy === "complete" && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Release Credits Early
-                </Button>
-              </ConfirmAction>
-            )}
-            {isAcceptedSession && (
-              <ConfirmAction
-                title={
-                  isSwap
-                    ? "Cancel this skill swap?"
-                    : sessionStartPassed
-                      ? "End this session?"
-                      : "Cancel this session?"
-                }
-                description={
-                  isSwap
-                    ? "This session is one half of a skill swap, so cancelling calls off both linked sessions. No credits are involved."
-                    : sessionStartPassed
-                      ? `The session has already started, so the ${session.credits} escrowed credits are settled based on who attended the call — they may transfer to the teacher, be refunded, or split. There's no blanket refund after the start time.`
-                      : `Cancelling will refund the ${session.credits} credits held in escrow back to the learner. You can re-request later if plans change.`
-                }
-                confirmLabel={
-                  isSwap ? "Cancel swap" : sessionStartPassed ? "End and settle" : "Cancel session"
-                }
-                cancelLabel="Keep it"
-                destructive
-                onConfirm={cancelSession}
-              >
-                <Button variant="outline" className="w-full" disabled={busy === "cancel"}>
-                  {busy === "cancel" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <X className="h-4 w-4" />
-                  )}
-                  {isSwap ? "Cancel Swap" : sessionStartPassed ? "End Session" : "Cancel Session"}
-                </Button>
-              </ConfirmAction>
-            )}
-            {user?.id && (
-              <ReportDialog
-                reportedUserId={isTeacher ? session.learner_id : session.teacher_id}
-                sessionId={session.id}
-                label="Report"
-              />
-            )}
-            <p className="text-xs text-muted-foreground">
-              Chat is tied to this session. Credits transfer only when the session is completed.
-            </p>
-          </aside>
+            </aside>
+          </section>
+
+          {/* Renders nothing until a recording has actually been made for
+              this session, so untouched sessions are unaffected. */}
+          <SessionNotesPanel
+            sessionId={session.id}
+            skillName={session.skills?.name ?? null}
+            teacherName={session.teacherName}
+            learnerName={session.learnerName}
+            scheduledAt={session.scheduled_at}
+          />
         </div>
       </main>
     </div>
   );
 }
 
-function InfoBlock({
-  label,
-  value,
-  icon,
-  tone = "purple",
+// Quiet, consistent card heading: a solid title and an optional muted note.
+// Deliberately no icon or colored icon-chip — a symbol on every card reads as
+// a generated template rather than a considered layout.
+function SectionTitle({
+  note,
+  className,
+  children,
 }: {
-  label: string;
-  value: string;
-  icon?: ReactNode;
-  tone?: "purple" | "cyan" | "amber";
+  note?: ReactNode;
+  className?: string;
+  children: ReactNode;
 }) {
-  const badge = {
-    purple: "bg-brand-purple/15",
-    cyan: "bg-brand-cyan/15",
-    amber: "bg-amber-400/15",
-  }[tone];
-  const hover = {
-    purple: "hover:border-brand-purple/30",
-    cyan: "hover:border-brand-cyan/30",
-    amber: "hover:border-amber-400/30",
-  }[tone];
-
   return (
-    <div
-      className={cn(
-        "group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 transition-colors hover:bg-white/[0.07]",
-        hover,
-      )}
-    >
-      {icon && (
-        <div
-          className={cn(
-            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-            badge,
-          )}
-        >
-          {icon}
-        </div>
-      )}
-      <div className="min-w-0">
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
-        <div className="mt-0.5 font-semibold leading-tight truncate">{value}</div>
-      </div>
+    <div className={cn("mb-5 flex items-baseline gap-2", className)}>
+      <h2 className="text-base font-semibold tracking-tight">{children}</h2>
+      {note && <span className="text-xs text-muted-foreground">{note}</span>}
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-1 truncate font-medium leading-tight">{value}</dd>
     </div>
   );
 }

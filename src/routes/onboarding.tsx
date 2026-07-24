@@ -21,6 +21,8 @@ import { formatLearningMode, type LearningMode } from "@/lib/match";
 import { AvailabilityEditor, type AvailabilityEditorHandle } from "@/components/AvailabilityEditor";
 import { hasAuthRedirectParams } from "@/lib/auth-redirect";
 import { completeOnboarding } from "@/lib/onboarding";
+import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
+import { invalidateProfileCache } from "@/lib/page-caches";
 import { SkillCombobox } from "@/components/SkillCombobox";
 
 export const Route = createFileRoute("/onboarding")({
@@ -36,39 +38,6 @@ type LevelEntry = {
   focus: string;
   mode: LearningMode;
 };
-
-const SKILL_CATEGORIES = [
-  "Programming",
-  "Frontend",
-  "Backend",
-  "Database",
-  "AI",
-  "Data",
-  "Game Development",
-  "Video Games",
-  "Mobile Apps",
-  "Cybersecurity",
-  "Cloud",
-  "DevOps",
-  "Design",
-  "UI/UX",
-  "Creative",
-  "Video Editing",
-  "Photography",
-  "Music",
-  "Writing",
-  "Marketing",
-  "Business",
-  "Finance",
-  "Language",
-  "Math",
-  "Science",
-  "Soft Skills",
-  "Career",
-  "Fitness",
-  "Cooking",
-  "Other",
-];
 
 const LEARNING_METHODS: LearningMode[] = [
   "teaching",
@@ -192,8 +161,6 @@ function OnboardingPage() {
   const [learnFocus, setLearnFocus] = useState("");
   const [teachLevel, setTeachLevel] = useState<SkillLevel | "">("");
   const [learnLevel, setLearnLevel] = useState<SkillLevel | "">("");
-  const [teachCategory, setTeachCategory] = useState("");
-  const [learnCategory, setLearnCategory] = useState("");
   const [teachMode, setTeachMode] = useState<LearningMode | "">("");
   const [learnMode, setLearnMode] = useState<LearningMode | "">("");
   const [hydrated, setHydrated] = useState(false);
@@ -221,7 +188,11 @@ function OnboardingPage() {
   useEffect(() => {
     if (authLoading || hydrated) return;
     (async () => {
-      const { data } = await supabase.from("skills").select("id, name, category").order("name");
+      const { data } = await supabase
+        .from("skills")
+        .select("id, name, category")
+        .eq("is_active", true)
+        .order("name");
       if (data) setAllSkills(data);
       if (user) {
         const [{ data: p }, { data: teachingData }, { data: learningData }] = await Promise.all([
@@ -302,26 +273,22 @@ function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, authLoading, navigate, hydrated]);
 
-  const findOrCreateSkill = async (name: string, category: string): Promise<Skill | null> => {
+  // Catalog lookup only. Skills are curated and selection-only, so anything the
+  // combobox hands back is already a catalog entry; a miss means the snapshot
+  // is stale rather than that the user invented a skill.
+  const findSkill = (name: string): Skill | null => {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const existing = allSkills.find((s) => s.name.toLowerCase() === trimmed.toLowerCase());
-    if (existing) return existing;
-    const { data, error } = await supabase
-      .from("skills")
-      .insert({ name: trimmed, category })
-      .select("id, name, category")
-      .single();
-    if (error || !data) {
-      toast.error(error?.message ?? "Could not add skill");
+    if (!existing) {
+      toast.error("Pick a skill from the list.");
       return null;
     }
-    setAllSkills((prev) => [...prev, data]);
-    return data;
+    return existing;
   };
 
   const addTeach = async (nameOverride?: string) => {
-    const skill = await findOrCreateSkill(nameOverride ?? teachInput, teachCategory || "Other");
+    const skill = findSkill(nameOverride ?? teachInput);
     if (!skill) return;
     if (teaching.find((t) => t.skill.id === skill.id)) return;
 
@@ -351,12 +318,11 @@ function OnboardingPage() {
     setTeachInput("");
     setTeachFocus("");
     setTeachLevel("");
-    setTeachCategory("");
     setTeachMode("");
   };
 
   const addLearn = async (nameOverride?: string) => {
-    const skill = await findOrCreateSkill(nameOverride ?? learnInput, learnCategory || "Other");
+    const skill = findSkill(nameOverride ?? learnInput);
     if (!skill) return;
     if (learning.find((t) => t.skill.id === skill.id)) return;
 
@@ -387,7 +353,6 @@ function OnboardingPage() {
     setLearnInput("");
     setLearnFocus("");
     setLearnLevel("");
-    setLearnCategory("");
     setLearnMode("");
   };
 
@@ -537,6 +502,16 @@ function OnboardingPage() {
     }
 
     setSaving(false);
+    // /profile paints from a session snapshot; onboarding just wrote the name,
+    // bio and skill lists it caches, so drop it rather than let the first visit
+    // flash pre-onboarding content.
+    invalidateProfileCache(user.id);
+    // The skills and mode just saved here are the engine's primary signals. Any
+    // suggestions row generated before this point (a /dashboard bounce during
+    // signup can produce one) describes a user with no skills and would be
+    // served for the next 30 minutes — including on the very first dashboard
+    // this user ever sees.
+    void invalidateAiSuggestionsCache();
     toast.success("Welcome to SkillSwap 🎉");
     navigate({ to: "/dashboard" });
   };
@@ -667,8 +642,6 @@ function OnboardingPage() {
                     setFocus={setTeachFocus}
                     level={teachLevel}
                     setLevel={setTeachLevel}
-                    category={teachCategory}
-                    setCategory={setTeachCategory}
                     modeValue={teachMode}
                     setModeValue={setTeachMode}
                     onAdd={addTeach}
@@ -704,8 +677,6 @@ function OnboardingPage() {
                     setFocus={setLearnFocus}
                     level={learnLevel}
                     setLevel={setLearnLevel}
-                    category={learnCategory}
-                    setCategory={setLearnCategory}
                     modeValue={learnMode}
                     setModeValue={setLearnMode}
                     onAdd={addLearn}
@@ -821,8 +792,6 @@ function SkillPicker({
   setFocus,
   level,
   setLevel,
-  category,
-  setCategory,
   modeValue,
   setModeValue,
   onAdd,
@@ -843,8 +812,6 @@ function SkillPicker({
   setFocus: (v: string) => void;
   level: SkillLevel | "";
   setLevel: (v: SkillLevel | "") => void;
-  category: string;
-  setCategory: (v: string) => void;
   modeValue: LearningMode | "";
   setModeValue: (v: LearningMode | "") => void;
   onAdd: (nameOverride?: string) => void;
@@ -996,18 +963,6 @@ function SkillPicker({
                 {addFormLevels.map((lvl) => (
                   <SelectItem key={lvl} value={lvl}>
                     {LEVEL_LABELS[lvl]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="glass h-10 border-white/10">
-                <SelectValue placeholder="Category: Other" />
-              </SelectTrigger>
-              <SelectContent className="max-h-56 overflow-y-auto">
-                {SKILL_CATEGORIES.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
                   </SelectItem>
                 ))}
               </SelectContent>

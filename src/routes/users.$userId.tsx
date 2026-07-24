@@ -3,6 +3,13 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ReportDialog } from "@/components/ReportDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { signSingleAvatarUrl } from "@/lib/avatars";
@@ -11,7 +18,9 @@ import { isUuid } from "@/lib/uuid";
 import { getOrCreateSession, requestSessionsForSlots, type SessionDuration } from "@/lib/sessions";
 import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
+import { warmBookingDialogs } from "@/lib/warm-dialog-chunks";
 import { supabase } from "@/integrations/supabase/client";
+import { loadSkillVerifications, type SkillVerification } from "@/lib/skill-verification";
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -26,6 +35,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { VerifiedTick } from "@/components/VerifiedTick";
 
 // Lazy: the dialog pulls in react-day-picker via the Calendar UI. Keeping it
 // out of the route chunk strips ~40–60kb from first paint — it isn't open on
@@ -75,6 +85,11 @@ function PublicUserPage() {
   const { userId } = Route.useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  // This page exists to be booked from — warm the request/swap dialogs as soon
+  // as it settles so the first click opens instantly.
+  useEffect(() => {
+    warmBookingDialogs();
+  }, []);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [teaching, setTeaching] = useState<TeachingSkill[]>([]);
   // The skill the request dialog is currently targeting. Carries the rate so
@@ -86,9 +101,11 @@ function PublicUserPage() {
   } | null>(null);
   const [learning, setLearning] = useState<LearningSkill[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [verifications, setVerifications] = useState<Map<string, SkillVerification>>(new Map());
   const [loading, setLoading] = useState(true);
   const [openingChat, setOpeningChat] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [myCredits, setMyCredits] = useState<number | null>(null);
@@ -115,6 +132,7 @@ function PublicUserPage() {
           { data: teachingData },
           { data: learningData },
           { data: reviewData },
+          skillVerifications,
         ] = await Promise.all([
           supabase
             .from("profiles")
@@ -139,6 +157,7 @@ function PublicUserPage() {
             .order("created_at", { ascending: false })
             .limit(6)
             .abortSignal(controller.signal),
+          loadSkillVerifications(userId),
         ]);
         if (!alive) return;
 
@@ -163,6 +182,7 @@ function PublicUserPage() {
 
         setProfile(profileData ? ({ ...profileData, avatar_url: null } as Profile) : null);
         setTeaching((teachingData ?? []) as unknown as TeachingSkill[]);
+        setVerifications(skillVerifications);
         setLearning((learningData ?? []) as unknown as LearningSkill[]);
         setReviews(
           rawReviews.map((review) => ({
@@ -190,6 +210,7 @@ function PublicUserPage() {
         setTeaching([]);
         setLearning([]);
         setReviews([]);
+        setVerifications(new Map());
         setLoading(false);
       }
     })();
@@ -265,12 +286,28 @@ function PublicUserPage() {
 
   const primaryTeachingSkill = teaching.find((skill) => skill.skills?.id) ?? null;
 
-  // Opens the request dialog for a specific teaching skill. Defaults to the
-  // teacher's primary skill (used by the hero "Request session" button); each
-  // skill card passes its own skill so the learner can request that one.
+  // Every skill this teacher can actually teach, flattened for the "Which
+  // skill?" chooser that precedes booking when they offer more than one.
+  const teachingOptions = teaching
+    .filter((skill) => skill.skills?.id)
+    .map((skill) => ({
+      id: skill.skills!.id,
+      name: skill.skills!.name,
+      creditsPerHour: skill.credits_per_hour,
+    }));
+
+  // Opens booking for a teaching skill. The hero "Request session" button calls
+  // this with no skill: when the teacher offers several we first pop a small
+  // "Which skill?" chooser so the request isn't silently pinned to their
+  // first-listed skill; with a single skill we go straight to booking. Each
+  // skill card passes its own skill and skips the chooser.
   const openRequest = (skill?: TeachingSkill) => {
     if (!user) {
       navigate({ to: "/login", search: { redirect: `/users/${userId}` } });
+      return;
+    }
+    if (!skill && teachingOptions.length > 1) {
+      setSkillPickerOpen(true);
       return;
     }
     const target = skill ?? primaryTeachingSkill;
@@ -283,6 +320,13 @@ function PublicUserPage() {
       name: target.skills.name,
       creditsPerHour: target.credits_per_hour,
     });
+    setRequestOpen(true);
+  };
+
+  // Chosen from the "Which skill?" step → close it and open booking for that one.
+  const bookSkill = (option: (typeof teachingOptions)[number]) => {
+    setSkillPickerOpen(false);
+    setRequestSkill(option);
     setRequestOpen(true);
   };
 
@@ -347,10 +391,9 @@ function PublicUserPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-4 md:space-y-6">
-        {/* Hero — gradient glass shell matching Explore */}
-        <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+        {/* Hero — calm glass shell with a single soft brand wash */}
+        <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
-          <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
           <div className="relative p-5 md:p-8">
             <Button
               variant="ghost"
@@ -368,7 +411,7 @@ function PublicUserPage() {
                 <UserAvatar
                   name={profile.full_name}
                   url={profile.avatar_url}
-                  className="h-16 w-16 sm:h-24 sm:w-24 rounded-3xl ring-4 ring-white/10 shadow-glow shrink-0"
+                  className="h-16 w-16 sm:h-24 sm:w-24 rounded-2xl ring-1 ring-black/5 dark:ring-white/10 shrink-0"
                   fallbackClassName="text-2xl sm:text-3xl rounded-3xl"
                 />
                 <div className="min-w-0 flex-1">
@@ -405,7 +448,7 @@ function PublicUserPage() {
                 </div>
               </div>
               {user?.id !== userId && (
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-end">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row md:flex-col lg:flex-row md:items-center">
                   {primaryTeachingSkill && (
                     <Button
                       variant="hero"
@@ -421,6 +464,14 @@ function PublicUserPage() {
                       Request session
                     </Button>
                   )}
+                  <Button variant="outline" size="lg" onClick={openChat} disabled={openingChat}>
+                    {openingChat ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="h-4 w-4" />
+                    )}
+                    Message
+                  </Button>
                   {teaching.length > 0 && (
                     <Button
                       variant="outline"
@@ -437,14 +488,6 @@ function PublicUserPage() {
                       Propose swap
                     </Button>
                   )}
-                  <Button variant="hero" size="lg" onClick={openChat} disabled={openingChat}>
-                    {openingChat ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <MessageCircle className="h-4 w-4" />
-                    )}
-                    Message
-                  </Button>
                   <ReportDialog reportedUserId={userId} label="Report" />
                 </div>
               )}
@@ -467,8 +510,9 @@ function PublicUserPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-semibold leading-tight">
-                      {skill.skills?.name ?? "Skill"}
+                    <div className="flex items-center gap-1.5 font-semibold leading-tight">
+                      <span className="truncate">{skill.skills?.name ?? "Skill"}</span>
+                      {skill.skills?.id && verifications.has(skill.skills.id) && <VerifiedTick />}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground capitalize">
                       {skill.level}
@@ -484,7 +528,7 @@ function PublicUserPage() {
                     <button
                       type="button"
                       onClick={() => openRequest(skill)}
-                      className="group/track inline-flex w-full items-center justify-between gap-2 rounded-xl border border-brand-cyan/25 bg-brand-cyan/[0.06] px-3 py-2 text-xs font-medium text-brand-cyan transition-all hover:border-brand-cyan/50 hover:bg-brand-cyan/[0.12] hover:shadow-glow-blue"
+                      className="group/track inline-flex w-full items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-medium text-foreground/70 transition-colors hover:border-brand-cyan/40 hover:bg-brand-cyan/[0.06] hover:text-brand-cyan"
                     >
                       <span className="inline-flex items-center gap-1.5">
                         <CalendarPlus className="h-3.5 w-3.5" />
@@ -568,6 +612,44 @@ function PublicUserPage() {
           )}
         </section>
       </main>
+      {/* Which skill? — a light first step when a teacher offers several, so
+          the hero "Request session" button doesn't guess for the learner. */}
+      <Dialog open={skillPickerOpen} onOpenChange={setSkillPickerOpen}>
+        {/* Same header shape as SessionRequestDialog — this is the step right
+            before it, so the two must read as one flow. */}
+        <DialogContent className="max-w-[380px] gap-3.5 p-4">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg gradient-brand-soft">
+                <GraduationCap className="h-4 w-4 text-brand-purple" />
+              </div>
+              <DialogTitle className="text-base leading-tight">Which skill?</DialogTitle>
+            </div>
+            <DialogDescription className="text-xs leading-snug">
+              {profile.full_name ?? "This student"} teaches a few things. Pick the one you'd like a
+              session for.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {teachingOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => bookSkill(option)}
+                className="group flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-muted px-4 py-3 text-left transition-colors hover:border-brand-purple/40 hover:bg-brand-purple/[0.07]"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{option.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {option.creditsPerHour} cr / hr
+                  </span>
+                </span>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-brand-purple" />
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
       {requestOpen && requestSkill && (
         <Suspense fallback={null}>
           <SessionRequestDialog

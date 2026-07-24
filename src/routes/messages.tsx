@@ -21,13 +21,11 @@ import {
   Paperclip,
   Search,
   Send,
-  Sparkles,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
 import { describeViolations, detectViolations } from "@/lib/messageFilter";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   type AttachmentKind,
   DOCUMENT_ACCEPT,
@@ -531,6 +529,63 @@ function MessagesIndexPage() {
         const otherUserIds = Array.from(
           new Set([...sessionsByOther.keys(), ...conversationByOther.keys()]),
         );
+        const conversationIds = Array.from(conversationByOther.values()).map((c) => c.id);
+
+        // Kick the last-message previews off *now* — they only need the
+        // conversation ids from the round trip above, not the profile lookup
+        // below. Firing them in parallel with profiles (instead of after) and
+        // applying them independently of avatar signing lets the inbox sublines
+        // and unread badges land a round trip sooner. One row per conversation
+        // (DISTINCT ON in the RPC) so a chatty thread can't crowd quieter ones
+        // out; falls back to a windowed query if the RPC isn't deployed. Always
+        // resolves to a map so a preview hiccup can never reject onto the
+        // profile path.
+        const previewsPromise: Promise<Map<string, MessagePreview>> = (async () => {
+          const lastMsgByConversation = new Map<string, MessagePreview>();
+          if (!conversationIds.length) return lastMsgByConversation;
+          try {
+            const { data: latest, error: latestError } = await supabase
+              .rpc("conversation_latest_messages", { p_conversation_ids: conversationIds })
+              .abortSignal(controller.signal);
+            if (!latestError && latest) {
+              for (const m of latest) {
+                lastMsgByConversation.set(m.conversation_id, {
+                  text: m.text,
+                  created_at: m.created_at,
+                  sender_id: m.sender_id,
+                  attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
+                  attachment_name: m.attachment_name ?? null,
+                });
+              }
+              return lastMsgByConversation;
+            }
+            const { data: windowed } = await supabase
+              .from("messages")
+              .select(
+                "id, conversation_id, sender_id, text, created_at, attachment_kind, attachment_name",
+              )
+              .in("conversation_id", conversationIds)
+              .order("created_at", { ascending: false })
+              // Sidebar preview cap only — the active thread has its own paginated query.
+              .limit(Math.min(conversationIds.length * 5, 200))
+              .abortSignal(controller.signal);
+            for (const m of windowed ?? []) {
+              if (!lastMsgByConversation.has(m.conversation_id)) {
+                lastMsgByConversation.set(m.conversation_id, {
+                  text: m.text,
+                  created_at: m.created_at,
+                  sender_id: m.sender_id,
+                  attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
+                  attachment_name: m.attachment_name ?? null,
+                });
+              }
+            }
+          } catch {
+            // Aborted or transient — return whatever we accumulated.
+          }
+          return lastMsgByConversation;
+        })();
+
         const profileMap = new Map<
           string,
           { full_name: string | null; avatar_url: string | null }
@@ -580,94 +635,55 @@ function MessagesIndexPage() {
           };
         });
 
+        // Sort on the activity timestamp we already have (conversation
+        // last_message_at ?? latest session) so the very first paint is already
+        // in final order — previews then fill the sublines in place without
+        // reshuffling the list.
+        baseThreads.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+
         if (!alive) return;
         setThreads(baseThreads);
         setLoadingList(false);
 
-        const conversationIds = baseThreads
-          .map((t) => t.conversationId)
-          .filter((id): id is string => Boolean(id));
+        // Drop previews in the moment they arrive — no longer blocked behind
+        // avatar signing (the slowest, least important leg).
+        void previewsPromise.then((lastMsgByConversation) => {
+          if (!alive || lastMsgByConversation.size === 0) return;
+          setThreads((prev) => {
+            const merged = prev.map((t) => {
+              const last = t.conversationId
+                ? (lastMsgByConversation.get(t.conversationId) ?? null)
+                : null;
+              return last ? { ...t, lastMessage: last, lastActivityAt: last.created_at } : t;
+            });
+            merged.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+            return merged;
+          });
+        });
 
-        // One row per conversation (DISTINCT ON in the RPC) so a chatty thread
-        // can't crowd quieter threads out of the preview window. Falls back to
-        // the old windowed query if the RPC isn't deployed yet.
-        const previewsPromise = (async () => {
-          const lastMsgByConversation = new Map<string, MessagePreview>();
-          if (!conversationIds.length) return lastMsgByConversation;
-          const { data: latest, error: latestError } = await supabase
-            .rpc("conversation_latest_messages", { p_conversation_ids: conversationIds })
-            .abortSignal(controller.signal);
-          if (!latestError && latest) {
-            for (const m of latest) {
-              lastMsgByConversation.set(m.conversation_id, {
-                text: m.text,
-                created_at: m.created_at,
-                sender_id: m.sender_id,
-                attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
-                attachment_name: m.attachment_name ?? null,
-              });
-            }
-            return lastMsgByConversation;
-          }
-          const { data: windowed } = await supabase
-            .from("messages")
-            .select(
-              "id, conversation_id, sender_id, text, created_at, attachment_kind, attachment_name",
-            )
-            .in("conversation_id", conversationIds)
-            .order("created_at", { ascending: false })
-            // Sidebar preview cap only — the active thread has its own paginated query.
-            .limit(Math.min(conversationIds.length * 5, 200))
-            .abortSignal(controller.signal);
-          for (const m of windowed ?? []) {
-            if (!lastMsgByConversation.has(m.conversation_id)) {
-              lastMsgByConversation.set(m.conversation_id, {
-                text: m.text,
-                created_at: m.created_at,
-                sender_id: m.sender_id,
-                attachment_kind: (m.attachment_kind ?? null) as AttachmentKind | null,
-                attachment_name: m.attachment_name ?? null,
-              });
-            }
-          }
-          return lastMsgByConversation;
-        })();
-
-        const [avatarResult, previewResult] = await Promise.allSettled([
-          signAvatarUrls(avatarPaths, {
+        // Sign avatars (needs the profile rows) and swap them in when ready.
+        // Skipped entirely when nobody in the inbox has an uploaded avatar.
+        if (avatarPaths.some(Boolean)) {
+          void signAvatarUrls(avatarPaths, {
             width: 128,
             height: 128,
             quality: 75,
             resize: "cover",
-          }),
-          previewsPromise,
-        ]);
-        if (!alive) return;
-
-        const signedAvatarMap =
-          avatarResult.status === "fulfilled" ? avatarResult.value : new Map<string, string>();
-        const lastMsgByConversation =
-          previewResult.status === "fulfilled"
-            ? previewResult.value
-            : new Map<string, MessagePreview>();
-
-        const hydrated = baseThreads.map((t) => {
-          const profile = profileMap.get(t.otherUserId);
-          const last = t.conversationId
-            ? (lastMsgByConversation.get(t.conversationId) ?? null)
-            : null;
-          return {
-            ...t,
-            otherAvatar: profile?.avatar_url
-              ? (signedAvatarMap.get(profile.avatar_url) ?? null)
-              : null,
-            lastMessage: last,
-            lastActivityAt: last?.created_at ?? t.lastActivityAt,
-          };
-        });
-
-        hydrated.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-        setThreads(hydrated);
+          })
+            .then((signedAvatarMap) => {
+              if (!alive || signedAvatarMap.size === 0) return;
+              setThreads((prev) =>
+                prev.map((t) => {
+                  const avatarUrl = profileMap.get(t.otherUserId)?.avatar_url;
+                  const signed = avatarUrl ? (signedAvatarMap.get(avatarUrl) ?? null) : null;
+                  return signed && signed !== t.otherAvatar ? { ...t, otherAvatar: signed } : t;
+                }),
+              );
+            })
+            .catch(() => {
+              // Signing failed — initials-based avatars stay in place.
+            });
+        }
       } catch (error) {
         if (!alive) return;
         if (error instanceof Error && error.name === "AbortError") return;
@@ -1272,17 +1288,13 @@ function MessagesIndexPage() {
               selectedUserId ? "hidden md:flex" : "flex",
             )}
           >
-            <div className="animate-fade-up relative overflow-hidden border-b border-border/60 px-5 pt-5 pb-4">
-              <div className="absolute inset-0 gradient-hero pointer-events-none opacity-70 dark:hidden" />
-              <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
-              <div className="relative flex items-start gap-3">
-                <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25 transition-transform hover:scale-105">
+            <div className="animate-fade-up border-b border-border/60 px-5 pt-5 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/10 ring-1 ring-brand-purple/20">
                   <MessagesSquare className="h-5 w-5 text-brand-purple" />
                 </div>
                 <div className="min-w-0">
-                  <h1 className="text-2xl font-bold tracking-tight">
-                    <span className="gradient-brand-text">Messages</span>
-                  </h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-foreground">Messages</h1>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Your skill swap conversations
                   </p>
@@ -1481,10 +1493,8 @@ function MessagesIndexPage() {
               <>
                 <div
                   key={selectedThread.otherUserId}
-                  className="animate-fade-up relative sticky top-0 z-10 flex shrink-0 items-center gap-3 overflow-hidden border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40"
+                  className="animate-fade-up sticky top-0 z-10 flex shrink-0 items-center gap-3 border-b border-white/10 bg-background/95 px-3 py-3 backdrop-blur-xl sm:px-5 md:bg-background/40"
                 >
-                  <div className="absolute inset-0 gradient-hero pointer-events-none opacity-60 dark:hidden" />
-                  <div className="absolute inset-0 bg-[radial-gradient(at_90%_50%,rgba(167,139,250,0.14),transparent_60%)] pointer-events-none dark:hidden" />
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1754,31 +1764,28 @@ function MessagesIndexPage() {
                 }
               </>
             ) : (
-              <div className="relative flex flex-1 items-center justify-center overflow-hidden p-10 text-center">
-                <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
-                <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,rgba(167,139,250,0.18),transparent_60%)] pointer-events-none dark:hidden" />
-                <div className="relative">
-                  <div className="animate-fade-up mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/15 ring-1 ring-brand-purple/25 shadow-glow transition-transform hover:scale-105">
+              <div className="flex flex-1 items-center justify-center p-10 text-center">
+                <div>
+                  <div className="animate-fade-up mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-purple/10 ring-1 ring-brand-purple/20">
                     <MessageCircle className="h-9 w-9 text-brand-purple" />
                   </div>
                   <h2
-                    className="animate-fade-up text-2xl font-bold tracking-tight"
+                    className="animate-fade-up text-2xl font-bold tracking-tight text-foreground"
                     style={{ animationDelay: "80ms" }}
                   >
-                    Select a <span className="gradient-brand-text">conversation</span>
+                    Select a conversation
                   </h2>
                   <p
                     className="animate-fade-up mx-auto mt-2 max-w-sm text-sm text-muted-foreground"
                     style={{ animationDelay: "160ms" }}
                   >
-                    Pick a chat from the inbox to keep your skill swaps moving, or message someone
-                    from Explore or their profile to start a new one.
+                    Choose a conversation on the left to pick up where you left off, or reach out to
+                    someone from Explore or their profile to start a new one.
                   </p>
                   <div
-                    className="animate-fade-up mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-muted-foreground"
+                    className="animate-fade-up mt-5 inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground"
                     style={{ animationDelay: "240ms" }}
                   >
-                    <Sparkles className="h-3.5 w-3.5 text-brand-purple" />
                     Tip: switch between Teaching and Learning above
                   </div>
                 </div>
@@ -1803,33 +1810,17 @@ function MessagesIndexPage() {
 }
 
 function ChatBubbleSkeletons() {
-  // Six alternating bubble placeholders so opening a thread never shows a
-  // centered spinner — sized to match MessageBubble exactly (h-7 avatar,
-  // bubble + timestamp row) so there is no layout shift on load.
+  // A chat can be entirely one person's messages (all on the right), so a
+  // two-sided bubble skeleton would paint ghost "received" bubbles on the left
+  // that never materialise — jarring against a right-only thread. There's no
+  // way to know the message distribution before it loads, so show a neutral,
+  // centered loading indicator that can never contradict the loaded chat.
   return (
-    <>
-      <BubbleSkeleton mine bubbleClass="h-9 w-2/5" />
-      <BubbleSkeleton bubbleClass="h-9 w-1/2" />
-      <BubbleSkeleton mine bubbleClass="h-14 w-3/5" />
-      <BubbleSkeleton bubbleClass="h-12 w-2/5" />
-      <BubbleSkeleton mine bubbleClass="h-9 w-1/3" />
-      <BubbleSkeleton bubbleClass="h-9 w-1/2" />
-    </>
-  );
-}
-
-function BubbleSkeleton({ mine, bubbleClass }: { mine?: boolean; bubbleClass: string }) {
-  return (
-    <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
-      {!mine && <Skeleton className="h-7 w-7 shrink-0 rounded-full" />}
-      <div
-        className={cn(
-          "flex max-w-[78%] flex-col sm:max-w-[70%]",
-          mine ? "items-end" : "items-start",
-        )}
-      >
-        <Skeleton className={cn("rounded-[1.35rem]", bubbleClass)} />
-        <Skeleton className="mt-1 h-2.5 w-10 rounded" />
+    <div className="flex h-full items-center justify-center py-10">
+      <div className="flex items-center gap-1.5" role="status" aria-label="Loading messages">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-muted-foreground/40 [animation-delay:-300ms]" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-muted-foreground/40 [animation-delay:-150ms]" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-muted-foreground/40" />
       </div>
     </div>
   );

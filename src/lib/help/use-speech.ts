@@ -3,17 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Lightweight voice narration for the help tour. Uses the browser's built-in
 // Web Speech API (no API key, no asset files).
 //
-// Voice quality varies a lot by browser + OS:
-// - Edge on Windows exposes "Microsoft Ava Online (Natural)" and friends.
-//   These sound essentially human.
-// - Chrome on Windows usually only sees "Microsoft David/Zira/Mark Desktop"
-//   which are the classic robotic ones, plus "Google US English".
-// - macOS/iOS have the Siri voices ("Samantha", "Karen") which are decent.
-//
-// Because of this, we let the user pick the voice themselves. We just take
-// a best guess on first load.
+// The guide always speaks with one voice: "Google US English". It's the most
+// consistent-sounding option available across browsers, so there's no picker.
+// If it isn't installed (Google's voices only ship with Chrome), we fall back
+// to the closest natural-sounding English voice we can find.
 
-const VOICE_NAME_KEY = "skillswap-help-voice-name";
+const PREFERRED_VOICE_NAME = "Google US English";
 
 const NATURAL_HINTS = ["(Natural)", "Natural", "Neural", "Online", "Premium", "Enhanced"];
 
@@ -46,32 +41,21 @@ function scoreVoice(v: SpeechSynthesisVoice): number {
   return score;
 }
 
-function pickBestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+// Google US English if it exists, otherwise the best English voice available.
+function pickVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (voices.length === 0) return null;
+  const preferred = voices.find((v) => v.name === PREFERRED_VOICE_NAME);
+  if (preferred) return preferred;
   const english = voices.filter((v) => v.lang?.toLowerCase().startsWith("en"));
   const pool = english.length > 0 ? english : voices;
   return [...pool].sort((a, b) => scoreVoice(b) - scoreVoice(a))[0] ?? null;
 }
-
-export type VoiceOption = {
-  name: string;
-  lang: string;
-  natural: boolean;
-};
 
 export type SpeechState = {
   /** id of the card currently being read, or null when nothing is playing */
   speakingId: string | null;
   /** true once the browser has loaded the voice list */
   ready: boolean;
-  /** available English voices the user can pick from */
-  voices: VoiceOption[];
-  /** name of the currently selected voice */
-  selectedVoiceName: string | null;
-  /** change to a different voice */
-  selectVoice: (name: string) => void;
-  /** play a short preview of the currently selected voice */
-  previewVoice: () => void;
   /** start reading `text` and tag this playback with `id` */
   speak: (id: string, text: string) => void;
   /** stop any current playback */
@@ -92,7 +76,6 @@ function humanize(text: string): string {
 export function useSpeech(): SpeechState {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [allVoices, setAllVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -107,12 +90,6 @@ export function useSpeech(): SpeechState {
       if (voices.length === 0) return;
       setAllVoices(voices);
       setReady(true);
-      setSelectedName((current) => {
-        if (current && voices.some((v) => v.name === current)) return current;
-        const saved = window.localStorage.getItem(VOICE_NAME_KEY);
-        if (saved && voices.some((v) => v.name === saved)) return saved;
-        return pickBestVoice(voices)?.name ?? null;
-      });
     };
 
     loadVoices();
@@ -123,21 +100,7 @@ export function useSpeech(): SpeechState {
     };
   }, []);
 
-  const englishVoices = useMemo<VoiceOption[]>(() => {
-    const english = allVoices.filter((v) => v.lang?.toLowerCase().startsWith("en"));
-    return [...english]
-      .sort((a, b) => scoreVoice(b) - scoreVoice(a))
-      .map((v) => ({
-        name: v.name,
-        lang: v.lang,
-        natural: NATURAL_HINTS.some((hint) => v.name.includes(hint)),
-      }));
-  }, [allVoices]);
-
-  const selectedVoice = useMemo(
-    () => allVoices.find((v) => v.name === selectedName) ?? null,
-    [allVoices, selectedName],
-  );
+  const selectedVoice = useMemo(() => pickVoice(allVoices), [allVoices]);
 
   const stop = useCallback(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -151,8 +114,8 @@ export function useSpeech(): SpeechState {
       const u = new SpeechSynthesisUtterance(humanize(text));
       if (selectedVoice) u.voice = selectedVoice;
       // Slightly slower + slightly lower pitch reads more "human" on most
-      // engines. Tweaking these helped Microsoft Zira and Google US English
-      // sound noticeably less robotic in testing.
+      // engines. Tweaking these helped Google US English sound noticeably
+      // less robotic in testing.
       u.rate = 0.92;
       u.pitch = 0.95;
       u.volume = 1;
@@ -187,28 +150,9 @@ export function useSpeech(): SpeechState {
     [buildUtterance],
   );
 
-  const previewVoice = useCallback(() => {
-    speak("__preview", "Hi there! This is how I'll sound as your guide.");
-  }, [speak]);
-
-  const selectVoice = useCallback(
-    (name: string) => {
-      setSelectedName(name);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(VOICE_NAME_KEY, name);
-      }
-      stop();
-    },
-    [stop],
-  );
-
   return {
     speakingId,
     ready,
-    voices: englishVoices,
-    selectedVoiceName: selectedName,
-    selectVoice,
-    previewVoice,
     speak,
     stop,
   };

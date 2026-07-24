@@ -27,6 +27,7 @@ import {
 import {
   ChevronLeft,
   Coins,
+  Dumbbell,
   History,
   LayoutDashboard,
   LogOut,
@@ -48,6 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Home", icon: LayoutDashboard, to: "/dashboard" },
   { name: "Explore", icon: UserRoundSearch, to: "/explore" },
   { name: "Sessions", icon: Video, to: "/history" },
+  { name: "Practice", icon: Dumbbell, to: "/practice" },
   { name: "Credits", icon: Coins, to: "/credits" },
   { name: "Messages", icon: MessageSquare, to: "/messages" },
   { name: "Profile", icon: UserIcon, to: "/profile" },
@@ -109,7 +111,9 @@ function MobileNavItem({ item, active }: { item: NavItem; active: boolean }) {
       to={item.to}
       preload="intent"
       className={cn(
-        "flex min-w-[64px] flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs font-semibold transition-colors",
+        // flex-1 + min-w-0 so the row scales from 5 to 6 items without
+        // overflowing a narrow phone — each tab shares the width evenly.
+        "flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1.5 py-2 text-[11px] font-semibold transition-colors",
         active ? "text-primary" : "text-muted-foreground",
       )}
       aria-current={active ? "page" : undefined}
@@ -160,7 +164,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
         <>
           <aside
             className={cn(
-              "fixed left-0 top-0 z-40 hidden h-screen flex-col overflow-hidden border-r border-border/50 glass-strong md:flex",
+              "fixed left-0 top-0 z-40 hidden h-screen flex-col overflow-hidden glass-strong chrome-sidebar md:flex",
               "transition-[width] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-[width]",
               sidebarCollapsed ? "w-[72px]" : "w-48",
             )}
@@ -209,7 +213,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
 
           <header
             className={cn(
-              "fixed right-0 top-0 z-30 hidden h-16 items-center justify-between border-b border-border/50 px-5 glass md:flex md:[left:var(--sidebar-width)]",
+              "fixed right-0 top-0 z-30 hidden h-16 items-center justify-between px-5 glass chrome-header md:flex md:[left:var(--sidebar-width)]",
               "transition-[left] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]",
             )}
             style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}

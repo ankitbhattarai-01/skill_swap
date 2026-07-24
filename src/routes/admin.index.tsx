@@ -126,7 +126,7 @@ function AdminHomePage() {
   );
 
   if (authLoading || permissionsQuery.isLoading) {
-    return <PageLoading variant="dashboard" />;
+    return <PageLoading variant="admin" />;
   }
 
   if (!user) return null;

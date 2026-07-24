@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { ReportDialog } from "@/components/ReportDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthGate } from "@/lib/auth-gate";
@@ -16,9 +15,12 @@ import { useAuth } from "@/lib/auth-context";
 import { getOrCreateSession, requestSessionsForSlots, type SessionDuration } from "@/lib/sessions";
 import { getOrCreateConversation } from "@/lib/conversations";
 import { playRequestSentChime } from "@/lib/sounds";
+import { warmBookingDialogs } from "@/lib/warm-dialog-chunks";
 import type { TeacherRating } from "@/lib/ratings";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { TeacherRatingBadge } from "@/components/TeacherRatingBadge";
+import { VerifiedTick } from "@/components/VerifiedTick";
+import { loadVerifiedPairs, verifiedPairKey } from "@/lib/skill-verification";
 import { UserAvatar } from "@/components/UserAvatar";
 import {
   Select,
@@ -28,7 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { signAvatarUrls } from "@/lib/avatars";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cachedAvatarUrls, signAvatarUrls } from "@/lib/avatars";
 import {
   Search,
   MessageCircle,
@@ -45,6 +48,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureEnabled } from "@/lib/feature-flags";
+import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 
 // Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
 // Keeping it out of the explore route chunk strips ~40–60kb from first paint
@@ -113,8 +117,8 @@ type TeachingSkillRow = {
   credits_per_hour: number;
   created_at: string;
   // Server-computed "viewer wants to learn this" flag from the explore_teachers
-  // RPC. Optional so cached snapshots written before the flag existed still
-  // parse; isMatchForUser falls back to the local learning-skill set.
+  // RPC. Currently unused by the card (the "Matches your interests" indicator
+  // was removed) but kept on the row shape in case it's surfaced again.
   matches_viewer?: boolean;
   // Server-computed "a direct swap is possible" flag: the viewer wants this
   // skill AND this user wants something the viewer teaches. Optional for the
@@ -135,6 +139,8 @@ type LearningSkillRow = {
   current_level: "basic" | "intermediate" | "advanced";
   created_at: string;
   // Server-computed "viewer teaches this" flag from the explore_learners RPC.
+  // Currently unused by the card (the "You teach this" indicator was removed)
+  // but kept on the row shape in case it's surfaced again.
   matches_viewer?: boolean;
   // Server-computed "a direct swap is possible" flag (mirror of the teacher
   // card: viewer teaches this skill AND this user teaches something the
@@ -150,7 +156,7 @@ type LearningSkillRow = {
 };
 
 type SkillLevelFilter = "all" | "basic" | "intermediate" | "advanced";
-type SortOption = "default" | "rated" | "newest" | "available_soon";
+type SortOption = "default" | "rated" | "newest" | "available_soon" | "verified";
 
 const LEVELS: { key: SkillLevelFilter; label: string }[] = [
   { key: "all", label: "All levels" },
@@ -161,6 +167,7 @@ const LEVELS: { key: SkillLevelFilter; label: string }[] = [
 
 const SORTS: { key: SortOption; label: string }[] = [
   { key: "default", label: "Recommended" },
+  { key: "verified", label: "Verified" },
   { key: "available_soon", label: "Available soonest" },
   { key: "rated", label: "Highest rated" },
   { key: "newest", label: "Newest" },
@@ -182,22 +189,54 @@ type ExploreCache = {
   savedAt: number;
   rows: TeachingSkillRow[];
   ratings: [string, TeacherRating][];
+  // Optional so snapshots written before verification shipped still parse —
+  // they just render without ticks until the next fetch replaces them.
+  verified?: string[];
   hasMore?: boolean;
 };
 
-const LEVEL_COLORS: Record<string, string> = {
-  basic: "bg-brand-cyan/10 text-brand-cyan border-brand-cyan/20",
-  intermediate: "bg-brand-blue/15 text-brand-blue border-brand-blue/25",
-  advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
+// Level as a quiet difficulty scale: green → amber → violet. Fixed Tailwind
+// scales (not brand tokens) so the three tiers stay visually distinct in BOTH
+// light and dark — the brand palette collapses to one violet in dark mode.
+const LEVEL_DOT: Record<string, string> = {
+  basic: "bg-emerald-500",
+  intermediate: "bg-amber-500",
+  advanced: "bg-violet-500",
 };
+const LEVEL_TEXT: Record<string, string> = {
+  basic: "text-emerald-600 dark:text-emerald-400",
+  intermediate: "text-amber-600 dark:text-amber-400",
+  advanced: "text-violet-600 dark:text-violet-400",
+};
+
+// Entry-animation offset per card. Each card is a `.glass` element, i.e. its
+// own `backdrop-filter` compositing layer, so a long stagger means the browser
+// animates two dozen blurred layers for the better part of a second after the
+// data has already arrived — the page reads as "still loading" long after it
+// isn't. Kept short enough to stay a flourish: the last card of a full page
+// starts 216ms in rather than 440ms.
+function cardDelayMs(index: number) {
+  return Math.min(40 + index * 16, 216);
+}
+
+// Small colored level marker (dot + label) reused by both card types.
+function LevelMark({ level }: { level: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      <span className={"h-1.5 w-1.5 rounded-full " + (LEVEL_DOT[level] ?? "bg-muted-foreground")} />
+      <span className={"font-medium capitalize " + (LEVEL_TEXT[level] ?? "text-muted-foreground")}>
+        {level}
+      </span>
+    </span>
+  );
+}
 
 type ExploreSkillCardProps = {
   row: TeachingSkillRow;
-  currentUserId: string | undefined;
-  matchesUser: boolean;
   swapMatch: boolean;
   openSession: OpenSessionInfo | undefined;
   rating: TeacherRating | undefined;
+  verified: boolean;
   messageBusy: boolean;
   requestBusy: boolean;
   onOpenChat: (row: TeachingSkillRow) => void;
@@ -209,82 +248,99 @@ type ExploreSkillCardProps = {
 // input or a single card's busy state changes.
 const ExploreSkillCard = memo(function ExploreSkillCard({
   row: r,
-  currentUserId,
-  matchesUser,
   swapMatch,
   openSession,
   rating,
+  verified,
   messageBusy,
   requestBusy,
   onOpenChat,
   onRequestSession,
   onProposeSwap,
 }: ExploreSkillCardProps) {
-  const [reportOpen, setReportOpen] = useState(false);
+  // `null` until the menu item is first clicked, so a grid of 24 cards mounts
+  // zero report dialogs (and pulls in none of their Select/Textarea subtree)
+  // for a control almost nobody opens.
+  const [reportOpen, setReportOpen] = useState<boolean | null>(null);
   const hasOpenSession = Boolean(openSession);
   const isSessionActive = openSession && openSession.status !== "pending";
   return (
-    <article className="group glass flex h-full flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
-      <div className="flex items-start justify-between gap-3">
+    <article className="group glass relative flex h-full flex-col overflow-hidden rounded-2xl border border-black/[0.06] p-4 transition-all duration-300 hover:-translate-y-1 hover:border-brand-purple/30 hover:shadow-glow dark:border-white/[0.06]">
+      {/* Hairline gradient accent that fades in on hover — a quiet premium detail. */}
+      <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-purple/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
+      {/* Identity + overflow menu */}
+      <div className="flex items-center justify-between gap-3">
         <Link
           to="/users/$userId"
           params={{ userId: r.user_id }}
           preload="intent"
-          className="flex min-w-0 items-center gap-3 -m-1 rounded-xl p-1 transition-colors hover:bg-white/5"
+          className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/5"
         >
           <UserAvatar
             name={r.profiles?.full_name}
             url={r.profiles?.avatar_url}
-            className="h-11 w-11 ring-2 ring-white/10 transition-all group-hover:ring-brand-cyan/30"
+            className="h-11 w-11 shrink-0 ring-2 ring-black/[0.06] transition-all group-hover:ring-brand-purple/25 dark:ring-white/10"
           />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{r.profiles?.full_name ?? "Student"}</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {r.skills?.category ?? "Skill"}
+            <div className="truncate font-semibold leading-tight">
+              {r.profiles?.full_name ?? "Student"}
+            </div>
+            <div className="mt-0.5">
+              <LevelMark level={r.level} />
             </div>
           </div>
         </Link>
-        <div className="flex shrink-0 items-center gap-1">
-          <Badge variant="outline" className={LEVEL_COLORS[r.level] + " capitalize"}>
-            {r.level}
-          </Badge>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="More actions"
-                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="rounded-xl">
-              <DropdownMenuItem asChild>
-                <Link to="/users/$userId" params={{ userId: r.user_id }} preload="intent">
-                  <UserRound className="h-4 w-4" />
-                  View profile
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setReportOpen(true)}>
-                <X className="h-4 w-4" />
-                Report
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More actions"
+              className="-mr-1 shrink-0 rounded-lg p-1.5 text-muted-foreground/60 transition-colors hover:bg-black/[0.03] hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:hover:bg-white/5"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="rounded-xl">
+            <DropdownMenuItem asChild>
+              <Link to="/users/$userId" params={{ userId: r.user_id }} preload="intent">
+                <UserRound className="h-4 w-4" />
+                View profile
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setReportOpen(true)}>
+              <X className="h-4 w-4" />
+              Report
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {reportOpen !== null && (
           <ReportDialog reportedUserId={r.user_id} open={reportOpen} onOpenChange={setReportOpen} />
-        </div>
+        )}
       </div>
 
-      <h3 className="mt-4 text-lg font-semibold leading-tight">
-        Teaches <span className="gradient-brand-text">{r.skills?.name}</span>
-      </h3>
-      <p className="mt-1.5 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
-        {r.profiles?.bio ?? ""}
-      </p>
+      {/* Skill — the hero of the card */}
+      <div className="mt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+          Teaches
+        </p>
+        <h3 className="mt-1 flex items-center gap-1.5 text-lg font-semibold leading-tight">
+          <span className="gradient-brand-text">{r.skills?.name}</span>
+          {verified && <VerifiedTick className="h-[1.05rem] w-[1.05rem]" />}
+        </h3>
+      </div>
 
-      {/* Single status line — session state wins over match indicator. */}
-      {hasOpenSession ? (
-        <div className="mt-3">
+      {r.profiles?.bio && (
+        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+          {r.profiles.bio}
+        </p>
+      )}
+
+      {/* Session status only — the "matches"/"swap" text indicators were
+          removed to keep the card compact; the swap button in the action
+          row below still surfaces a mutual match. */}
+      {hasOpenSession && (
+        <div className="mt-2">
           <span
             className={
               "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium " +
@@ -302,59 +358,65 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
             {openSession?.status === "pending" ? "Pending request" : "Session active"}
           </span>
         </div>
-      ) : currentUserId && swapMatch ? (
-        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
-          <ArrowLeftRight className="h-3 w-3" />
-          Mutual match: you can swap
-        </div>
-      ) : currentUserId && matchesUser ? (
-        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-cyan">
-          <Sparkles className="h-3 w-3" />
-          Matches your interests
-        </div>
-      ) : null}
+      )}
 
-      <div className="mt-auto flex items-center justify-between border-t border-white/5 pt-3 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground/80">
-          {r.credits_per_hour}{" "}
-          <span className="font-normal text-muted-foreground">credits / hr</span>
-        </span>
-        <TeacherRatingBadge rating={rating} />
+      {/* Value line + actions */}
+      <div className="mt-auto pt-2.5">
+        <div className="flex items-center justify-between border-t border-black/5 pt-2 dark:border-white/[0.06]">
+          <span className="inline-flex items-baseline gap-1 text-sm text-muted-foreground">
+            <span className="font-semibold">{r.credits_per_hour}</span>
+            credits/hr
+          </span>
+          <TeacherRatingBadge rating={rating} />
+        </div>
       </div>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-1.5 flex gap-2">
         {isSessionActive ? (
-          <Button variant="outline" size="icon" aria-label="Open chat" asChild>
-            <Link to="/messages" preload="intent" search={{ s: openSession!.sessionId }}>
-              <MessageCircle className="h-4 w-4" />
-            </Link>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Open chat" asChild>
+                <Link to="/messages" preload="intent" search={{ s: openSession!.sessionId }}>
+                  <MessageCircle className="h-4 w-4" />
+                </Link>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open chat</TooltipContent>
+          </Tooltip>
         ) : (
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Message"
-            disabled={messageBusy}
-            title="Message"
-            onClick={() => onOpenChat(r)}
-          >
-            {messageBusy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <MessageCircle className="h-4 w-4" />
-            )}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Message"
+                disabled={messageBusy}
+                onClick={() => onOpenChat(r)}
+              >
+                {messageBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <MessageCircle className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Message</TooltipContent>
+          </Tooltip>
         )}
         {swapMatch && (
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Propose swap"
-            title="Propose a skill swap — teach each other, no credits"
-            onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
-          >
-            <ArrowLeftRight className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Propose swap"
+                onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Propose a skill swap: teach each other, no credits</TooltipContent>
+          </Tooltip>
         )}
         {openSession ? (
           <Button variant="hero" size="sm" className="flex-1" asChild>
@@ -391,7 +453,6 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
 type ExploreLearnerCardProps = {
   row: LearningSkillRow;
   currentUserId: string | undefined;
-  matchesUser: boolean;
   swapMatch: boolean;
   busy: boolean;
   onOffer: (row: LearningSkillRow) => void;
@@ -401,7 +462,6 @@ type ExploreLearnerCardProps = {
 const ExploreLearnerCard = memo(function ExploreLearnerCard({
   row: r,
   currentUserId,
-  matchesUser,
   swapMatch,
   busy,
   onOffer,
@@ -409,61 +469,64 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
 }: ExploreLearnerCardProps) {
   const isSelf = currentUserId === r.user_id;
   return (
-    <article className="group glass flex h-full flex-col rounded-2xl border border-white/10 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-cyan/30 hover:shadow-glow-blue">
-      <div className="flex items-start justify-between gap-3">
+    <article className="group glass relative flex h-full flex-col overflow-hidden rounded-2xl border border-black/[0.06] p-4 transition-all duration-300 hover:-translate-y-1 hover:border-brand-purple/30 hover:shadow-glow dark:border-white/[0.06]">
+      {/* Hairline gradient accent that fades in on hover — a quiet premium detail. */}
+      <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-purple/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
+      <div className="flex items-center justify-between gap-3">
         <Link
           to="/users/$userId"
           params={{ userId: r.user_id }}
           preload="intent"
-          className="flex min-w-0 items-center gap-3 -m-1 rounded-xl p-1 transition-colors hover:bg-white/5"
+          className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/5"
         >
           <UserAvatar
             name={r.profiles?.full_name}
             url={r.profiles?.avatar_url}
-            className="h-11 w-11 ring-2 ring-white/10 transition-all group-hover:ring-brand-cyan/30"
+            className="h-11 w-11 shrink-0 ring-2 ring-black/[0.06] transition-all group-hover:ring-brand-purple/25 dark:ring-white/10"
           />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{r.profiles?.full_name ?? "Student"}</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {r.skills?.category ?? "Skill"}
+            <div className="truncate font-semibold leading-tight">
+              {r.profiles?.full_name ?? "Student"}
+            </div>
+            <div className="mt-0.5">
+              <LevelMark level={r.current_level} />
             </div>
           </div>
         </Link>
-        <Badge variant="outline" className={LEVEL_COLORS[r.current_level] + " capitalize shrink-0"}>
-          {r.current_level}
-        </Badge>
       </div>
 
-      <h3 className="mt-4 text-lg font-semibold leading-tight">
-        Wants <span className="gradient-brand-text">{r.skills?.name ?? "a skill"}</span>
-      </h3>
-      <p className="mt-1.5 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
-        {r.profiles?.bio ?? ""}
-      </p>
+      {/* Skill — the hero of the card */}
+      <div className="mt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+          Wants to learn
+        </p>
+        <h3 className="mt-1 text-lg font-semibold leading-tight">
+          <span className="gradient-brand-text">{r.skills?.name ?? "a skill"}</span>
+        </h3>
+      </div>
 
-      {swapMatch ? (
-        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-brand-purple">
-          <ArrowLeftRight className="h-3 w-3" />
-          Mutual match: you can swap
-        </div>
-      ) : matchesUser ? (
-        <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400">
-          <Sparkles className="h-3 w-3" />
-          You teach this
-        </div>
-      ) : null}
+      {r.profiles?.bio && (
+        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+          {r.profiles.bio}
+        </p>
+      )}
 
-      <div className="mt-auto flex gap-2 pt-4">
+      <div className="mt-auto flex gap-2 border-t border-black/5 pt-2.5 dark:border-white/[0.06]">
         {swapMatch && !isSelf && (
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Propose swap"
-            title="Propose a skill swap — teach each other, no credits"
-            onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
-          >
-            <ArrowLeftRight className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Propose swap"
+                onClick={() => onProposeSwap(r.user_id, r.profiles?.full_name ?? null)}
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Propose a skill swap: teach each other, no credits</TooltipContent>
+          </Tooltip>
         )}
         <Button
           variant="hero"
@@ -502,6 +565,7 @@ function getExploreCache() {
 function setExploreCache(
   rows: TeachingSkillRow[],
   ratings: Map<string, TeacherRating>,
+  verified: Set<string>,
   hasMore: boolean,
 ) {
   try {
@@ -511,8 +575,43 @@ function setExploreCache(
         savedAt: Date.now(),
         rows,
         ratings: Array.from(ratings.entries()),
+        verified: Array.from(verified),
         hasMore,
       } satisfies ExploreCache),
+    );
+  } catch {
+    // Cache is only used to avoid skeleton flashes.
+  }
+}
+
+// Learner-mode twin of the teacher snapshot: without it, every toggle to
+// "Find a learner" flashed skeletons and refetched even when the user had
+// been on that tab seconds earlier.
+const EXPLORE_LEARNERS_CACHE_KEY = "skillswap-explore-learners-cache";
+
+type ExploreLearnersCache = {
+  savedAt: number;
+  rows: LearningSkillRow[];
+  hasMore?: boolean;
+};
+
+function getLearnersCache() {
+  try {
+    const raw = sessionStorage.getItem(EXPLORE_LEARNERS_CACHE_KEY);
+    if (!raw) return null;
+    const cache = JSON.parse(raw) as ExploreLearnersCache;
+    if (Date.now() - cache.savedAt > EXPLORE_CACHE_MAX_AGE_MS) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+function setLearnersCache(rows: LearningSkillRow[], hasMore: boolean) {
+  try {
+    sessionStorage.setItem(
+      EXPLORE_LEARNERS_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), rows, hasMore } satisfies ExploreLearnersCache),
     );
   } catch {
     // Cache is only used to avoid skeleton flashes.
@@ -522,6 +621,22 @@ function setExploreCache(
 // Page size for the server-side discovery RPCs. Each fetch asks for one extra
 // row to learn whether another page exists without a second count query.
 const EXPLORE_PAGE_SIZE = 24;
+
+// Run work once the browser is done with the paint it is currently committing.
+// Used for requests whose results nothing on screen is waiting for, so they
+// stop competing with first-paint work for the connection pool and main thread.
+// Safari has no requestIdleCallback; a short timeout is close enough here.
+function whenIdle(fn: () => void) {
+  if (typeof window === "undefined") {
+    fn();
+    return;
+  }
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(fn, { timeout: 2000 });
+  } else {
+    window.setTimeout(fn, 200);
+  }
+}
 
 function isAbortError(error: unknown) {
   if (!error) return false;
@@ -579,6 +694,10 @@ async function fetchTeacherPage({
   const ratings: [string, TeacherRating][] = pageRows
     .filter((r) => Number(r.rating_count) > 0)
     .map((r) => [r.user_id, { average: Number(r.rating_average), count: Number(r.rating_count) }]);
+  // Verified ticks are NOT loaded here: they need a second query (the RPC
+  // doesn't join skill_verifications) and awaiting it would hold the whole
+  // page hostage to a decoration. Callers fetch them via loadVerifiedPairs
+  // after first paint.
   return { rows, ratings, hasMore: all.length > EXPLORE_PAGE_SIZE };
 }
 
@@ -617,21 +736,18 @@ async function fetchLearnerPage({
   return { rows, hasMore: all.length > EXPLORE_PAGE_SIZE };
 }
 
-// Swap raw storage paths for signed display URLs on a page of rows. Returns
-// the same shape so callers can drop the result straight into state.
-async function withSignedAvatars<T extends { profiles: ExploreProfile | null }>(
-  rows: T[],
-): Promise<T[]> {
-  const paths = Array.from(
+const AVATAR_TRANSFORM = { width: 128, height: 128, quality: 75, resize: "cover" } as const;
+
+function avatarPaths(rows: { profiles: ExploreProfile | null }[]) {
+  return Array.from(
     new Set(rows.map((r) => r.profiles?.avatar_url).filter((p): p is string => Boolean(p))),
   );
-  if (paths.length === 0) return rows;
-  const signed = await signAvatarUrls(paths, {
-    width: 128,
-    height: 128,
-    quality: 75,
-    resize: "cover",
-  });
+}
+
+function applySignedAvatars<T extends { profiles: ExploreProfile | null }>(
+  rows: T[],
+  signed: Map<string, string>,
+): T[] {
   return rows.map((row) =>
     row.profiles
       ? {
@@ -647,9 +763,43 @@ async function withSignedAvatars<T extends { profiles: ExploreProfile | null }>(
   );
 }
 
+// Rows resolved from the avatar cache alone — no network. `complete` means
+// every avatar on the page was already signed, so the caller can paint once
+// and skip the async pass entirely. That matters because the async pass
+// replaces every row object, which repaints the whole grid (24 cards, each a
+// `backdrop-filter` layer) for what is usually a no-op on a repeat visit.
+function withCachedAvatars<T extends { profiles: ExploreProfile | null }>(rows: T[]) {
+  const paths = avatarPaths(rows);
+  if (paths.length === 0) return { rows, complete: true };
+  const signed = cachedAvatarUrls(paths, AVATAR_TRANSFORM);
+  return { rows: applySignedAvatars(rows, signed), complete: signed.size === paths.length };
+}
+
+// Swap raw storage paths for signed display URLs on a page of rows. Returns
+// the same shape so callers can drop the result straight into state.
+async function withSignedAvatars<T extends { profiles: ExploreProfile | null }>(
+  rows: T[],
+): Promise<T[]> {
+  const paths = avatarPaths(rows);
+  if (paths.length === 0) return rows;
+  const signed = await signAvatarUrls(paths, AVATAR_TRANSFORM);
+  return applySignedAvatars(rows, signed);
+}
+
+// Session-lifetime cache of the category catalog. It backs the filter popover
+// only and changes rarely, so re-pulling up to 1000 skill rows on every visit
+// to /explore just to rebuild the same distinct list was pure waste.
+let categoriesCatalogCache: string[] | null = null;
+
 function ExplorePage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
+  // Every card here has a "Request session" / "Propose swap" button, so the
+  // dialog chunks behind them are worth fetching while the page is idle rather
+  // than on the click that needs them.
+  useEffect(() => {
+    warmBookingDialogs();
+  }, []);
   const publicExploreEnabled = useFeatureEnabled("features.public_explore.enabled", true);
   const [rows, setRows] = useState<TeachingSkillRow[]>([]);
   // teacher_id → next free slot the teacher offers (or null if they haven't
@@ -658,6 +808,8 @@ function ExplorePage() {
   // render isn't disrupted by a reshuffle.
   const [intersections, setIntersections] = useState<Map<string, string | null>>(new Map());
   const [ratings, setRatings] = useState<Map<string, TeacherRating>>(new Map());
+  // "user_id:skill_id" for every verified teaching skill currently on screen.
+  const [verifiedPairs, setVerifiedPairs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [teacherLoadingMore, setTeacherLoadingMore] = useState(false);
@@ -665,6 +817,13 @@ function ExplorePage() {
   // instead of just whatever categories appear on the loaded page.
   const [categories, setCategories] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  // Shared with the site header via TanStack Query (staleTime: Infinity, kept
+  // fresh by the realtime credit bridge). Explore used to fire its own
+  // my_credit_balance RPC on mount for a number only the request dialog reads —
+  // one guaranteed round trip on the critical path for a value nothing on
+  // first paint displays.
+  const { data: creditBalance } = useMyCreditBalance();
+  const myCredits = creditBalance ?? null;
   const [requestRow, setRequestRow] = useState<TeachingSkillRow | null>(null);
   // Learner mode: rows of people seeking skills + the seeker we're offering help to.
   const [learnerRows, setLearnerRows] = useState<LearningSkillRow[]>([]);
@@ -674,13 +833,11 @@ function ExplorePage() {
   // Swap shortcut from a mutual-match card — the dialog loads the full
   // reciprocal match itself, so only the counterpart's id/name is needed.
   const [swapTarget, setSwapTarget] = useState<{ userId: string; name?: string } | null>(null);
-  const [myCredits, setMyCredits] = useState<number | null>(null);
-  const [myLearningSkillIds, setMyLearningSkillIds] = useState<Set<string>>(new Set());
   // Skills the viewer can teach — used in learner mode to highlight rows that
   // match what they offer and to default the offer dialog's credits/hour.
   const [myTeachingPrices, setMyTeachingPrices] = useState<Map<string, number>>(new Map());
   const [openSessions, setOpenSessions] = useState<Map<string, OpenSessionInfo>>(new Map());
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { requireAuth } = useAuthGate();
 
   // URL-backed filters. Mirrors the pattern used in /admin/sessions so a back-
@@ -726,14 +883,24 @@ function ExplorePage() {
 
   // Server sort key. "available_soon" has no server-side ranking (next-slot
   // needs teachers_free_time_status, which is too heavy to ORDER BY across all
-  // candidates) so it fetches by rating and reorders the page locally.
+  // candidates) so it fetches by rating and reorders the page locally. The
+  // fetch effects depend on THIS, not sortOption: switching between the three
+  // "rated"-backed sorts (rated / verified / available_soon) is a pure local
+  // reorder and must not refetch from the server.
   const serverSort =
     sortOption === "newest" ? "newest" : sortOption === "default" ? "default" : "rated";
+  // Learner mode only distinguishes newest vs default on the server, so every
+  // other sort collapses to "default" without triggering a refetch.
+  const learnerServerSort = sortOption === "newest" ? "newest" : "default";
+
+  // Keyed on the user ID, not the user object: supabase-js hands out a fresh
+  // session (and therefore a fresh `user`) on every TOKEN_REFRESHED / SIGNED_IN
+  // event, and depending on the object identity re-ran this whole block for a
+  // viewer who never changed.
+  const userId = user?.id;
 
   useEffect(() => {
-    if (!user) {
-      setMyCredits(null);
-      setMyLearningSkillIds(new Set());
+    if (!userId) {
       setMyTeachingPrices(new Map());
       setOpenSessions(new Map());
       return;
@@ -741,29 +908,20 @@ function ExplorePage() {
     let alive = true;
     const controller = new AbortController();
     (async () => {
-      const [{ data: creditBalance }, { data: learning }, { data: teaching }, { data: sessions }] =
-        await Promise.all([
-          supabase.rpc("my_credit_balance").abortSignal(controller.signal),
-          supabase
-            .from("user_learning_skills")
-            .select("skill_id")
-            .eq("user_id", user.id)
-            .abortSignal(controller.signal),
-          supabase
-            .from("user_teaching_skills")
-            .select("skill_id, credits_per_hour")
-            .eq("user_id", user.id)
-            .abortSignal(controller.signal),
-          supabase
-            .from("sessions")
-            .select("id, teacher_id, skill_id, status")
-            .eq("learner_id", user.id)
-            .in("status", ["pending", "accepted", "active"])
-            .abortSignal(controller.signal),
-        ]);
+      const [{ data: teaching }, { data: sessions }] = await Promise.all([
+        supabase
+          .from("user_teaching_skills")
+          .select("skill_id, credits_per_hour")
+          .eq("user_id", userId)
+          .abortSignal(controller.signal),
+        supabase
+          .from("sessions")
+          .select("id, teacher_id, skill_id, status")
+          .eq("learner_id", userId)
+          .in("status", ["pending", "accepted", "active"])
+          .abortSignal(controller.signal),
+      ]);
       if (!alive) return;
-      setMyCredits(creditBalance ?? null);
-      setMyLearningSkillIds(new Set((learning ?? []).map((row) => row.skill_id)));
       const priceMap = new Map<string, number>();
       for (const row of teaching ?? []) {
         if (row.skill_id) priceMap.set(row.skill_id, row.credits_per_hour ?? 4);
@@ -782,7 +940,7 @@ function ExplorePage() {
       alive = false;
       controller.abort();
     };
-  }, [user]);
+  }, [userId]);
 
   // Monotonic tokens so a late response from a previous filter generation (or
   // a stale "load more") can never clobber newer state.
@@ -793,11 +951,14 @@ function ExplorePage() {
   const availabilityFetchedRef = useRef(new Set<string>());
 
   // Availability is per-teacher, not per-filter; accumulate it as pages load.
+  // Depends on the user ID string rather than the user object — this callback
+  // is in the teacher-fetch effect's dependency list, so a new-but-equivalent
+  // `user` object used to abort the in-flight explore query and start it over.
   const loadAvailabilityFor = useCallback(
     async (teacherIds: string[], seq: number, signal?: AbortSignal) => {
-      if (!user) return;
+      if (!userId) return;
       const fresh = Array.from(new Set(teacherIds)).filter(
-        (id) => id !== user.id && !availabilityFetchedRef.current.has(id),
+        (id) => id !== userId && !availabilityFetchedRef.current.has(id),
       );
       if (fresh.length === 0) return;
       for (const id of fresh) availabilityFetchedRef.current.add(id);
@@ -818,7 +979,7 @@ function ExplorePage() {
         });
       }
     },
-    [user],
+    [userId],
   );
 
   useEffect(() => {
@@ -826,25 +987,31 @@ function ExplorePage() {
     // viewers; reset the dedupe set when the viewer changes.
     availabilityFetchedRef.current = new Set();
     setIntersections(new Map());
-  }, [user?.id]);
+  }, [userId]);
 
-  // Full category catalog for the filter popover, fetched once.
+  // Full category catalog for the filter popover, fetched once per browser
+  // session (module cache) rather than once per mount.
   useEffect(() => {
+    if (categoriesCatalogCache) {
+      setCategories(categoriesCatalogCache);
+      return;
+    }
     let alive = true;
     const controller = new AbortController();
     (async () => {
       const { data, error } = await supabase
         .from("skills")
         .select("category")
+        .eq("is_active", true)
         .not("category", "is", null)
         .limit(1000)
         .abortSignal(controller.signal);
       if (!alive || error) return;
-      setCategories(
-        Array.from(
-          new Set((data ?? []).map((r) => r.category).filter((c): c is string => Boolean(c))),
-        ).sort(),
-      );
+      const catalog = Array.from(
+        new Set((data ?? []).map((r) => r.category).filter((c): c is string => Boolean(c))),
+      ).sort();
+      categoriesCatalogCache = catalog;
+      setCategories(catalog);
     })();
     return () => {
       alive = false;
@@ -859,7 +1026,34 @@ function ExplorePage() {
     const seq = ++learnerSeqRef.current;
     let alive = true;
     const controller = new AbortController();
-    setLoading(true);
+
+    // Same snapshot trick as the teacher directory: the pristine view repaints
+    // from sessionStorage so toggling to "Find a learner" is instant.
+    const pristine =
+      query.length === 0 &&
+      categoryFilter === "All" &&
+      levelFilter === "all" &&
+      !matchOnly &&
+      learnerServerSort === "default";
+    const cached = pristine ? getLearnersCache() : null;
+    if (cached) {
+      setLearnerRows(cached.rows);
+      setLearnerHasMore(Boolean(cached.hasMore));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    // Don't fetch until the session finishes restoring — the RPC's match/swap
+    // flags and self-exclusion depend on auth.uid(), so an early request is an
+    // anon-flavored one that gets thrown away and refetched seconds later.
+    if (authLoading) {
+      return () => {
+        alive = false;
+        controller.abort();
+      };
+    }
+
     (async () => {
       try {
         const page = await fetchLearnerPage({
@@ -867,28 +1061,28 @@ function ExplorePage() {
           category: categoryFilter,
           level: levelFilter,
           matchOnly,
-          sort: sortOption === "newest" ? "newest" : "default",
+          sort: learnerServerSort,
           offset: 0,
           signal: controller.signal,
         });
         if (!alive || seq !== learnerSeqRef.current) return;
-        // First paint without avatars (initials only) so cards show instantly.
-        setLearnerRows(
-          page.rows.map((row) => ({
-            ...row,
-            profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
-          })),
-        );
+        // First paint from the avatar cache, initials for anything not in it,
+        // so cards show instantly.
+        const firstPaint = withCachedAvatars(page.rows);
+        setLearnerRows(firstPaint.rows);
         setLearnerHasMore(page.hasMore);
         setLoading(false);
+        if (pristine) setLearnersCache(firstPaint.rows, page.hasMore);
+        if (firstPaint.complete) return;
 
         const signedRows = await withSignedAvatars(page.rows);
         if (!alive || seq !== learnerSeqRef.current) return;
         setLearnerRows(signedRows);
+        if (pristine) setLearnersCache(signedRows, page.hasMore);
       } catch (error) {
         if (!alive || seq !== learnerSeqRef.current || isAbortError(error)) return;
         toast.error(error instanceof Error ? error.message : "Could not load learners");
-        setLearnerRows([]);
+        if (!cached) setLearnerRows([]);
         setLoading(false);
       }
     })();
@@ -896,7 +1090,16 @@ function ExplorePage() {
       alive = false;
       controller.abort();
     };
-  }, [mode, query, categoryFilter, levelFilter, matchOnly, sortOption, user?.id]);
+  }, [
+    mode,
+    query,
+    categoryFilter,
+    levelFilter,
+    matchOnly,
+    learnerServerSort,
+    authLoading,
+    user?.id,
+  ]);
 
   const loadMoreLearners = async () => {
     if (learnerLoadingMore || !learnerHasMore || loading) return;
@@ -908,7 +1111,7 @@ function ExplorePage() {
         category: categoryFilter,
         level: levelFilter,
         matchOnly,
-        sort: sortOption === "newest" ? "newest" : "default",
+        sort: learnerServerSort,
         offset: learnerRows.length,
       });
       if (seq !== learnerSeqRef.current) return;
@@ -938,21 +1141,35 @@ function ExplorePage() {
     const controller = new AbortController();
 
     // The sessionStorage snapshot only matches the pristine view (no filters,
-    // default sort); anything else must hit the server.
+    // default sort); anything else must hit the server. serverSort is
+    // "default" exactly when sortOption is, so this stays correct without the
+    // effect depending on sortOption itself.
     const pristine =
       query.length === 0 &&
       categoryFilter === "All" &&
       levelFilter === "all" &&
       !matchOnly &&
-      sortOption === "default";
+      serverSort === "default";
     const cached = pristine ? getExploreCache() : null;
     if (cached) {
       setRows(cached.rows);
       setRatings(new Map(cached.ratings));
+      setVerifiedPairs(new Set(cached.verified ?? []));
       setHasMore(Boolean(cached.hasMore));
       setLoading(false);
     } else {
       setLoading(true);
+    }
+
+    // Don't fetch until the session finishes restoring — the RPC's match/swap
+    // flags and self-exclusion depend on auth.uid(), so an early request is an
+    // anon-flavored one that gets thrown away and refetched moments later.
+    // The cached snapshot above still paints instantly in the meantime.
+    if (authLoading) {
+      return () => {
+        alive = false;
+        controller.abort();
+      };
     }
 
     (async () => {
@@ -968,28 +1185,57 @@ function ExplorePage() {
         });
         if (!alive || seq !== teacherSeqRef.current) return;
 
-        // First paint without avatars (initials only) so cards show instantly;
-        // signed avatar URLs are merged in once they resolve.
-        const initialRows = page.rows.map((row) => ({
-          ...row,
-          profiles: row.profiles ? { ...row.profiles, avatar_url: null } : null,
-        }));
+        // First paint uses whatever avatars are already signed in cache and
+        // initials for the rest, so cards show instantly. Signed URLs for the
+        // uncached ones and the verified ticks are decoration and merge in as
+        // their requests resolve.
+        const firstPaint = withCachedAvatars(page.rows);
+        const initialRows = firstPaint.rows;
+        const ratingsMap = new Map(page.ratings);
         setRows(initialRows);
-        setRatings(new Map(page.ratings));
+        setRatings(ratingsMap);
         setHasMore(page.hasMore);
         setLoading(false);
-        if (pristine) setExploreCache(initialRows, new Map(page.ratings), page.hasMore);
 
-        const signedRows = await withSignedAvatars(page.rows);
-        if (!alive || seq !== teacherSeqRef.current) return;
-        setRows(signedRows);
-        if (pristine) setExploreCache(signedRows, new Map(page.ratings), page.hasMore);
+        // Keep the pristine snapshot in step with whichever decoration lands
+        // last, so the next mount paints with avatars and ticks included.
+        let cacheRows: TeachingSkillRow[] = initialRows;
+        let cacheVerified = new Set(cached?.verified ?? []);
+        const writeCache = () => {
+          if (pristine) setExploreCache(cacheRows, ratingsMap, cacheVerified, page.hasMore);
+        };
+        writeCache();
 
-        await loadAvailabilityFor(
-          page.rows.map((r) => r.user_id),
-          seq,
-          controller.signal,
-        );
+        const userIds = page.rows.map((r) => r.user_id);
+
+        void loadVerifiedPairs(userIds).then((verified) => {
+          if (!alive || seq !== teacherSeqRef.current) return;
+          cacheVerified = verified;
+          // Merge instead of replace: verification is a filter-independent
+          // fact about (user, skill), so pairs learned earlier are still true
+          // and keeping them stops ticks blinking off while this resolves.
+          setVerifiedPairs((prev) => new Set([...prev, ...verified]));
+          writeCache();
+        });
+
+        // Availability no longer waits behind avatar signing. The two are
+        // unrelated round trips and awaiting the signer first pushed the
+        // (much heavier) teachers_free_time_status call to the very end of the
+        // chain. It is also deferred to idle: nothing on first paint reads it —
+        // it only powers the "Available soonest" sort and the "Only free times"
+        // filter — so it must never compete with the avatar/tick requests.
+        whenIdle(() => {
+          if (!alive || seq !== teacherSeqRef.current) return;
+          void loadAvailabilityFor(userIds, seq, controller.signal);
+        });
+
+        if (!firstPaint.complete) {
+          const signedRows = await withSignedAvatars(page.rows);
+          if (!alive || seq !== teacherSeqRef.current) return;
+          cacheRows = signedRows;
+          setRows(signedRows);
+          writeCache();
+        }
       } catch (error) {
         if (!alive || seq !== teacherSeqRef.current || isAbortError(error)) return;
         toast.error(error instanceof Error ? error.message : "Could not load skills");
@@ -1009,7 +1255,7 @@ function ExplorePage() {
     levelFilter,
     matchOnly,
     serverSort,
-    sortOption,
+    authLoading,
     user?.id,
     loadAvailabilityFor,
   ]);
@@ -1028,6 +1274,9 @@ function ExplorePage() {
         offset: rows.length,
       });
       if (seq !== teacherSeqRef.current) return;
+      // Ticks and avatar signing are independent round trips — run them in
+      // parallel and let the ticks merge in whenever they land.
+      const verifiedPromise = loadVerifiedPairs(page.rows.map((r) => r.user_id));
       const signedRows = await withSignedAvatars(page.rows);
       if (seq !== teacherSeqRef.current) return;
       setRows((prev) => {
@@ -1036,6 +1285,10 @@ function ExplorePage() {
       });
       setRatings((prev) => new Map([...prev, ...page.ratings]));
       setHasMore(page.hasMore);
+      void verifiedPromise.then((verified) => {
+        if (seq !== teacherSeqRef.current) return;
+        setVerifiedPairs((prev) => new Set([...prev, ...verified]));
+      });
       void loadAvailabilityFor(
         page.rows.map((r) => r.user_id),
         seq,
@@ -1048,12 +1301,6 @@ function ExplorePage() {
       setTeacherLoadingMore(false);
     }
   };
-
-  const isMatchForUser = useCallback(
-    (row: TeachingSkillRow) =>
-      row.matches_viewer ?? Boolean(row.skills && myLearningSkillIds.has(row.skills.id)),
-    [myLearningSkillIds],
-  );
 
   const intersectionSlotMs = useCallback(
     (uid: string) => {
@@ -1068,35 +1315,45 @@ function ExplorePage() {
   // Search / category / level / match filtering and the default / rated /
   // newest orderings now happen server-side in explore_teachers. Locally we
   // only hide the viewer's own rows (a cached snapshot can predate sign-in),
-  // apply the availability toggle, and reorder for "available soonest" —
-  // whose next-slot signal arrives per page after first paint.
+  // apply the availability toggle, and reorder for "available soonest" and
+  // "verified" — both signals arrive per page after first paint, so the
+  // server fetches by rating and we re-sort what's already on screen.
   const filtered = useMemo(() => {
     const visible = rows.filter((r) => {
       if (user && r.user_id === user.id) return false;
       if (onlyAvailable && intersectionSlotMs(r.user_id) == null) return false;
       return true;
     });
-    if (sortOption !== "available_soon") return visible;
-    return [...visible].sort((a, b) => {
-      // Teachers with a known next-free slot come first, ordered by
-      // soonest. Teachers without posted free times fall to the bottom.
-      const aSlot = intersectionSlotMs(a.user_id);
-      const bSlot = intersectionSlotMs(b.user_id);
-      if (aSlot != null && bSlot != null) return aSlot - bSlot;
-      if (aSlot != null) return -1;
-      if (bSlot != null) return 1;
-      // Tie-breaker: rating.
-      const aAvg = ratings.get(a.user_id)?.average ?? 0;
-      const bAvg = ratings.get(b.user_id)?.average ?? 0;
-      return bAvg - aAvg;
-    });
-  }, [rows, user, onlyAvailable, sortOption, ratings, intersectionSlotMs]);
-
-  const learnerMatchesMe = useCallback(
-    (row: LearningSkillRow) =>
-      row.matches_viewer ?? Boolean(row.skills && myTeachingPrices.has(row.skills.id)),
-    [myTeachingPrices],
-  );
+    if (sortOption === "available_soon") {
+      return [...visible].sort((a, b) => {
+        // Teachers with a known next-free slot come first, ordered by
+        // soonest. Teachers without posted free times fall to the bottom.
+        const aSlot = intersectionSlotMs(a.user_id);
+        const bSlot = intersectionSlotMs(b.user_id);
+        if (aSlot != null && bSlot != null) return aSlot - bSlot;
+        if (aSlot != null) return -1;
+        if (bSlot != null) return 1;
+        // Tie-breaker: rating.
+        const aAvg = ratings.get(a.user_id)?.average ?? 0;
+        const bAvg = ratings.get(b.user_id)?.average ?? 0;
+        return bAvg - aAvg;
+      });
+    }
+    if (sortOption === "verified") {
+      const isVerified = (r: TeachingSkillRow) =>
+        Boolean(r.skills) && verifiedPairs.has(verifiedPairKey(r.user_id, r.skills!.id));
+      return [...visible].sort((a, b) => {
+        // Verified skills first, then by rating within each group.
+        const aVerified = isVerified(a);
+        const bVerified = isVerified(b);
+        if (aVerified !== bVerified) return aVerified ? -1 : 1;
+        const aAvg = ratings.get(a.user_id)?.average ?? 0;
+        const bAvg = ratings.get(b.user_id)?.average ?? 0;
+        return bAvg - aAvg;
+      });
+    }
+    return visible;
+  }, [rows, user, onlyAvailable, sortOption, ratings, intersectionSlotMs, verifiedPairs]);
 
   const filteredLearners = useMemo(
     () => learnerRows.filter((r) => !(user && r.user_id === user.id)),
@@ -1454,25 +1711,20 @@ function ExplorePage() {
                         </div>
 
                         {availabilityFilterAvailable && (
-                          <div>
-                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                              Availability
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => setOnlyAvailable((v) => !v)}
-                              aria-pressed={onlyAvailable}
-                              className={
-                                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors " +
-                                (onlyAvailable
-                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                                  : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground")
-                              }
-                            >
-                              <Sparkles className="h-3 w-3" />
-                              Only with free times
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setOnlyAvailable((v) => !v)}
+                            aria-pressed={onlyAvailable}
+                            className={
+                              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors " +
+                              (onlyAvailable
+                                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground")
+                            }
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            Only free times
+                          </button>
                         )}
                       </div>
                     </PopoverContent>
@@ -1587,18 +1839,20 @@ function ExplorePage() {
               </Button>
             </div>
           ) : (
-            <>
+            <TooltipProvider delayDuration={200}>
               <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filtered.map((r, i) => (
                   <div
                     key={r.id}
                     className="animate-fade-up h-full"
-                    style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+                    style={{ animationDelay: `${cardDelayMs(i)}ms` }}
                   >
                     <ExploreSkillCard
                       row={r}
-                      currentUserId={user?.id}
-                      matchesUser={isMatchForUser(r)}
+                      verified={
+                        Boolean(r.skills?.id) &&
+                        verifiedPairs.has(verifiedPairKey(r.user_id, r.skills!.id))
+                      }
                       swapMatch={Boolean(user) && Boolean(r.swap_match)}
                       openSession={
                         r.skills ? openSessions.get(`${r.user_id}:${r.skills.id}`) : undefined
@@ -1625,7 +1879,7 @@ function ExplorePage() {
                   </Button>
                 </div>
               )}
-            </>
+            </TooltipProvider>
           )
         ) : filteredLearners.length === 0 ? (
           <div
@@ -1640,18 +1894,17 @@ function ExplorePage() {
             </p>
           </div>
         ) : (
-          <>
+          <TooltipProvider delayDuration={200}>
             <div className="grid auto-rows-fr sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredLearners.map((r, i) => (
                 <div
                   key={r.id}
                   className="animate-fade-up h-full"
-                  style={{ animationDelay: `${Math.min(120 + i * 40, 440)}ms` }}
+                  style={{ animationDelay: `${cardDelayMs(i)}ms` }}
                 >
                   <ExploreLearnerCard
                     row={r}
                     currentUserId={user?.id}
-                    matchesUser={learnerMatchesMe(r)}
                     swapMatch={Boolean(user) && Boolean(r.swap_match)}
                     busy={busyAction === `offer-${r.id}`}
                     onOffer={offerHelp}
@@ -1672,7 +1925,7 @@ function ExplorePage() {
                 </Button>
               </div>
             )}
-          </>
+          </TooltipProvider>
         )}
       </section>
 

@@ -102,19 +102,43 @@ export function buildSessionSelects(opts: SessionSelectOptions = {}): string[] {
   return [...withBatch(", is_swap, swap_id"), ...withBatch("")];
 }
 
-// Try each SELECT in order until one succeeds. Re-throws any non-schema error
+// Which ladder rung actually worked, keyed by SELECT shape. Every rung the live
+// schema rejects costs a full round trip, and the answer can't change without a
+// migration + page reload — so on a deployment missing (say) batch_id, walking
+// the ladder from the top on every read added several sequential requests to
+// each page load. Remember the winner and start there next time.
+const workingSelectIndex = new Map<string, number>();
+
+function selectShapeKey(opts: SessionSelectOptions) {
+  return `${opts.includeUpdatedAt ? "u" : ""}${opts.includeSkillCategory ? "c" : ""}`;
+}
+
+// Try each SELECT until one succeeds. Re-throws any non-schema error
 // immediately so we don't mask real failures behind the fallback ladder.
 async function runWithSelectFallback<T>(
+  shapeKey: string,
   selects: string[],
   run: (select: string) => Promise<{ data: T; error: SessionQueryError | null }>,
 ): Promise<T> {
+  const remembered = workingSelectIndex.get(shapeKey);
+  const indexes = selects.map((_, index) => index);
+  // Remembered rung first, then the usual newest-schema-first walk minus the
+  // rung we just tried — so a stale memo degrades to the original behaviour
+  // rather than failing the query.
+  const order =
+    remembered === undefined ? indexes : [remembered, ...indexes.filter((i) => i !== remembered)];
+
   let lastError: SessionQueryError | null = null;
-  for (const select of selects) {
-    const { data, error } = await run(select);
-    if (!error) return data;
+  for (const index of order) {
+    const { data, error } = await run(selects[index]);
+    if (!error) {
+      workingSelectIndex.set(shapeKey, index);
+      return data;
+    }
     lastError = error;
     if (!isSessionSchemaMismatch(error)) throw error;
   }
+  workingSelectIndex.delete(shapeKey);
   throw lastError ?? new Error("Could not run sessions query");
 }
 
@@ -126,17 +150,21 @@ export async function queryUserSessions(opts: {
   selectOptions?: SessionSelectOptions;
 }): Promise<RawSessionRow[]> {
   const selects = buildSessionSelects(opts.selectOptions);
-  const data = await runWithSelectFallback<unknown[] | null>(selects, async (select) => {
-    let query = supabase
-      .from("sessions")
-      .select(select)
-      .or(`learner_id.eq.${opts.userId},teacher_id.eq.${opts.userId}`)
-      .in("status", opts.statuses)
-      .order("created_at", { ascending: false });
-    if (opts.limit) query = query.limit(opts.limit);
-    const { data, error } = await query;
-    return { data: data as unknown[] | null, error: error as SessionQueryError | null };
-  });
+  const data = await runWithSelectFallback<unknown[] | null>(
+    selectShapeKey(opts.selectOptions ?? {}),
+    selects,
+    async (select) => {
+      let query = supabase
+        .from("sessions")
+        .select(select)
+        .or(`learner_id.eq.${opts.userId},teacher_id.eq.${opts.userId}`)
+        .in("status", opts.statuses)
+        .order("created_at", { ascending: false });
+      if (opts.limit) query = query.limit(opts.limit);
+      const { data, error } = await query;
+      return { data: data as unknown[] | null, error: error as SessionQueryError | null };
+    },
+  );
   return (data ?? []).map(
     (row) => normalizeSessionRow(row as Partial<RawSessionRow>) as RawSessionRow,
   );
@@ -149,11 +177,15 @@ export async function querySessionById(opts: {
   signal?: AbortSignal;
 }): Promise<RawSessionRow | null> {
   const selects = buildSessionSelects(opts.selectOptions);
-  const data = await runWithSelectFallback<unknown | null>(selects, async (select) => {
-    let query = supabase.from("sessions").select(select).eq("id", opts.sessionId);
-    if (opts.signal) query = query.abortSignal(opts.signal);
-    const { data, error } = await query.maybeSingle();
-    return { data: data as unknown, error: error as SessionQueryError | null };
-  });
+  const data = await runWithSelectFallback<unknown | null>(
+    selectShapeKey(opts.selectOptions ?? {}),
+    selects,
+    async (select) => {
+      let query = supabase.from("sessions").select(select).eq("id", opts.sessionId);
+      if (opts.signal) query = query.abortSignal(opts.signal);
+      const { data, error } = await query.maybeSingle();
+      return { data: data as unknown, error: error as SessionQueryError | null };
+    },
+  );
   return data ? (normalizeSessionRow(data as Partial<RawSessionRow>) as RawSessionRow) : null;
 }

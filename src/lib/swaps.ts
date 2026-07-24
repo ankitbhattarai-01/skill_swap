@@ -20,7 +20,11 @@ export type SwapMatch = {
   theyCanTeach: SwapSkillOption[]; // their teaching ∩ my learning
 };
 
-type SkillRow = { skill_id: string; skills: { id: string; name: string } | null };
+type SkillRow = {
+  user_id: string;
+  skill_id: string;
+  skills: { id: string; name: string } | null;
+};
 
 function toOptions(
   rows: SkillRow[],
@@ -51,40 +55,38 @@ export async function fetchSwapMatch(
     me = auth?.user?.id;
   }
   if (!me) return null;
+  // Pinned to a const so the narrowing survives into the closures below.
+  const meId = me;
 
-  const [myTeach, myLearn, theirTeach, theirLearn, otherProfile] = await Promise.all([
+  // Both people's rows come back in one request per table (`user_id IN (…)`)
+  // rather than one request per person. Parallel or not, five round trips means
+  // the dialog waits on the slowest of five, and this call gates the whole
+  // panel — nothing else about the swap form can start until it lands.
+  const [teaching, learning, otherProfile] = await Promise.all([
     supabase
       .from("user_teaching_skills")
-      .select("skill_id, skills:skill_id(id, name)")
-      .eq("user_id", me),
+      .select("user_id, skill_id, skills:skill_id(id, name)")
+      .in("user_id", [meId, otherUserId]),
     supabase
       .from("user_learning_skills")
-      .select("skill_id, skills:skill_id(id, name)")
-      .eq("user_id", me),
-    supabase
-      .from("user_teaching_skills")
-      .select("skill_id, skills:skill_id(id, name)")
-      .eq("user_id", otherUserId),
-    supabase
-      .from("user_learning_skills")
-      .select("skill_id, skills:skill_id(id, name)")
-      .eq("user_id", otherUserId),
+      .select("user_id, skill_id, skills:skill_id(id, name)")
+      .in("user_id", [meId, otherUserId]),
     supabase.from("profiles").select("full_name").eq("id", otherUserId).maybeSingle(),
   ]);
 
-  const myTeachRows = (myTeach.data ?? []) as unknown as SkillRow[];
-  const myLearnRows = (myLearn.data ?? []) as unknown as SkillRow[];
-  const theirTeachRows = (theirTeach.data ?? []) as unknown as SkillRow[];
-  const theirLearnRows = (theirLearn.data ?? []) as unknown as SkillRow[];
+  const teachRows = (teaching.data ?? []) as unknown as SkillRow[];
+  const learnRows = (learning.data ?? []) as unknown as SkillRow[];
+  const mine = (rows: SkillRow[]) => rows.filter((r) => r.user_id === meId);
+  const theirs = (rows: SkillRow[]) => rows.filter((r) => r.user_id === otherUserId);
 
-  const theirLearnIds = new Set(theirLearnRows.map((r) => r.skill_id));
-  const myLearnIds = new Set(myLearnRows.map((r) => r.skill_id));
+  const theirLearnIds = new Set(theirs(learnRows).map((r) => r.skill_id));
+  const myLearnIds = new Set(mine(learnRows).map((r) => r.skill_id));
 
   return {
     otherUserId,
     otherName: otherProfile.data?.full_name ?? "Student",
-    iCanTeach: toOptions(myTeachRows, theirLearnIds),
-    theyCanTeach: toOptions(theirTeachRows, myLearnIds),
+    iCanTeach: toOptions(mine(teachRows), theirLearnIds),
+    theyCanTeach: toOptions(theirs(teachRows), myLearnIds),
   };
 }
 
@@ -174,8 +176,14 @@ type RawSwapRow = {
 export async function fetchMySwaps(
   statuses: SessionStatus[] = ["pending", "accepted", "active"],
 ): Promise<SwapPair[]> {
-  const { data: auth } = await supabase.auth.getUser();
-  const me = auth?.user?.id;
+  // getSession() reads the locally stored session; getUser() round-trips to
+  // /auth/v1/user first. This is a read path that <SwapInbox> runs on every
+  // dashboard mount and again on every realtime refresh, and the id is only
+  // used to build a filter — RLS is what actually authorizes the rows — so
+  // the extra validation hop bought nothing but latency. The mutation helpers
+  // above deliberately keep getUser().
+  const { data: auth } = await supabase.auth.getSession();
+  const me = auth?.session?.user?.id;
   if (!me) return [];
 
   const { data, error } = await supabase

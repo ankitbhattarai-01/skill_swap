@@ -18,10 +18,10 @@ import {
   Check,
   X,
   Video,
-  Eye,
   RefreshCw,
   ArrowLeftRight,
   TrendingUp,
+  Megaphone,
   UserCircle2,
   Trophy,
   GitBranch,
@@ -32,7 +32,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
-import { fetchAiSuggestions, inferExploreMode, type AiSuggestion } from "@/lib/ai-suggestions";
+import {
+  fetchAiSuggestions,
+  inferExploreMode,
+  invalidateAiSuggestionsCache,
+  nextSuggestionsRotation,
+  readCachedSuggestions,
+  writeCachedSuggestions,
+  type AiSuggestion,
+} from "@/lib/ai-suggestions";
 import { useFeatureEnabled } from "@/lib/feature-flags";
 // Jitsi helpers are only needed on the accept-session path and to rewrite
 // already-accepted meet links — both rare on a typical dashboard load. Lazy
@@ -46,12 +54,20 @@ import {
   type SessionDuration,
 } from "@/lib/sessions";
 import { playRequestSentChime, playCancelChime } from "@/lib/sounds";
+import { warmBookingDialogs } from "@/lib/warm-dialog-chunks";
 import { markSelfAction } from "@/lib/self-action";
 import { fetchTeacherRatings, type TeacherRating } from "@/lib/ratings";
+import { loadVerifiedPairs, verifiedPairKey } from "@/lib/skill-verification";
+import { VerifiedTick } from "@/components/VerifiedTick";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { UpNextRescheduleActions } from "@/components/UpNextRescheduleActions";
 import { UserAvatar } from "@/components/UserAvatar";
 import { PageLoading } from "@/components/PageLoading";
+import {
+  NextMoveSkeleton,
+  PeopleSectionSkeleton,
+  SuggestionsSkeleton,
+} from "@/components/DashboardSectionSkeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signAvatarUrls } from "@/lib/avatars";
 import { deriveMatchLabel, rankCandidate, type LearningMode, type SkillLevel } from "@/lib/match";
@@ -103,6 +119,13 @@ const SUGGESTION_TYPE_META: Record<
     icon: TrendingUp,
     bg: "bg-rose-500/15",
     fg: "text-rose-400",
+  },
+  // Demand tiles ("N learners waiting for X") used to be typed `trending`,
+  // which meant two cards in the same batch could show the same arrow.
+  demand: {
+    icon: Megaphone,
+    bg: "bg-orange-500/15",
+    fg: "text-orange-400",
   },
   progression: {
     icon: GitBranch,
@@ -198,6 +221,11 @@ async function queryDashboardSessionRows(userId: string) {
   });
 }
 
+// How long a hover-prefetched teaching row stays usable. Long enough to cover
+// hover → read → click, short enough that a price the teacher just changed
+// can't be what the booking dialog opens on.
+const BOOK_OFFER_TTL_MS = 60_000;
+
 const DASHBOARD_CACHE_PREFIX = "skillswap-dashboard-cache";
 const DASHBOARD_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -216,6 +244,9 @@ type DashboardCache = {
   sessions: SessionRow[];
   recs: AiSuggestion[] | null;
   teacherRatings: [string, TeacherRating][];
+  // Serialized verifiedPairKey() entries — restored alongside `teachers` so the
+  // cached tiles paint with their ticks instead of growing one a moment later.
+  verifiedPairs: string[];
   streak: number;
 };
 
@@ -242,7 +273,38 @@ function setDashboardCache(userId: string, cache: Omit<DashboardCache, "savedAt"
   }
 }
 
-async function loadProfiles(ids: string[]) {
+// Patches only the `recs` field of an existing snapshot, so the next mount
+// rehydrates the suggestions the user is looking at right now rather than the
+// previous session's. Suggestions arrive on their own schedule — earlier than
+// the full snapshot write on a cold load, long after it on a manual ⟳ — so a
+// targeted patch is the only safe write. No-op when there's no snapshot yet:
+// the full write that follows picks the value up from recsRef.
+function cacheRecs(userId: string | undefined, recs: AiSuggestion[]) {
+  // The localStorage copy is written unconditionally: it is what a brand-new
+  // tab (empty sessionStorage) rehydrates from, so it must survive even when
+  // there is no dashboard snapshot to patch.
+  writeCachedSuggestions(userId, recs);
+  if (!userId) return;
+  const snapshot = getDashboardCache(userId);
+  if (!snapshot) return;
+  const { savedAt: _savedAt, ...rest } = snapshot;
+  setDashboardCache(userId, { ...rest, recs });
+}
+
+// 128x128 covers 2x DPR on the 40-64px avatar slots used across the dashboard
+// (top-match tiles, seeker cards). Without the transform, every avatar
+// downloads at its 400-800px upload size — the Lighthouse report flagged
+// ~88 KB per tile for ~55px circles.
+const AVATAR_TRANSFORM = { width: 128, height: 128, quality: 75, resize: "cover" } as const;
+
+// Row fetch only — deliberately does NOT sign avatars. The candidate pool is up
+// to 100 people per direction but we render at most ~8 of them, and the signer
+// costs one HTTP roundtrip per uncached avatar (Storage's batch endpoint can't
+// take a transform). Signing the whole pool put ~200 requests on the critical
+// path before "Top matches" could paint. Ranking only needs full_name /
+// learning_mode / updated_at, so the pool gets raw storage paths and the
+// survivors get signed by attachSignedAvatars() after the cut.
+async function loadProfileSummaries(ids: string[]) {
   const uniqueIds = Array.from(new Set(ids));
   const profileMap = new Map<string, ProfileSummary>();
   if (!uniqueIds.length) return profileMap;
@@ -253,30 +315,36 @@ async function loadProfiles(ids: string[]) {
     .in("id", uniqueIds);
   // Profiles decorate the match tiles; a failure shouldn't kill the dashboard,
   // but it shouldn't be invisible either.
-  if (error) console.error("[dashboard] loadProfiles failed:", error);
-  const rows = data ?? [];
-  // 128x128 covers 2x DPR on the 40-64px avatar slots used across the
-  // dashboard (top-match tiles, active sessions strip, seeker cards). Without
-  // the transform, every avatar downloaded at its 400-800px upload size -
-  // the Lighthouse report flagged ~88 KB per tile for ~55px circles.
-  const signedUrlMap = await signAvatarUrls(
-    rows.map((r) => r.avatar_url),
-    {
-      width: 128,
-      height: 128,
-      quality: 75,
-      resize: "cover",
-    },
-  );
-  for (const person of rows) {
+  if (error) console.error("[dashboard] loadProfileSummaries failed:", error);
+  for (const person of data ?? []) {
     profileMap.set(person.id, {
       full_name: person.full_name ?? "Student",
       learning_mode: person.learning_mode ?? null,
-      avatar_url: person.avatar_url ? (signedUrlMap.get(person.avatar_url) ?? null) : null,
+      // Storage path, not a URL yet — see attachSignedAvatars.
+      avatar_url: person.avatar_url ?? null,
       updated_at: person.updated_at ?? null,
     });
   }
   return profileMap;
+}
+
+// Swaps each row's raw storage path for a signed, downscaled URL. Called with
+// the post-rank slice only, so the fan-out is ~10 requests instead of ~100.
+// Rows whose avatar fails to sign keep a null url and fall back to initials.
+async function attachSignedAvatars<
+  T extends {
+    profiles: { id: string; full_name: string | null; avatar_url: string | null } | null;
+  },
+>(rows: T[]): Promise<T[]> {
+  const signedUrlMap = await signAvatarUrls(
+    rows.map((row) => row.profiles?.avatar_url),
+    AVATAR_TRANSFORM,
+  );
+  return rows.map((row) => {
+    const path = row.profiles?.avatar_url;
+    if (!path || !row.profiles) return row;
+    return { ...row, profiles: { ...row.profiles, avatar_url: signedUrlMap.get(path) ?? null } };
+  });
 }
 
 async function loadCandidateLearningSkillIds(userIds: string[]) {
@@ -311,6 +379,13 @@ async function loadCandidateTeachingSkillIds(userIds: string[]) {
   return map;
 }
 
+// Set once we've seen PostgREST say the RPC isn't in the schema cache — i.e.
+// migration 20260530100000 hasn't been applied to this database. That answer
+// can't change without a migration + reload, so re-asking on every load (and
+// this runs twice per load, once per pipeline) only bought a guaranteed-404
+// round trip in front of the fallback.
+let completedCountsRpcMissing = false;
+
 async function loadCompletedSessionCounts(userIds: string[]) {
   const counts = new Map<string, number>();
   if (!userIds.length) return counts;
@@ -320,14 +395,26 @@ async function loadCompletedSessionCounts(userIds: string[]) {
   // row for every candidate across two queries. SECURITY INVOKER, so it sees the
   // exact same rows the fallback queries below would — the ranking signal is
   // unchanged, only the round trips and payload shrink.
-  const { data, error } = await supabase.rpc("completed_session_counts", {
-    p_user_ids: userIds,
-  });
-  if (!error && data) {
-    for (const row of data) {
-      if (row.user_id) counts.set(row.user_id, Number(row.completed_count) || 0);
+  if (!completedCountsRpcMissing) {
+    const { data, error } = await supabase.rpc("completed_session_counts", {
+      p_user_ids: userIds,
+    });
+    if (!error && data) {
+      for (const row of data) {
+        if (row.user_id) counts.set(row.user_id, Number(row.completed_count) || 0);
+      }
+      return counts;
     }
-    return counts;
+    // Only latch on "this function does not exist" (PGRST202 / 42883). A
+    // transient failure must still retry the fast path next time.
+    const raw = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
+    if (
+      error?.code === "PGRST202" ||
+      error?.code === "42883" ||
+      raw.includes("could not find the function")
+    ) {
+      completedCountsRpcMissing = true;
+    }
   }
 
   // Fallback: original two-query client-side tally. Keeps the dashboard working
@@ -446,6 +533,11 @@ async function loadMyTeachingSkills(userId: string) {
 function DashboardPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  // "Book again", the top-match tiles and the Up next reschedule button all
+  // open code-split dialogs — fetch them while the dashboard is idle.
+  useEffect(() => {
+    warmBookingDialogs();
+  }, []);
   const invalidateCreditBalance = useInvalidateMyCreditBalance();
   // Single source of truth shared with the header. Realtime push from
   // credit_transactions keeps this fresh without any manual fetch.
@@ -493,11 +585,7 @@ function DashboardPage() {
   // the reciprocal-match AI suggestion tile. The skill names let the dialog
   // pre-select the exact legs the suggestion named ("Swap Figma for Guitar")
   // instead of defaulting to the first overlap.
-  const [swapTarget, setSwapTarget] = useState<{
-    userId: string;
-    mySkillName?: string;
-    theirSkillName?: string;
-  } | null>(null);
+  const [swapTarget, setSwapTarget] = useState<SwapTileTarget | null>(null);
   // Bumped whenever the sessions realtime channel fires (or a swap is
   // proposed) so SwapInbox refetches — it manages its own data and would
   // otherwise only load on mount.
@@ -518,16 +606,31 @@ function DashboardPage() {
   // tile A → tile B once live data landed). Keeping these lists unhydrated
   // and showing a skeleton in NextMoveCard is the right trade.
   const [matchesHydrated, setMatchesHydrated] = useState(false);
+  // Same idea for the session pipeline. "Your Next Move" is built from sessions
+  // AND teachers, so it can only be trusted once both have landed — without
+  // this, a fast teacher pipeline paints "Top match for you" and the sessions
+  // arriving a moment later shove an "Action needed" card in above it.
+  const [sessionsHydrated, setSessionsHydrated] = useState(false);
   // State value isn't read anywhere on this page — the setter exists only so
   // cache hydration can persist the rating map for next mount. Prefixed with
   // `_` to opt out of the unused-vars lint without breaking the cache wire-up.
   const [_teacherRatings, setTeacherRatings] = useState<Map<string, TeacherRating>>(new Map());
+  // "user_id:skill_id" for every verified teaching skill among the matched
+  // teachers, so their tick shows here the same way it does on their profile.
+  const [verifiedPairs, setVerifiedPairs] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [requestDialog, setRequestDialog] = useState<
     | { kind: "request"; teacher: TeachOffer }
     | { kind: "offer"; seeker: Seeker; creditsPerHour: number }
     | null
   >(null);
+  // bookTileKey() of the suggestion tile whose teaching-row lookup is in
+  // flight, so that one tile shows a spinner instead of the whole card.
+  const [bookingTileKey, setBookingTileKey] = useState<string | null>(null);
+  // bookTileKey() → the in-flight/resolved teaching row behind a suggestion
+  // tile. Filled on hover or focus (the tiles are buttons now, so the router's
+  // preload="intent" no longer applies) so the click itself opens the dialog.
+  const bookOfferCache = useRef(new Map<string, { at: number; row: Promise<TeachOffer | null> }>());
   // Gate to prevent the dashboard skeleton from painting before we know the
   // user finished onboarding. Without this, a brand-new OAuth user — e.g. a
   // GitHub signup that lands here because Supabase's project redirect URLs
@@ -581,6 +684,15 @@ function DashboardPage() {
   useEffect(() => {
     if (!user) return;
     const cache = getDashboardCache(user.id);
+    // Suggestions rehydrate even when there is no snapshot. Their own copy
+    // lives in localStorage rather than sessionStorage, so a freshly opened
+    // tab — the load the Edge Function round trip is most visible on — still
+    // paints the tiles the user last saw instead of a skeleton.
+    // Assigned unconditionally (not just when there's something to show) so
+    // switching accounts in one tab clears the previous user's tiles instead of
+    // leaving them up until the new user's fetch lands.
+    const lastRecs = cache?.recs ?? readCachedSuggestions(user.id);
+    setRecs(lastRecs?.length ? lastRecs : null);
     if (!cache) return;
 
     // Cached profiles are only ever written after a successful dashboard load,
@@ -589,15 +701,27 @@ function DashboardPage() {
     if (cache.profile?.onboarded) setOnboardingGateReady(true);
     setProfile(cache.profile);
     setLearning(cache.learning ?? []);
-    // teachers/seekers intentionally NOT restored from cache. Their ranking
-    // depends on availability/credit data that arrives later in loadDashboard,
-    // so painting the cached order causes a visible "Top Match A → B" flicker
-    // on refresh. We render a skeleton (matchesHydrated=false) until the live
-    // query lands instead.
+    // Matches ARE restored from cache now. They used to be held back because a
+    // cached order could visibly re-shuffle once availability landed — but what
+    // we cache is the FINAL ordering (verified tier → availability → score),
+    // the exact same list the live load recomputes. So the cached order equals
+    // the incoming order unless the underlying data actually changed, and
+    // returning users skip the skeleton entirely instead of waiting out a full
+    // round of queries to see a list we already had.
+    if (cache.teachers?.length) {
+      setTeachers(cache.teachers);
+      setVerifiedPairs(new Set(cache.verifiedPairs ?? []));
+      setMatchesHydrated(true);
+    }
+    setSeekers(cache.seekers ?? []);
     setMyTeaching(cache.myTeaching ?? []);
-    setSessions(cache.sessions ?? []);
+    if (Array.isArray(cache.sessions)) {
+      setSessions(cache.sessions);
+      // An empty array is a real answer here ("you have no live sessions"),
+      // unlike the teachers list — so key off the array's presence, not length.
+      setSessionsHydrated(true);
+    }
     setStreak(cache.streak ?? 0);
-    setRecs(cache.recs ?? null);
     setTeacherRatings(new Map(cache.teacherRatings ?? []));
     setLoading(false);
     // user?.id only — see the auth-rotation note on the login-redirect effect.
@@ -638,10 +762,30 @@ function DashboardPage() {
       // owns that RPC (shared with the header, kept fresh via realtime). We read
       // its cached value off liveCreditBalanceRef when ranking below, dropping
       // one redundant my_credit_balance() call per dashboard load.
+      // Suggestions ride out with this first wave instead of waiting for the
+      // profile read to resolve. The Edge Function re-authenticates and reads
+      // its own cache row before it can answer, so parking it behind one more
+      // serial round trip was the difference between the card landing with the
+      // page and landing visibly after it. The rejection handler is attached
+      // here, not at the consumer below, because several paths return early —
+      // without it those would leave an unhandled rejection behind.
+      const suggestionsPromise = aiSuggestionsEnabledRef.current
+        ? fetchAiSuggestions().then(
+            (r) => r.suggestions,
+            // null = "ask failed", distinct from an empty batch. The consumer
+            // uses it to keep whatever tiles are already painted.
+            () => null,
+          )
+        : null;
       const learnPromise = loadMyLearningSkills(user.id);
       const myTeachPromise = loadMyTeachingSkills(user.id);
       const sessionsPromise = queryDashboardSessionRows(user.id);
-      const streakPromise = loadStreak(user.id);
+      // .catch here (not at the await sites) because this promise is now
+      // consumed in two places — a fire-and-forget setStreak below and the
+      // cache write at the end. Without it, the fire-and-forget leg would be
+      // an unhandled rejection. loadStreak swallows query errors already, so
+      // this only guards against an unexpected throw.
+      const streakPromise = loadStreak(user.id).catch(() => 0);
 
       const { data: p, error: profileError } = await profilePromise;
       if (stale()) return;
@@ -692,21 +836,56 @@ function DashboardPage() {
       // Open the gate the moment we know onboarded=true so the skeleton can
       // paint without waiting for the rest of the pipeline.
       setOnboardingGateReady(true);
+      // Only join the suggestions call now — it has been in flight since the
+      // top of this function, alongside the profile read.
+      if (suggestionsPromise) {
+        void suggestionsPromise.then((suggestions) => {
+          if (stale()) return;
+          if (!suggestions) {
+            // The call failed. Tiles restored from the local copy are better
+            // than blanking the card, so only fall back to "hide it" when
+            // there is nothing painted to keep.
+            setRecs((current) => current ?? []);
+            return;
+          }
+          setRecs(suggestions);
+          // Keep the mirror in step immediately: the snapshot write further
+          // down reads recsRef, and it can run before React re-renders.
+          recsRef.current = suggestions;
+          cacheRecs(uid, suggestions);
+        });
+      }
 
-      // The phase-2 reads we kicked off above should be resolved or near it.
-      const [learn, myTeach, allRawSessions, streakCount] = await Promise.all([
-        learnPromise,
-        myTeachPromise,
-        sessionsPromise,
-        streakPromise,
-      ]);
+      // Only the two skill lists gate phase 3 — they're what the teacher and
+      // seeker queries filter on. The sessions read (a participant OR-filter
+      // that walks the SELECT-fallback ladder) and the 120-day streak scan
+      // feed other parts of the page entirely, so awaiting all four together
+      // parked "Top matches" behind whichever of the four was slowest. They
+      // stay in flight and land in their own sections below.
+      const [learn, myTeach] = await Promise.all([learnPromise, myTeachPromise]);
       if (stale()) return;
-      setStreak(streakCount);
+
+      // Streak only drives the hero chip; paint it the moment its own query
+      // returns instead of holding the match pipelines for it.
+      void streakPromise.then((count) => {
+        if (!stale()) setStreak(count);
+      });
 
       const learnRows = learn ?? [];
       setLearning(learnRows);
       const myTeachRows = myTeach ?? [];
       setMyTeaching(myTeachRows);
+
+      // Paint here, not after every pipeline below has settled. This is the
+      // earliest point at which the page can render without contradicting
+      // itself later: the hero's secondary CTA reads myTeaching, and these two
+      // lists were fired alongside the profile read, so waiting for them costs
+      // nothing beyond the wave we already awaited. Everything still in flight
+      // (matches, sessions, seekers, suggestions) feeds a section that owns a
+      // placeholder shaped like its real shell, so they fill in without moving
+      // the page. Holding the whole route behind the slowest of them was what
+      // produced a long generic grey screen followed by one full-page swap.
+      setLoading(false);
 
       // Phase 3: teachers, seekers, session-participant names. These three
       // share no data — running them in Promise.all means the slowest leg
@@ -721,6 +900,7 @@ function DashboardPage() {
             list: [] as TeachOffer[],
             ratings: new Map<string, TeacherRating>(),
             availability: new Map<string, string | null>(),
+            verified: new Set<string>(),
           };
         }
         // Candidate pool for the rank-sort. Ordered newest-first so the cut is
@@ -753,38 +933,39 @@ function DashboardPage() {
             list: [] as TeachOffer[],
             ratings: new Map<string, TeacherRating>(),
             availability: new Map<string, string | null>(),
+            verified: new Set<string>(),
           };
         }
         const teacherUserIds = Array.from(new Set(teacherRows.map((row) => row.user_id)));
-        // teachers_free_time_status used to run after the rank-sort+slice; it
-        // only feeds the final ordering, so moving it into the same Promise.all
-        // as profile/ratings shaves one serial roundtrip off this pipeline.
+        // Wave 1 — the cheap fan-out. Every one of these is a single indexed
+        // query over the candidate pool, and the ranker needs all of them
+        // before it can cut the pool down. teachers_free_time_status is NOT
+        // here on purpose: it loops get_teacher_windows once per teacher in
+        // plpgsql, so running it across 100 candidates was the single slowest
+        // thing on the dashboard. It only feeds the final ordering, so it now
+        // runs in wave 2 against the ~10 rows that survive the cut.
         const [
           teacherProfiles,
           teacherRatingMap,
           teacherLearningMap,
           teacherSessionsMap,
-          freeTimeRes,
+          verified,
         ] = await Promise.all([
-          loadProfiles(teacherUserIds),
+          loadProfileSummaries(teacherUserIds),
           fetchTeacherRatings(teacherUserIds),
           loadCandidateLearningSkillIds(teacherUserIds),
           loadCompletedSessionCounts(teacherUserIds),
-          supabase.rpc("teachers_free_time_status", {
-            // The RPC caps at 100 ids per call.
-            p_teacher_ids: teacherUserIds.slice(0, 100),
-            p_duration_minutes: 30,
-            p_horizon_days: 7,
-          }),
+          loadVerifiedPairs(teacherUserIds),
         ]);
-        const availability = new Map<string, string | null>();
-        for (const r of (freeTimeRes.data ?? []) as {
-          teacher_id: string;
-          next_slot: string | null;
-        }[]) {
-          availability.set(r.teacher_id, r.next_slot);
-        }
         const myTeachSkillIdSetForRanking = new Set(myTeachRows.map((row) => row.skill_id));
+        // A verified tick means this person passed the quiz for THIS skill, not
+        // merely that they hold a badge somewhere. It outranks every other
+        // signal: verified teachers occupy the top of the list, and the score
+        // only decides the order within each tier. Applied here rather than
+        // after the slice so a verified teacher sitting at rank 40 of the pool
+        // still surfaces.
+        const verifiedTier = (row: { user_id: string; skill_id: string }) =>
+          verified.has(verifiedPairKey(row.user_id, row.skill_id)) ? 0 : 1;
         const ranked = teacherRows
           .map((row) => {
             const summary = teacherProfiles.get(row.user_id);
@@ -799,6 +980,8 @@ function DashboardPage() {
             };
           })
           .sort((a, b) => {
+            const tier = verifiedTier(a) - verifiedTier(b);
+            if (tier !== 0) return tier;
             const aLearn = learnRows.find((row) => row.skill_id === a.skill_id);
             const bLearn = learnRows.find((row) => row.skill_id === b.skill_id);
             const aReciprocal = Array.from(teacherLearningMap.get(a.user_id) ?? []).some((id) =>
@@ -841,15 +1024,41 @@ function DashboardPage() {
           })
           .slice(0, 10);
 
-        // Stable re-sort: teachers with an upcoming slot float to top,
-        // preserving the rank-sort order within each group.
+        // Wave 2 — the expensive-per-row work, now paid for ~10 rows instead of
+        // ~100: next-free-slot (a plpgsql loop over get_teacher_windows) and
+        // avatar signing (one Storage roundtrip each). Both only matter for
+        // rows we actually render, so scoping them to the cut is what turned
+        // this pipeline from seconds into one short roundtrip.
+        const rankedUserIds = Array.from(new Set(ranked.map((row) => row.user_id)));
+        const [freeTimeRes, rankedWithAvatars] = await Promise.all([
+          supabase.rpc("teachers_free_time_status", {
+            p_teacher_ids: rankedUserIds,
+            p_duration_minutes: 30,
+            p_horizon_days: 7,
+          }),
+          attachSignedAvatars(ranked),
+        ]);
+        const availability = new Map<string, string | null>();
+        for (const r of (freeTimeRes.data ?? []) as {
+          teacher_id: string;
+          next_slot: string | null;
+        }[]) {
+          availability.set(r.teacher_id, r.next_slot);
+        }
+
+        // Stable re-sort: within a verification tier, teachers with an upcoming
+        // slot float to top, preserving the rank-sort order within each group.
+        // The tier check comes first so availability can never pull an
+        // unverified teacher above a verified one.
         const slotMs = (uid: string) => {
           const slot = availability.get(uid);
           if (!slot) return null;
           const ts = Date.parse(slot);
           return Number.isNaN(ts) ? null : ts;
         };
-        const finalList = [...ranked].sort((a, b) => {
+        const finalList = [...rankedWithAvatars].sort((a, b) => {
+          const tier = verifiedTier(a) - verifiedTier(b);
+          if (tier !== 0) return tier;
           const aSlot = slotMs(a.user_id);
           const bSlot = slotMs(b.user_id);
           if (aSlot != null && bSlot != null) return aSlot - bSlot;
@@ -857,7 +1066,7 @@ function DashboardPage() {
           if (bSlot != null) return 1;
           return 0;
         });
-        return { list: finalList, ratings: teacherRatingMap, availability };
+        return { list: finalList, ratings: teacherRatingMap, availability, verified };
       })();
 
       const seekerPipeline = (async () => {
@@ -885,13 +1094,13 @@ function DashboardPage() {
         if (!seekerRows.length) return [] as Seeker[];
         const seekerUserIds = Array.from(new Set(seekerRows.map((row) => row.user_id)));
         const [seekerProfiles, seekerTeachingMap, seekerSessionsMap] = await Promise.all([
-          loadProfiles(seekerUserIds),
+          loadProfileSummaries(seekerUserIds),
           loadCandidateTeachingSkillIds(seekerUserIds),
           loadCompletedSessionCounts(seekerUserIds),
         ]);
         const myLearnSkillIdSetForRanking = new Set(learnRows.map((row) => row.skill_id));
         const myTeachLevelBySkill = new Map(myTeachRows.map((row) => [row.skill_id, row.level]));
-        return seekerRows
+        const rankedSeekers = seekerRows
           .map((row) => {
             const summary = seekerProfiles.get(row.user_id);
             return {
@@ -940,9 +1149,14 @@ function DashboardPage() {
             return bScore - aScore;
           })
           .slice(0, 10);
+        // Sign only the survivors — see attachSignedAvatars.
+        return attachSignedAvatars(rankedSeekers);
       })();
 
       const sessionPipeline = (async () => {
+        // Awaited here rather than up front so the teacher/seeker pipelines
+        // don't sit behind this query — see the phase-2 note above.
+        const allRawSessions = await sessionsPromise;
         // Swap sessions (is_swap) have a different, credit-free accept flow and
         // are surfaced separately in <SwapInbox>. Keep them out of the ordinary
         // session lists so their cards and accept buttons never mix in here.
@@ -992,6 +1206,7 @@ function DashboardPage() {
         if (stale()) return outcome;
         setTeacherRatings(outcome.ratings);
         setTeacherAvailability(outcome.availability);
+        setVerifiedPairs(outcome.verified);
         setTeachers(outcome.list);
         setMatchesHydrated(true);
         return outcome;
@@ -1001,14 +1216,20 @@ function DashboardPage() {
         return list;
       });
       const sessionDone = sessionPipeline.then((list) => {
-        if (!stale()) setSessions(list);
+        if (!stale()) {
+          setSessions(list);
+          setSessionsHydrated(true);
+        }
         return list;
       });
 
-      const [teacherOutcome, seekerList, sessionList] = await Promise.all([
+      // streakPromise joins here only so the snapshot below can record it. By
+      // now it has had the whole pipeline to resolve, so it costs nothing.
+      const [teacherOutcome, seekerList, sessionList, streakCount] = await Promise.all([
         teacherDone,
         seekerDone,
         sessionDone,
+        streakPromise,
       ]);
       if (stale()) return;
 
@@ -1021,36 +1242,19 @@ function DashboardPage() {
         sessions: sessionList,
         recs: recsRef.current,
         teacherRatings: Array.from(teacherOutcome.ratings.entries()),
+        verifiedPairs: Array.from(teacherOutcome.verified),
         streak: streakCount,
       });
-
-      setLoading(false);
-
-      // Only hit the AI suggestions endpoint when the feature is actually on —
-      // the AiInsightCard is gated on the same flag, so fetching while disabled
-      // was a wasted function call whose result was never rendered.
-      if (aiSuggestionsEnabledRef.current) {
-        void fetchAiSuggestions()
-          .then((r) => {
-            if (stale()) return;
-            setRecs(r.suggestions);
-            // Patch the snapshot written above so the next mount rehydrates
-            // these suggestions instead of the previous session's.
-            const snapshot = getDashboardCache(uid);
-            if (snapshot) {
-              const { savedAt: _savedAt, ...rest } = snapshot;
-              setDashboardCache(uid, { ...rest, recs: r.suggestions });
-            }
-          })
-          .catch(() => {
-            if (!stale()) setRecs([]);
-          });
-      }
     } catch (error) {
       if (stale()) return;
       setLoading(false);
-      setRecs([]);
+      // Keep any tiles already restored from the local copy — a failed
+      // dashboard load says nothing about whether the suggestions are valid.
+      setRecs((current) => current ?? []);
       setMatchesHydrated(true);
+      // Release every section's placeholder, or a failed load leaves the
+      // Next Move card spinning on a skeleton with no pipeline left to fill it.
+      setSessionsHydrated(true);
       // Open the gate even on error so the user sees the skeleton + toast
       // instead of an indefinite spinner.
       setOnboardingGateReady(true);
@@ -1119,6 +1323,95 @@ function DashboardPage() {
     setRequestDialog({ kind: "request", teacher });
   };
 
+  // Resolves the live teaching row behind a teacher-match suggestion, memoized
+  // per tile so hover, focus and click share one roundtrip.
+  //
+  // The row is re-read rather than trusted from the tile: a cached suggestion
+  // can be half an hour old, and the booking has to use the price the teacher
+  // charges now. The TTL is what keeps that promise — an entry parked by a
+  // hover can't outlive a price edit by more than a minute.
+  const resolveBookOffer = useCallback((target: BookTileTarget): Promise<TeachOffer | null> => {
+    const key = bookTileKey(target);
+    const hit = bookOfferCache.current.get(key);
+    if (hit && Date.now() - hit.at < BOOK_OFFER_TTL_MS) return hit.row;
+
+    const row = (async (): Promise<TeachOffer | null> => {
+      let skillId = target.skillId;
+      if (!skillId && target.skillName) {
+        // Tiles cached before the engine started sending skill ids carry only
+        // the name. ilike without a wildcard is case-insensitive equality.
+        const { data: skillRow } = await supabase
+          .from("skills")
+          .select("id")
+          .eq("is_active", true)
+          .ilike("name", target.skillName)
+          .limit(1)
+          .maybeSingle();
+        skillId = skillRow?.id;
+      }
+      if (!skillId) return null;
+
+      // The profile lookup doesn't depend on the teaching row, so both legs go
+      // out together — the dialog needs the teacher's name for its footer.
+      const [offerRes, summaries] = await Promise.all([
+        supabase
+          .from("user_teaching_skills")
+          .select(
+            "id, skill_id, level, credits_per_hour, user_id, teaching_mode, skills:skill_id(id, name)",
+          )
+          .eq("user_id", target.userId)
+          .eq("skill_id", skillId)
+          .limit(1)
+          .maybeSingle(),
+        loadProfileSummaries([target.userId]),
+      ]);
+      const offer = (offerRes.data ?? null) as unknown as Omit<TeachOffer, "profiles"> | null;
+      if (!offer) return null;
+      const summary = summaries.get(target.userId);
+      return {
+        ...offer,
+        profiles: {
+          id: target.userId,
+          full_name: summary?.full_name ?? null,
+          avatar_url: summary?.avatar_url ?? null,
+        },
+      };
+    })().catch((error) => {
+      // A failed lookup must not stay cached: the click falls back to the
+      // profile, and the next hover gets a clean retry.
+      console.error("[dashboard] suggestion booking lookup failed:", error);
+      bookOfferCache.current.delete(key);
+      return null;
+    });
+
+    bookOfferCache.current.set(key, { at: Date.now(), row });
+    return row;
+  }, []);
+
+  // A teacher-match suggestion names a specific person AND the exact skill they
+  // teach ("Sulav teaches Music Theory at 4 credits/hour. Book a session."), so
+  // clicking it opens the booking dialog on that pair. The profile detour and
+  // the second skill pick were steps the copy never promised.
+  //
+  // A row that no longer exists (they dropped the skill since the tile was
+  // generated) falls back to their profile, which is still a sensible landing.
+  const openBookingFromSuggestion = useCallback(
+    async (target: BookTileTarget) => {
+      setBookingTileKey(bookTileKey(target));
+      try {
+        const teacher = await resolveBookOffer(target);
+        if (!teacher) {
+          navigate({ to: "/users/$userId", params: { userId: target.userId } });
+          return;
+        }
+        setRequestDialog({ kind: "request", teacher });
+      } finally {
+        setBookingTileKey(null);
+      }
+    },
+    [navigate, resolveBookOffer],
+  );
+
   // Pre-acceptance chat: opens (or creates) a pending session with the other
   // user and routes to /messages. The 15-msg/day + 5-unanswered caps are
   // enforced server-side by enforce_pending_message_caps (see migration
@@ -1184,12 +1477,18 @@ function DashboardPage() {
     [clearBusy, markBusy, navigate, user],
   );
 
+  // ⟳ deals a different hand rather than recomputing the same one: the engine
+  // is deterministic per (user, day, rotation), so the counter has to advance
+  // before the call. It's persisted client-side, so the tiles the user lands on
+  // survive a reload — see nextSuggestionsRotation.
   const refreshSuggestions = async () => {
     if (recsRefreshing) return;
     setRecsRefreshing(true);
     try {
-      const r = await fetchAiSuggestions({ force: true });
+      const r = await fetchAiSuggestions({ force: true, rotation: nextSuggestionsRotation() });
       setRecs(r.suggestions);
+      recsRef.current = r.suggestions;
+      cacheRecs(user?.id, r.suggestions);
       toast.success("Suggestions refreshed");
     } catch (error) {
       toastError(error, "Could not refresh suggestions");
@@ -1426,6 +1725,8 @@ function DashboardPage() {
       markSelfAction(session.id, ["session_completed"]);
       toast.success("Session completed and credits transferred");
       void invalidateCreditBalance();
+      // Completion changes streak/momentum signals — regenerate suggestions.
+      void invalidateAiSuggestionsCache();
       await loadDashboard();
     } finally {
       clearBusy(session.id);
@@ -1495,24 +1796,13 @@ function DashboardPage() {
     return <PageLoading variant="simple" />;
   }
 
+  // Whole-page fallback. `loading` now clears the moment the profile lands, so
+  // in practice this only covers the frame before that. It renders the exact
+  // same component as the router's pending fallback for /dashboard (see
+  // router.tsx), so the chunk-loading phase and this data-loading phase paint
+  // as one continuous skeleton — nothing moves between them.
   if (loading || !profile) {
-    return (
-      <div className="min-h-screen flex flex-col">
-        <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-5 md:space-y-6">
-          <Skeleton className="h-56 md:h-72 rounded-3xl" />
-          <Skeleton className="h-32 md:h-40 rounded-3xl" />
-          <Skeleton className="h-24 rounded-3xl" />
-          <div>
-            <Skeleton className="mb-3 h-5 w-48 rounded-md" />
-            <div className="grid gap-3 md:gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Skeleton className="h-40 rounded-2xl" />
-              <Skeleton className="h-40 rounded-2xl hidden md:block" />
-              <Skeleton className="h-40 rounded-2xl hidden lg:block" />
-            </div>
-          </div>
-        </main>
-      </div>
-    );
+    return <PageLoading variant="dashboard" />;
   }
 
   const firstName = profile.full_name?.split(" ")[0] ?? "Friend";
@@ -1568,16 +1858,33 @@ function DashboardPage() {
                   <span className="font-semibold">{liveCreditBalance ?? 0}</span>
                   <span className="text-muted-foreground">credits</span>
                 </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Flame className="h-4 w-4 text-orange-500" />
-                  <span className="font-semibold">{streak}</span>
-                  <span className="text-muted-foreground">day streak</span>
-                </span>
-                <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
-                <span className="text-muted-foreground">
-                  <span className="font-semibold text-foreground/80">{teachers.length}</span> match
-                  {teachers.length === 1 ? "" : "es"}
-                </span>
+                {/* "0 day streak" is a demotivating first thing to read, so the
+                    chip — and the separator that leads into it — only appears
+                    once there's a streak to be proud of. */}
+                {streak > 0 && (
+                  <>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Flame className="h-4 w-4 text-orange-500" />
+                      <span className="font-semibold">{streak}</span>
+                      <span className="text-muted-foreground">day streak</span>
+                    </span>
+                    <span className="hidden h-1 w-1 rounded-full bg-muted-foreground/40 sm:inline-block" />
+                  </>
+                )}
+                {/* Held back until the teacher pipeline lands. The page paints
+                    before it resolves now, and "0 matches" flicking to "9
+                    matches" a beat later reads as a bug. */}
+                {matchesHydrated ? (
+                  <span className="text-muted-foreground">
+                    <span className="font-semibold text-foreground/80">{teachers.length}</span>{" "}
+                    match{teachers.length === 1 ? "" : "es"}
+                  </span>
+                ) : (
+                  // h-5 matches the text-sm line box it stands in for — at lg
+                  // the credits chip beside it is hidden, so this is the only
+                  // thing setting the row's height.
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                )}
               </div>
             </div>
 
@@ -1606,7 +1913,8 @@ function DashboardPage() {
               next={move}
               userId={user.id}
               busyIds={busyIds}
-              matchesHydrated={matchesHydrated}
+              verifiedPairs={verifiedPairs}
+              hydrated={matchesHydrated && sessionsHydrated}
               onAcceptMany={acceptSessions}
               onRejectMany={rejectSessions}
               onCancel={cancelSession}
@@ -1625,12 +1933,20 @@ function DashboardPage() {
               refreshing={recsRefreshing}
               onRefresh={() => void refreshSuggestions()}
               onSwap={(target) => setSwapTarget(target)}
+              onBook={(target) => void openBookingFromSuggestion(target)}
+              onPrefetchBook={(target) => void resolveBookOffer(target)}
+              bookingKey={bookingTileKey}
             />
           </div>
         )}
 
         {/* People who can teach you — same card pattern as AI Insights. Skip the one already shown in Next Move. */}
-        {teachersForRow.length > 0 && (
+        {!matchesHydrated && (
+          <div className="animate-fade-up" style={{ animationDelay: "180ms" }}>
+            <PeopleSectionSkeleton />
+          </div>
+        )}
+        {matchesHydrated && teachersForRow.length > 0 && (
           <div className="animate-fade-up" style={{ animationDelay: "180ms" }}>
             <PeopleSection
               title="People who can teach you"
@@ -1646,6 +1962,7 @@ function DashboardPage() {
                     key={t.id}
                     teacher={t}
                     creditsOk={creditsOk}
+                    verified={verifiedPairs.has(verifiedPairKey(t.user_id, t.skill_id))}
                     busy={busyIds.has(t.id)}
                     messageBusy={busyIds.has(messageBusyKey(t.id))}
                     onRequest={() => openRequestDialog(t)}
@@ -1777,7 +2094,9 @@ function DashboardPage() {
             }}
             otherUserId={swapTarget.userId}
             preferMySkillName={swapTarget.mySkillName}
+            preferMySkillId={swapTarget.mySkillId}
             preferTheirSkillName={swapTarget.theirSkillName}
+            preferTheirSkillId={swapTarget.theirSkillId}
             onProposed={() => {
               setSwapRefresh((n) => n + 1);
               void loadDashboard();
@@ -1877,11 +2196,21 @@ function pickNextMoves(
   return [{ kind: "empty", hasLearning: learning.length > 0 }];
 }
 
+// ── Section placeholders ────────────────────────────────────────────────────
+// Each of these mirrors the shell of the real section it stands in for — same
+// wrapper, radius, padding and grid — so the swap to live content moves
+// nothing. They're shared between the in-page "still loading this section"
+// state and the whole-page fallback below, which is the only way the two stay
+// in agreement as the real cards change.
+
 type NextMoveCardProps = {
   next: NextMove;
   userId: string;
   busyIds: Set<string>;
-  matchesHydrated: boolean;
+  verifiedPairs: Set<string>;
+  // True once BOTH pipelines this card is built from (teachers, sessions) have
+  // answered. Either one alone can produce a card the other would replace.
+  hydrated: boolean;
   onAcceptMany: (sessions: SessionRow[]) => void;
   onRejectMany: (sessions: SessionRow[]) => void;
   onCancel: (s: SessionRow) => void;
@@ -1894,7 +2223,8 @@ function NextMoveCard({
   next,
   userId,
   busyIds,
-  matchesHydrated,
+  verifiedPairs,
+  hydrated,
   onAcceptMany,
   onRejectMany,
   onCancel,
@@ -2009,7 +2339,7 @@ function NextMoveCard({
                     )}
                     <Button variant="outline" size="lg" className="w-full sm:w-auto" asChild>
                       <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: s.id }}>
-                        <Eye className="h-4 w-4" /> Details
+                        Details
                       </Link>
                     </Button>
                   </div>
@@ -2058,36 +2388,12 @@ function NextMoveCard({
     );
   }
 
-  // Skeleton while the live teacher/seeker query is still resolving. We don't
-  // restore these from cache (would flicker as ranking changes once availability
-  // lands), so a placeholder card holds the layout instead of paint-then-shift.
-  if (!matchesHydrated && (next.kind === "match" || next.kind === "empty")) {
-    return (
-      <section className="rounded-3xl border border-border/50 bg-card/60 backdrop-blur p-6 md:p-7 shadow-sm">
-        <div className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wide text-brand-purple font-semibold">
-          <Sparkles className="h-3.5 w-3.5" /> Top matches for you
-        </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2 md:gap-5">
-          {[0, 1].map((i) => (
-            <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-4">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-11 w-11 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-3 w-1/2" />
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Skeleton className="h-8 flex-1 rounded-full" />
-                  <Skeleton className="h-8 flex-1 rounded-full" />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    );
+  // Skeleton while the live teacher/session queries are still resolving. We
+  // don't restore matches from cache (would flicker as ranking changes once
+  // availability lands), so a placeholder card holds the layout instead of
+  // paint-then-shift.
+  if (!hydrated && (next.kind === "match" || next.kind === "empty")) {
+    return <NextMoveSkeleton />;
   }
 
   if (next.kind === "match") {
@@ -2104,6 +2410,7 @@ function NextMoveCard({
             <TopMatchTile
               key={t.id}
               teacher={t}
+              verified={verifiedPairs.has(verifiedPairKey(t.user_id, t.skill_id))}
               busy={busyIds.has(t.id)}
               messageBusy={busyIds.has(`${t.id}:message`)}
               onRequest={() => onRequest(t)}
@@ -2186,12 +2493,14 @@ function NextMoveCard({
 
 function TopMatchTile({
   teacher,
+  verified,
   busy,
   messageBusy,
   onRequest,
   onMessage,
 }: {
   teacher: TeachOffer;
+  verified: boolean;
   busy: boolean;
   messageBusy: boolean;
   onRequest: () => void;
@@ -2216,8 +2525,9 @@ function TopMatchTile({
             <h3 className="text-sm md:text-base font-semibold truncate leading-tight">
               {teacher.profiles?.full_name ?? "Student"}
             </h3>
-            <p className="text-xs text-muted-foreground truncate">
-              Teaches {teacher.skills?.name}
+            <p className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+              <span className="truncate">Teaches {teacher.skills?.name}</span>
+              {verified && <VerifiedTick className="h-3.5 w-3.5" />}
               {teacher.credits_per_hour ? (
                 <>
                   {" · "}
@@ -2315,8 +2625,25 @@ function WelcomeStep({
 }
 
 // What a "swap" tile hands back so the dialog can pre-select the exact legs the
-// suggestion named.
-type SwapTileTarget = { userId: string; mySkillName?: string; theirSkillName?: string };
+// suggestion named. Ids come from the engine and are matched first; the names
+// cover cache rows written before the engine sent ids.
+type SwapTileTarget = {
+  userId: string;
+  mySkillName?: string;
+  mySkillId?: string;
+  theirSkillName?: string;
+  theirSkillId?: string;
+};
+
+// What a teacher-match tile hands back so the booking dialog can open on the
+// exact person + skill the copy named.
+type BookTileTarget = { userId: string; skillId?: string; skillName?: string };
+
+// Identifies the tile whose booking lookup is in flight, so only that tile
+// shows a spinner. Same shape on both sides of the comparison.
+function bookTileKey(target: BookTileTarget): string {
+  return `${target.userId}:${target.skillId ?? target.skillName ?? ""}`;
+}
 
 type AiInsightCardProps = {
   recs: AiSuggestion[] | null;
@@ -2324,22 +2651,24 @@ type AiInsightCardProps = {
   onRefresh: () => void;
   // Opens the swap proposal dialog for a reciprocal-match ("swap") tile.
   onSwap?: (target: SwapTileTarget) => void;
+  // Opens the booking dialog for a tile that names a teacher + their skill.
+  onBook?: (target: BookTileTarget) => void;
+  // Warms that tile's teaching-row lookup on hover/focus.
+  onPrefetchBook?: (target: BookTileTarget) => void;
+  // bookTileKey() of the tile currently resolving its teaching row, if any.
+  bookingKey?: string | null;
 };
 
-function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardProps) {
-  if (recs === null) {
-    return (
-      <section className="rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
-        <div className="flex items-center gap-4">
-          <Skeleton className="h-11 w-11 rounded-xl" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-3 w-1/3" />
-            <Skeleton className="h-4 w-4/5" />
-          </div>
-        </div>
-      </section>
-    );
-  }
+function AiInsightCard({
+  recs,
+  refreshing,
+  onRefresh,
+  onSwap,
+  onBook,
+  onPrefetchBook,
+  bookingKey,
+}: AiInsightCardProps) {
+  if (recs === null) return <SuggestionsSkeleton />;
 
   if (recs.length === 0) return null;
 
@@ -2349,20 +2678,22 @@ function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardPro
     <section className="relative overflow-hidden rounded-3xl border border-border/40 bg-card/60 backdrop-blur p-5 md:p-6">
       <div className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-gradient-to-br from-brand-purple/15 to-brand-cyan/15 blur-2xl" />
       <div className="relative flex items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-2">
-          <div className="inline-flex h-7 w-7 items-center justify-center rounded-lg gradient-brand-soft">
-            <Sparkles className="h-3.5 w-3.5 text-brand-cyan" />
+        {/* Tight icon + label pair: the icon's tile is sized to the glyph so the
+            gap you see is the 6px gap, not the box's leftover padding. */}
+        <div className="inline-flex items-center gap-1.5">
+          <div className="inline-flex h-5 w-5 items-center justify-center rounded-md gradient-brand-soft">
+            <Sparkles className="h-3 w-3 text-brand-cyan" />
           </div>
           <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground font-semibold">
-            AI Suggestions
+            Suggestions
           </span>
         </div>
         <button
           type="button"
           onClick={onRefresh}
           disabled={refreshing}
-          aria-label="Refresh insights"
-          title="Refresh insights"
+          aria-label="Show different suggestions"
+          title="Show different suggestions"
           className="h-8 w-8 shrink-0 flex items-center justify-center rounded-full text-muted-foreground/70 hover:text-brand-purple hover:bg-brand-purple/10 active:scale-95 transition-all disabled:opacity-50 disabled:hover:bg-transparent"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
@@ -2371,7 +2702,14 @@ function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardPro
 
       <div className="relative mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
         {visible.map((r, i) => (
-          <InsightTile key={`v-${i}`} suggestion={r} onSwap={onSwap} />
+          <InsightTile
+            key={`v-${i}`}
+            suggestion={r}
+            onSwap={onSwap}
+            onBook={onBook}
+            onPrefetchBook={onPrefetchBook}
+            bookingKey={bookingKey}
+          />
         ))}
       </div>
     </section>
@@ -2381,37 +2719,49 @@ function AiInsightCard({ recs, refreshing, onRefresh, onSwap }: AiInsightCardPro
 function InsightTile({
   suggestion,
   onSwap,
+  onBook,
+  onPrefetchBook,
+  bookingKey,
 }: {
   suggestion: AiSuggestion;
   onSwap?: (target: SwapTileTarget) => void;
+  onBook?: (target: BookTileTarget) => void;
+  onPrefetchBook?: (target: BookTileTarget) => void;
+  bookingKey?: string | null;
 }) {
   const meta = SUGGESTION_TYPE_META[suggestion.type] ?? SUGGESTION_TYPE_META.general;
   const Icon = meta.icon;
+  const action = suggestion.action;
+
+  const bookTarget: BookTileTarget | null =
+    action?.kind === "user" && suggestion.type !== "swap" && (action.skillId || action.skillName)
+      ? { userId: action.userId, skillId: action.skillId, skillName: action.skillName }
+      : null;
+  const booking = Boolean(bookTarget && bookingKey && bookingKey === bookTileKey(bookTarget));
 
   const tileClass =
-    "group relative overflow-hidden rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 text-left transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple/40 cursor-pointer block";
+    "group relative overflow-hidden rounded-xl border border-border/40 bg-background/40 p-3 md:p-4 text-left transition-all hover:border-brand-purple/40 hover:bg-background/70 hover:shadow-sm hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple/40 cursor-pointer block w-full";
 
+  // One colour cue per tile. The type tint used to be painted twice — icon tile
+  // plus a left edge stripe — which turned a 2x2 grid into a rainbow.
   const inner = (
     <>
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-1 rounded-l-xl opacity-70 group-hover:opacity-100 transition-opacity",
-          meta.bg,
-        )}
-      />
-      <div className="flex items-start gap-3 pl-1">
+      <div className="flex items-start gap-3">
         <div
           className={cn("h-10 w-10 shrink-0 rounded-xl flex items-center justify-center", meta.bg)}
         >
           <Icon className={cn("h-5 w-5", meta.fg)} />
         </div>
         <p className="text-sm leading-snug pt-1.5 line-clamp-2">{suggestion.message}</p>
-        <ArrowRight className="ml-auto h-4 w-4 shrink-0 mt-2 text-muted-foreground/40 transition-all group-hover:text-brand-purple group-hover:translate-x-0.5" />
+        {booking ? (
+          <Loader2 className="ml-auto h-4 w-4 shrink-0 mt-2 animate-spin text-brand-purple" />
+        ) : (
+          <ArrowRight className="ml-auto h-4 w-4 shrink-0 mt-2 text-muted-foreground/40 transition-all group-hover:text-brand-purple group-hover:translate-x-0.5" />
+        )}
       </div>
     </>
   );
 
-  const action = suggestion.action;
   if (!action) {
     return <div className={cn(tileClass, "cursor-default")}>{inner}</div>;
   }
@@ -2421,12 +2771,11 @@ function InsightTile({
   // these four; an unknown kind would silently render a non-link tile.
   if (action.kind === "user") {
     // A reciprocal match ("swap") opens the swap proposal dialog directly —
-    // that's the "Direct swap, no credits" the message promises. Other
-    // user-targeted tiles just deep-link to the profile.
+    // that's the "Direct swap, no credits" the message promises.
     if (suggestion.type === "swap" && onSwap) {
-      // `skillName` is the skill they teach (you'd learn); `swapMySkillName` is
-      // the skill you teach back. Passing both lets the dialog open on exactly
-      // the legs the message promised.
+      // `skillName`/`skillId` is the skill they teach (you'd learn);
+      // `swapMySkill*` is the skill you teach back. Passing both lets the
+      // dialog open on exactly the legs the message promised.
       return (
         <button
           type="button"
@@ -2434,9 +2783,28 @@ function InsightTile({
             onSwap({
               userId: action.userId,
               mySkillName: action.swapMySkillName,
+              mySkillId: action.swapMySkillId,
               theirSkillName: action.skillName,
+              theirSkillId: action.skillId,
             })
           }
+          className={tileClass}
+        >
+          {inner}
+        </button>
+      );
+    }
+    // Any other user tile names a teacher AND the skill they teach, so it opens
+    // the booking dialog on that pair rather than the profile — "Book a
+    // session" should be one click, not profile → Request → pick the skill.
+    if (bookTarget && onBook) {
+      return (
+        <button
+          type="button"
+          disabled={booking}
+          onClick={() => onBook(bookTarget)}
+          onMouseEnter={() => onPrefetchBook?.(bookTarget)}
+          onFocus={() => onPrefetchBook?.(bookTarget)}
           className={tileClass}
         >
           {inner}
@@ -2570,6 +2938,7 @@ function PeopleSection({
 type TeacherScrollCardProps = {
   teacher: TeachOffer;
   creditsOk: boolean;
+  verified: boolean;
   busy: boolean;
   messageBusy: boolean;
   onRequest: () => void;
@@ -2579,6 +2948,7 @@ type TeacherScrollCardProps = {
 function TeacherScrollCard({
   teacher,
   creditsOk,
+  verified,
   busy,
   messageBusy,
   onRequest,
@@ -2602,8 +2972,11 @@ function TeacherScrollCard({
             <div className="text-sm font-semibold truncate leading-tight">
               {teacher.profiles?.full_name ?? "Student"}
             </div>
-            <div className="text-xs text-muted-foreground truncate mt-0.5">
-              {teacher.skills?.name} · <span className="capitalize">{teacher.level}</span>
+            <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground truncate">
+              <span className="truncate">
+                {teacher.skills?.name} · <span className="capitalize">{teacher.level}</span>
+              </span>
+              {verified && <VerifiedTick className="h-3.5 w-3.5" />}
             </div>
             {!creditsOk ? (
               <span className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">

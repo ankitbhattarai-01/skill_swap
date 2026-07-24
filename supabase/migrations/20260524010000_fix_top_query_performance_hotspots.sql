@@ -3,7 +3,7 @@
 --   1. move_due_sessions_to_review()
 --   2. teachers_free_time_status(...)
 --   3. get_admin_feature_flags()
---   4. materialize_due_planned_sessions()
+--   4. materialize_due_planned_sessions()  [since deleted — see section 3]
 --   5. settle_pending_review_sessions()
 --
 -- The top report rows for realtime.list_changes and dashboard metadata are
@@ -39,15 +39,13 @@ CREATE INDEX IF NOT EXISTS sessions_pending_review_unsettled_idx
   WHERE status = 'pending_review'
     AND escrow_held = true;
 
--- 3) Make track materialization find due planned sessions without scanning
--- all pending track rows.
-CREATE INDEX IF NOT EXISTS track_planned_sessions_pending_due_idx
-  ON public.track_planned_sessions (planned_start_at, track_id)
-  WHERE status = 'pending';
-
-CREATE INDEX IF NOT EXISTS learning_tracks_active_id_idx
-  ON public.learning_tracks (id)
-  WHERE status = 'active';
+-- 3) (removed) Two indexes on track_planned_sessions / learning_tracks used to
+-- live here, supporting materialize_due_planned_sessions(). Learning tracks
+-- were removed in 20260610000000, which drops both tables (CASCADE) and the
+-- function itself — so applying this migration after that one failed with
+-- 42P01 "relation public.track_planned_sessions does not exist", and applying
+-- it in order would have created two indexes only to drop them again four
+-- migrations later. Nothing else referenced them.
 
 -- 4) Avoid RLS/admin-permission overhead for the public feature flag RPC.
 -- The privileged body lives in private; the public function remains a thin

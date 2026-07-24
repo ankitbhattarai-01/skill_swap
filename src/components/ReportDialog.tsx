@@ -104,7 +104,7 @@ export function ReportDialog({
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="glass-strong border-white/10">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Submit report</DialogTitle>
           <DialogDescription>

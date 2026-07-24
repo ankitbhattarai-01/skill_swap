@@ -80,6 +80,29 @@
   --gradient-hero:
     radial-gradient(at 20% 20%, rgb(124 58 237 / 0.12) 0%, transparent 48%),
     radial-gradient(at 80% 10%, rgb(16 185 129 / 0.1) 0%, transparent 48%), var(--background);
+  /* Soft brand tint layered over the glass surface so content cards read as
+     lit from the top-left instead of as flat white rectangles. Kept far
+     lighter than --gradient-hero: this runs on every card, so anything
+     stronger stacks into visual noise down the page. */
+  --gradient-card:
+    linear-gradient(
+      140deg,
+      rgb(124 58 237 / 0.07) 0%,
+      rgb(167 139 250 / 0.03) 38%,
+      transparent 68%
+    ),
+    radial-gradient(at 100% 0%, rgb(16 185 129 / 0.07) 0%, transparent 55%);
+  /* Modals are the one surface that must never be translucent: they sit on a
+     dark scrim, so any alpha turns the panel muddy and drops text contrast.
+     Solid white, a whisper of brand wash, and a real elevation shadow. */
+  --dialog-bg: #ffffff;
+  --dialog-border: rgb(17 24 39 / 0.1);
+  --dialog-shadow: 0 24px 60px -20px rgb(17 24 39 / 0.28), 0 6px 16px -8px rgb(17 24 39 / 0.12);
+  --gradient-dialog:
+    radial-gradient(at 88% 8%, rgb(167 139 250 / 0.1) 0%, transparent 52%),
+    radial-gradient(at 8% 92%, rgb(16 185 129 / 0.05) 0%, transparent 52%);
+  --scrollbar-thumb: rgb(124 58 237 / 0.28);
+  --scrollbar-thumb-hover: rgb(124 58 237 / 0.45);
   --page-background: var(--background);
   --shadow-glow: 0 16px 42px -18px rgb(124 58 237 / 0.34);
   --shadow-glow-blue: 0 12px 34px -18px rgb(16 185 129 / 0.34);
@@ -147,6 +170,20 @@
   /* Flat in dark mode. The radial wash was the other half of the "bending
      shadow" effect on hero cards. */
   --gradient-hero: var(--background);
+  /* Near-invisible in dark — just enough top-left lift to keep the card from
+     looking like a flat cut-out, without reintroducing the violet fog. */
+  --gradient-card:
+    linear-gradient(140deg, rgb(167 139 250 / 0.05) 0%, transparent 55%),
+    linear-gradient(0deg, rgb(255 255 255 / 0.012), rgb(255 255 255 / 0.012));
+  /* One step lighter than the card surface (#141416) so a modal reads as
+     floating above the page rather than cut out of it — in dark, surface
+     hierarchy does the work a drop shadow does in light. */
+  --dialog-bg: #1b1b1f;
+  --dialog-border: rgb(255 255 255 / 0.1);
+  --dialog-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.7), 0 1px 0 rgb(255 255 255 / 0.06) inset;
+  --gradient-dialog: linear-gradient(150deg, rgb(167 139 250 / 0.07) 0%, transparent 60%);
+  --scrollbar-thumb: rgb(167 139 250 / 0.3);
+  --scrollbar-thumb-hover: rgb(167 139 250 / 0.5);
   --page-background: var(--background);
   /* Same story — no diffuse drop shadow in dark. Cards rely on the border
      + opaque surface color for separation. */
@@ -244,14 +281,112 @@ body.messages-page-open {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Modal motion.
+
+   THE ONE RULE: these keyframes must never set `transform`.
+
+   Tailwind v4's `translate-x-[-50%] translate-y-[-50%]` utilities — the ones
+   centering DialogContent — compile to the native CSS `translate` PROPERTY,
+   not to `transform` (check the build output: `.translate-x-\[-50\%\]
+   { translate: var(--tw-translate-x) ... }`). The browser composes `translate`,
+   `rotate`, `scale` and `transform` — they all apply, multiplied together.
+
+   Any keyframe that writes `transform` containing its own translate therefore
+   DOUBLES the centering offset for as long as the animation runs: the panel
+   plays its whole entrance at -100%, -100% — hanging near the top-left of the
+   screen — and the moment the animation ends and `transform` reverts to none,
+   it teleports to the true centre. That is the "drops from the top, jitters,
+   then snaps into place" motion. The stock tw-animate-css `animate-in` stack
+   shadcn ships has exactly this bug (its `enter` keyframes set `transform:
+   translate3d(...)`), which is why dialogs were jittery from day one.
+
+   So these keyframes touch only `opacity` and the native `scale` / `translate`
+   properties. Composition then works FOR us: the utilities' static centering
+   stays applied through every frame, `scale` multiplies in around the panel's
+   own centre, and the rise variant animates `translate` with an end frame
+   identical to the utilities' value — so when the animation ends and the
+   property falls back to the static rule, nothing moves. All three properties
+   are compositor-friendly; `will-change` promotes the panel up front so its
+   big blurred shadow and gradient wash rasterize once, not per frame.
+   --------------------------------------------------------------------------- */
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-panel-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@keyframes dialog-panel-out {
+  from {
+    opacity: 1;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+/* Confirm prompts keep their "rise from below" entrance. The `translate` end
+   frames MUST equal the -50% -50% the Tailwind utilities set statically — the
+   keyframe overrides the property while running, then hands back to the static
+   rule, and identical values make that hand-off invisible. */
+@keyframes dialog-panel-rise-in {
+  from {
+    opacity: 0;
+    translate: -50% calc(-50% + 1rem);
+    scale: 0.985;
+  }
+  to {
+    opacity: 1;
+    translate: -50% -50%;
+    scale: 1;
+  }
+}
+@keyframes dialog-panel-rise-out {
+  from {
+    opacity: 1;
+    translate: -50% -50%;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    translate: -50% calc(-50% + 0.75rem);
+    scale: 0.985;
+  }
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
   }
 
+  /* Deliberately no `background-attachment: fixed` here. It forces the whole
+     viewport to repaint on the main thread for every scroll frame and opts the
+     page out of composited scrolling — and it bought nothing, because
+     --page-background is a flat colour in both themes. Only re-add it if this
+     ever becomes a gradient that genuinely has to stay parked. */
   body {
     background: var(--page-background);
-    background-attachment: fixed;
     min-height: 100vh;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
@@ -273,6 +408,73 @@ body.messages-page-open {
   [role="checkbox"]:not([aria-disabled="true"]),
   [role="radio"]:not([aria-disabled="true"]) {
     cursor: pointer;
+  }
+
+  /* -------------------------------------------------------------------------
+     The page scrollbar (and every scroll region that doesn't opt into
+     .scroll-slim / .dialog-scroll).
+
+     Windows Chrome/Edge draw a ~15px opaque grey slab with stepper arrows at
+     both ends. It runs the full height of every page and ends up being the
+     loudest piece of chrome on screen, which fights the soft brand-tinted bars
+     we already ship inside dialogs and cards. This brings the document bar in
+     line with them: same violet thumb, same pill, no arrows.
+
+     Scoped to `pointer: fine` on purpose. Touch platforms use overlay
+     scrollbars that fade in while scrolling and consume no layout space —
+     styling ::-webkit-scrollbar there converts them into a permanently visible
+     track, so phones keep the native behaviour.
+
+     These rules live in `base` so the `utilities`-layer rules for .scroll-slim
+     (6px) and .dialog-scroll still win on the elements that use them; layer
+     order decides this, not specificity.
+
+     Firefox reads the standard scrollbar-* properties; Blink/WebKit ignore
+     them on any element that also matches a ::-webkit-scrollbar rule, so the
+     two halves below never fight each other.
+     ---------------------------------------------------------------------- */
+  @media (pointer: fine) {
+    /* scrollbar-color inherits, so nested scrollers pick the tint up for free;
+       scrollbar-width does not, hence the universal selector. */
+    html {
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+
+    * {
+      scrollbar-width: thin;
+    }
+
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    *::-webkit-scrollbar-track,
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    /* Kill the stepper arrows Windows parks at each end of the bar. */
+    *::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    /* The transparent border plus padding-box clip inset the thumb from the
+       track edges, so it reads as a floating capsule instead of a full-bleed
+       slab — while the hit area stays the full 10px. */
+    *::-webkit-scrollbar-thumb {
+      background-color: var(--scrollbar-thumb);
+      background-clip: padding-box;
+      border: 2px solid transparent;
+      border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover,
+    *::-webkit-scrollbar-thumb:active {
+      background-color: var(--scrollbar-thumb-hover);
+    }
   }
 }
 
@@ -321,6 +523,157 @@ body.messages-page-open {
     -webkit-backdrop-filter: blur(24px);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow);
+  }
+  /* Edge control for the two fixed chrome surfaces (sidebar + top header).
+     They wear .glass-strong/.glass for the blur, but a glass *panel* border on
+     all four sides is wrong for chrome that's flush to the viewport: the
+     header's left border stacks against the sidebar's right border into a
+     doubled hairline at their junction, and the sidebar's top border pushes
+     its h-16 logo row 1px below the header's, so the two rows' bottom
+     hairlines meet in a visible step. These must live after .glass — Tailwind
+     emits `border-r`/`border-b` earlier in the same layer, so a border
+     shorthand here beats them and the utility classes never applied. */
+  .chrome-sidebar,
+  .chrome-header {
+    border-color: var(--border);
+    border-color: color-mix(in oklab, var(--border) 50%, transparent);
+  }
+  .chrome-sidebar {
+    border-width: 0 1px 0 0;
+  }
+  .chrome-header {
+    border-width: 0 0 1px;
+  }
+  /* .glass plus a brand tint. Declared as one `background` shorthand rather
+     than composing with a Tailwind bg-gradient-* class, because .glass already
+     sets the shorthand and would reset any background-image set alongside it. */
+  .glass-gradient {
+    background: var(--gradient-card), var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+  /* The one surface every modal wears — booking, verification, admin, all of
+     them. Deliberately NOT .glass: a modal is the focused thing on screen, so
+     it gets a solid background and earns its depth from the shadow instead of
+     from translucency. That also means no backdrop-filter — nothing shows
+     through, so the blur would be cost with no effect.
+     Color and image are set separately on purpose: the `background` shorthand
+     only permits a color in its final layer, so stacking gradients over a
+     color there silently invalidates the whole declaration. */
+  .dialog-surface {
+    background-color: var(--dialog-bg);
+    background-image: var(--gradient-dialog);
+    border: 1px solid var(--dialog-border);
+    box-shadow: var(--dialog-shadow);
+  }
+  /* Enter/exit motion for that surface — see the keyframe block above for why
+     these are hand-written instead of composed from tw-animate-css utilities.
+     Attribute selectors give these specificity 0,2,0, so they beat any
+     `animate-*` utility a caller might still be carrying. */
+  .dialog-motion[data-state="open"] {
+    animation: dialog-panel-in 170ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity, scale;
+  }
+  .dialog-motion[data-state="closed"] {
+    animation: dialog-panel-out 130ms cubic-bezier(0.4, 0, 1, 1);
+    will-change: opacity, scale;
+  }
+  .dialog-motion-rise[data-state="open"] {
+    animation: dialog-panel-rise-in 190ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity, translate, scale;
+  }
+  .dialog-motion-rise[data-state="closed"] {
+    animation: dialog-panel-rise-out 140ms cubic-bezier(0.4, 0, 1, 1);
+    will-change: opacity, translate, scale;
+  }
+  /* The scrim fades on the same curve but a touch quicker, so the panel is the
+     thing the eye follows. Opacity-only: no layout, no repaint of the page
+     behind it. */
+  .dialog-overlay-motion[data-state="open"] {
+    animation: dialog-overlay-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .dialog-overlay-motion[data-state="closed"] {
+    animation: dialog-overlay-out 130ms cubic-bezier(0.4, 0, 1, 1);
+  }
+  /* Opt-in positioning for dialogs whose height is not known until data lands.
+     The stock `top: 50%; translate: -50% -50%` centering ties the panel's top
+     edge to its own height, so *any* height change — a skeleton giving way to
+     content, a duration change adding a suggestion chip, an error line
+     appearing — slides the title, the buttons and every control in between.
+     No skeleton can prevent that, because a skeleton can only ever guess at
+     content it hasn't fetched yet.
+
+     So the top edge is pinned instead, to where the top of a ~40rem panel
+     would sit if it were centred. Panels shorter than that read as centred;
+     anything taller grows downward past the anchor without dragging the header
+     up. `max-height` is derived from the same anchor so a tall panel still
+     ends a comfortable margin above the bottom of the screen — it stays inside
+     the viewport and scrolls internally via .dialog-scroll.
+
+     `translate` is set as the shorthand (not translate-y-0 in the class list)
+     because that is the single property the centering utilities write to; it
+     keeps the horizontal -50% and drops only the vertical half. The panel
+     animation is opacity + scale only, so nothing here fights it.
+
+     Attribute selector for the same reason .dialog-motion uses one: specificity
+     0,2,0 beats the positioning utilities outright, so this does not depend on
+     where Tailwind happens to order its layer. */
+  .dialog-anchored[data-state] {
+    --dialog-anchor-top: max(1.5rem, calc(50dvh - 20rem));
+    top: var(--dialog-anchor-top);
+    translate: -50% 0;
+    max-height: calc(100dvh - var(--dialog-anchor-top) - 1.5rem);
+  }
+  /* The scroll region inside a modal. `overscroll-behavior: contain` stops a
+     scroll that reaches the end of the dialog from chaining to the page behind
+     it, and the stable gutter keeps content from shifting sideways the moment
+     loaded content makes the panel scrollable. */
+  .dialog-scroll {
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  .dialog-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .dialog-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .dialog-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 999px;
+  }
+  .dialog-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+  /* Thin, brand-tinted scrollbar for in-card scroll regions. The default
+     Windows/Chrome bar is a fat opaque grey slab that dominates a soft card. */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* Kill the stepper arrows Windows draws at each end of the bar. */
+  .scroll-slim::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 999px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
   .glow-border {
     position: relative;
@@ -371,6 +724,23 @@ body.messages-page-open {
   }
   .pr-safe {
     padding-right: env(safe-area-inset-right);
+  }
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(128 128 128 / 0.35) transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgb(128 128 128 / 0.35);
+    border-radius: 9999px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(128 128 128 / 0.55);
   }
 }
 

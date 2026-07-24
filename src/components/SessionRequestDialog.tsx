@@ -10,8 +10,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { TeacherSlotPicker } from "@/components/TeacherSlotPicker";
+import { DurationSelector } from "@/components/DurationSelector";
 import { cn } from "@/lib/utils";
-import { SESSION_DURATIONS, computeSessionCredits, type SessionDuration } from "@/lib/sessions";
+import { computeSessionCredits, type SessionDuration } from "@/lib/sessions";
 
 // At most this many sessions a learner can book in one go.
 const MAX_SESSIONS = 7;
@@ -51,6 +52,11 @@ type Props = {
   onConfirmMulti?: (params: MultiSessionParams) => void | Promise<void>;
 };
 
+// Fallback start for the unconstrained picker only (no teacher supplied, so
+// there are no "best times" to snap to): tomorrow, on the hour. When a teacher
+// IS supplied we open with no time at all and let TeacherSlotPicker fill in its
+// first suggested slot, so the default always matches the first "Best times"
+// chip instead of an arbitrary +24h.
 function defaultSchedule(): Date {
   const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
   d.setMinutes(0, 0, 0);
@@ -100,18 +106,25 @@ export function SessionRequestDialog({
     if (open) {
       setDuration(60);
       setMulti(false);
-      setScheduledAt(defaultSchedule());
+      setScheduledAt(teacherId ? null : defaultSchedule());
       setScheduleValid(false);
       setSlots([]);
       setDraft(null);
       setDraftValid(false);
     }
-  }, [open]);
+  }, [open, teacherId]);
 
   // Changing duration can shift which teacher slots fit, so a fresh plan is
-  // simplest and avoids holding now-invalid times.
+  // simplest and avoids holding now-invalid times. Clearing the single-session
+  // pick likewise lets the picker re-snap to the first suggestion for the new
+  // duration — a 20-min class may open an earlier slot than a 60-min one.
   useEffect(() => {
     if (multi) setSlots([]);
+    if (!teacherId) return;
+    setScheduledAt(null);
+    setScheduleValid(false);
+    setDraft(null);
+    setDraftValid(false);
   }, [duration]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const excludeTimes = useMemo(() => slots.map((s) => s.getTime()), [slots]);
@@ -167,13 +180,9 @@ export function SessionRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-2rem)] max-w-[420px] max-h-[90vh] overflow-hidden rounded-2xl border-white/10 glass-strong p-0 gap-0">
-        {/* Soft brand wash spans the whole dialog — matches Explore / Profile heroes. */}
-        <div className="pointer-events-none absolute inset-0 gradient-hero opacity-80" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.22),transparent_55%)] dark:hidden" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(at_15%_85%,rgba(16,185,129,0.10),transparent_55%)]" />
-
-        <div className="relative max-h-[90vh] space-y-3.5 overflow-y-auto p-4">
+      {/* Surface colour comes from DialogContent — only layout is set here. */}
+      <DialogContent className="max-h-[90vh] max-w-[460px] gap-0 overflow-hidden p-0">
+        <div className="dialog-scroll relative max-h-[90vh] space-y-3.5 overflow-y-auto p-4">
           <DialogHeader className="space-y-1">
             <div className="flex items-center gap-2.5">
               <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg gradient-brand-soft">
@@ -219,7 +228,7 @@ export function SessionRequestDialog({
                       "rounded-xl border px-3 py-2 text-center text-sm font-medium transition-all",
                       selected
                         ? "border-brand-purple/60 bg-brand-purple/10 shadow-glow"
-                        : "border-white/10 bg-white/5 hover:border-brand-purple/30 hover:bg-white/[0.08]",
+                        : "border-border bg-muted hover:border-brand-purple/40 hover:bg-brand-purple/[0.07]",
                     )}
                   >
                     {opt.label}
@@ -234,35 +243,11 @@ export function SessionRequestDialog({
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Duration {multi && <span className="font-normal normal-case">· every class</span>}
             </p>
-            <div className="grid grid-cols-3 gap-2">
-              {SESSION_DURATIONS.map((value) => {
-                const selected = value === duration;
-                const optionCost = computeSessionCredits(creditsPerHour, value);
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setDuration(value)}
-                    className={cn(
-                      "rounded-xl border px-2 py-2 text-center transition-all",
-                      selected
-                        ? "border-brand-purple/60 bg-brand-purple/10 shadow-glow"
-                        : "border-white/10 bg-white/5 hover:border-brand-purple/30 hover:bg-white/[0.08]",
-                    )}
-                  >
-                    <div className="text-sm font-bold leading-none">{value} min</div>
-                    <div
-                      className={cn(
-                        "mt-1 text-[11px]",
-                        selected ? "text-brand-purple" : "text-muted-foreground",
-                      )}
-                    >
-                      {optionCost} {optionCost === 1 ? "cr" : "cr"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <DurationSelector
+              value={duration}
+              onChange={setDuration}
+              creditsPerHour={creditsPerHour}
+            />
           </div>
 
           {/* Single session: one time picker. */}
@@ -311,7 +296,7 @@ export function SessionRequestDialog({
                       <button
                         type="button"
                         onClick={() => removeSlot(s.getTime())}
-                        className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-white/10 hover:text-destructive"
+                        className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
                         aria-label="Remove session"
                       >
                         <X className="h-3.5 w-3.5" />
@@ -346,7 +331,7 @@ export function SessionRequestDialog({
                   </Button>
                 </div>
               ) : (
-                <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-center text-[11px] text-muted-foreground">
+                <p className="rounded-lg border border-border bg-muted px-3 py-2 text-center text-[11px] text-muted-foreground">
                   Max of {MAX_SESSIONS} sessions reached. Remove one to swap a time.
                 </p>
               )}
@@ -354,7 +339,7 @@ export function SessionRequestDialog({
           )}
 
           {/* Cost summary */}
-          <div className="relative flex items-center justify-between gap-3 overflow-hidden rounded-xl border border-white/10 px-3 py-2.5">
+          <div className="relative flex items-center justify-between gap-3 overflow-hidden rounded-xl border border-border px-3 py-2.5">
             <div className="absolute inset-0 gradient-brand-soft opacity-80 pointer-events-none" />
             <div className="relative">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

@@ -1,9 +1,40 @@
-import { createRouter, useRouter } from "@tanstack/react-router";
+import { createRouter, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { routeTree } from "./routeTree.gen";
-import { PageLoading } from "@/components/PageLoading";
+import { PageLoading, type PageLoadingVariant } from "@/components/PageLoading";
 import { logClientError } from "@/lib/client-logger";
+
+// The pending fallback renders while a route's code-split chunk (and any
+// loader) is still in flight — i.e. before the route file itself is available
+// to say what its skeleton looks like. Mapping pathname → variant here keeps
+// the pending frame identical to the loading gate the route renders next, so
+// a cold navigation paints one continuous skeleton instead of a generic one
+// that swaps for the real one mid-load. (Importing the route files to ask
+// them directly would drag every route into the entry chunk.)
+function pendingVariantFor(pathname: string): PageLoadingVariant {
+  if (pathname.startsWith("/dashboard")) return "dashboard";
+  if (pathname.startsWith("/profile") || pathname.startsWith("/users/")) return "profile";
+  if (pathname.startsWith("/credits")) return "credits";
+  if (pathname.startsWith("/messages")) return "messages";
+  if (pathname.startsWith("/sessions/")) return "detail";
+  if (pathname.startsWith("/video/")) return "video";
+  if (pathname.startsWith("/notifications")) return "list";
+  if (pathname.startsWith("/explore")) return "list-wide";
+  if (pathname.startsWith("/history")) return "hero-stats";
+  if (pathname === "/admin" || pathname === "/admin/") return "admin";
+  if (pathname.startsWith("/admin/")) return "list-wide";
+  // Landing, auth, and onboarding pages have no skeleton shell — a neutral
+  // spinner beats guessing a layout that won't match.
+  return "simple";
+}
+
+function RoutePendingFallback() {
+  // During a pending navigation `state.location` already points at the
+  // destination, so the fallback matches the page being navigated TO.
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  return <PageLoading variant={pendingVariantFor(pathname)} />;
+}
 
 function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
@@ -73,7 +104,7 @@ export const getRouter = () => {
     // instead of reusing the just-prefetched data.
     defaultPreloadStaleTime: 30 * 1000,
     defaultErrorComponent: DefaultErrorComponent,
-    defaultPendingComponent: PageLoading,
+    defaultPendingComponent: RoutePendingFallback,
     defaultPendingMs: 0,
   });
 

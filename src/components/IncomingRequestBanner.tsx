@@ -22,6 +22,7 @@ type IncomingRequest = {
 type RawRow = {
   id: string;
   learner_id: string;
+  initiator_id: string | null;
   credits: number;
   duration_minutes: number;
   scheduled_at: string | null;
@@ -33,7 +34,8 @@ type RawRow = {
 // PostgREST can't find a direct relationship and the whole query errors
 // silently. Fetch sessions, then fetch the learner profiles in one extra
 // round trip.
-const SELECT = "id, learner_id, credits, duration_minutes, scheduled_at, skills:skill_id(name)";
+const SELECT =
+  "id, learner_id, initiator_id, credits, duration_minutes, scheduled_at, skills:skill_id(name)";
 
 const AUTO_DISMISS_MS = 8000;
 const ANIMATION_MS = 300;
@@ -113,7 +115,18 @@ export function IncomingRequestBanner() {
         .limit(50)
         .abortSignal(controller.signal);
       if (!alive || error) return;
-      const hydrated = await hydrateRequests((data ?? []) as unknown as RawRow[]);
+      // Only show requests the OTHER person must respond to. The query above
+      // filters to teacher_id = me, but a teacher can also be the *initiator*
+      // — the dashboard "offer" flow creates a pending session where I teach a
+      // seeker (teacher_id = me, initiator_id = me). That request awaits the
+      // learner's response, not mine; surfacing it here let me click Accept
+      // only to hit accept_session's counterparty guard ("Only the other
+      // person can accept or reject this request"). Mirror the RPC's rule:
+      // the initiator is COALESCE(initiator_id, learner_id).
+      const incoming = ((data ?? []) as unknown as RawRow[]).filter(
+        (row) => (row.initiator_id ?? row.learner_id) !== userId,
+      );
+      const hydrated = await hydrateRequests(incoming);
       if (!alive) return;
       // Merge with existing queue: keep any in-flight `active` request and
       // preserve queue order for items already shown, while picking up any

@@ -24,9 +24,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { playRequestSentChime } from "@/lib/sounds";
+import { warmBookingDialogs } from "@/lib/warm-dialog-chunks";
 import { markSelfAction } from "@/lib/self-action";
 import { ReviewDialog } from "@/components/ReviewDialog";
-import { Star } from "lucide-react";
 import { useInvalidateMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import {
   queryUserSessions,
@@ -35,24 +35,14 @@ import {
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import type { Enums } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
-import {
-  Calendar,
-  CalendarClock,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  Clock,
-  Eye,
-  Layers,
-  Loader2,
-  MessageSquare,
-  Sparkles,
-  Users,
-  Video,
-  X,
-} from "lucide-react";
+// Icons are deliberately rare on this page: only the join button keeps one,
+// because it is the single action people hunt for. Everything else is plain
+// text — a button per icon made the list read like a generated template.
+import { ChevronDown, Loader2, Video } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
+import { fetchReadySessionNotes, type SessionNotesRow } from "@/lib/session-notes";
+import { downloadSessionNotesPdf } from "@/lib/session-notes-pdf";
 
 // Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
 // Keeping it out of the history route chunk strips ~40–60kb from first paint
@@ -127,10 +117,53 @@ const FILTERS: { label: string; value: SessionFilter }[] = [
   { label: "Completed", value: "completed" },
 ];
 
+// Tail of the "Nothing …" heading shown when a filter has no rows.
+const FILTER_EMPTY: Record<SessionFilter, string> = {
+  all: "here yet",
+  pending: "waiting on a reply",
+  accepted: "coming up",
+  completed: "finished yet",
+};
+
+// Count roll-up for the hero, e.g. "5 completed sessions" or "2 upcoming,
+// 1 pending and 9 completed sessions". The noun is plural-matched to the last
+// count, since that's the one sitting next to it.
+function describeSessions(stats: {
+  total: number;
+  pending: number;
+  accepted: number;
+  completed: number;
+}): string {
+  if (stats.total === 0) {
+    return "Nothing booked yet. Find someone to learn from and it'll show up here.";
+  }
+  const parts: string[] = [];
+  let lastCount = 0;
+  const add = (count: number, label: string) => {
+    if (!count) return;
+    parts.push(`${count} ${label}`);
+    lastCount = count;
+  };
+  add(stats.accepted, "upcoming");
+  add(stats.pending, "pending");
+  add(stats.completed, "completed");
+  if (parts.length === 0) return "Everything you've booked lives here.";
+  const list =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `${list} session${lastCount === 1 ? "" : "s"}`;
+}
+
 function SessionsPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const invalidateCreditBalance = useInvalidateMyCreditBalance();
+  // "Book again" on a past session opens a code-split dialog — fetch it while
+  // the list is idle rather than on the click.
+  useEffect(() => {
+    warmBookingDialogs();
+  }, []);
   const search = Route.useSearch();
   const filter = search.filter ?? "all";
   const setFilter = (next: SessionFilter) => {
@@ -146,12 +179,31 @@ function SessionsPage() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [rebookSession, setRebookSession] = useState<SessionRow | null>(null);
   const [reviewSession, setReviewSession] = useState<SessionRow | null>(null);
+  const [notesBySession, setNotesBySession] = useState<Map<string, SessionNotesRow>>(new Map());
 
   useEffect(() => {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/history" } });
     }
   }, [authLoading, navigate, user]);
+
+  // Notes are a side dish: fetched after the list renders so a slow (or empty)
+  // session_notes query never holds up the cards themselves.
+  const sessionIdsKey = sessions.map((session) => session.id).join(",");
+  useEffect(() => {
+    const ids = sessionIdsKey ? sessionIdsKey.split(",") : [];
+    if (ids.length === 0) {
+      setNotesBySession(new Map());
+      return;
+    }
+    let alive = true;
+    void fetchReadySessionNotes(ids).then((map) => {
+      if (alive) setNotesBySession(map);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [sessionIdsKey]);
 
   const markBusy = useCallback((id: string) => {
     setBusyIds((current) => new Set(current).add(id));
@@ -442,68 +494,34 @@ function SessionsPage() {
   if (!user) return null;
 
   const isInitialLoading = loading && sessions.length === 0;
+  const summary = describeSessions(stats);
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-[18px] sm:px-[18px] md:py-6">
       <section className="space-y-6">
+        {/* The four stat tiles that used to live here repeated the exact counts
+            on the filter chips below, so they were noise. One plain sentence
+            says the same thing. */}
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
-          <div className="relative flex flex-col gap-6 p-6 md:p-8">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-                  Your <span className="gradient-brand-text">Sessions</span>
-                </h1>
-                <p className="mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
-                  Track every booking in one place. Accept, join, and review.
-                </p>
-              </div>
-              <Button variant="hero" asChild className="self-start md:self-auto">
-                <Link to="/explore" preload="intent">
-                  <Sparkles className="h-4 w-4" />
-                  Find more matches
-                </Link>
-              </Button>
+          {/* Generous vertical padding: with the stat tiles gone the hero has
+              little content, and at p-8 it read as a squat strip against its
+              own corner radius. */}
+          <div className="relative flex flex-col gap-5 px-6 py-10 md:flex-row md:items-center md:justify-between md:px-8 md:py-14">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+                Your <span className="gradient-brand-text">sessions</span>
+              </h1>
+              <p className="mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
+                {isInitialLoading ? "Getting your sessions…" : summary}
+              </p>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-              {isInitialLoading ? (
-                <>
-                  <StatCardSkeleton />
-                  <StatCardSkeleton />
-                  <StatCardSkeleton />
-                  <StatCardSkeleton />
-                </>
-              ) : (
-                <>
-                  <StatCard
-                    label="Recent"
-                    value={stats.total}
-                    tone="default"
-                    icon={<Video className="h-4 w-4" />}
-                  />
-                  <StatCard
-                    label="Pending"
-                    value={stats.pending}
-                    tone="pending"
-                    icon={<Clock className="h-4 w-4" />}
-                  />
-                  <StatCard
-                    label="Accepted"
-                    value={stats.accepted}
-                    tone="accepted"
-                    icon={<Check className="h-4 w-4" />}
-                  />
-                  <StatCard
-                    label="Completed"
-                    value={stats.completed}
-                    tone="completed"
-                    icon={<CheckCircle2 className="h-4 w-4" />}
-                  />
-                </>
-              )}
-            </div>
+            <Button variant="hero" asChild className="self-start md:self-auto">
+              <Link to="/explore" preload="intent">
+                Find someone to learn from
+              </Link>
+            </Button>
           </div>
         </section>
 
@@ -559,17 +577,17 @@ function SessionsPage() {
             </>
           ) : visibleSessions.length === 0 ? (
             <div className="animate-fade-up glass rounded-3xl border border-white/10 px-6 py-14 text-center">
-              <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-purple/15">
-                <CalendarClock className="h-5 w-5 text-brand-purple" />
-              </div>
-              <h2 className="mt-4 text-lg font-semibold">No sessions here yet</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Explore matches to request a session, or switch filters to see more.
+              <h2 className="text-lg font-semibold">
+                {filter === "all" ? "No sessions yet" : `Nothing ${FILTER_EMPTY[filter]}`}
+              </h2>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                {filter === "all"
+                  ? "Once you book a session — or someone books you — it shows up here."
+                  : "Try another filter, or book something new."}
               </p>
               <Button variant="hero" className="mt-5" asChild>
                 <Link to="/explore" preload="intent">
-                  <Sparkles className="h-4 w-4" />
-                  Explore Matches
+                  Browse people
                 </Link>
               </Button>
             </div>
@@ -590,6 +608,7 @@ function SessionsPage() {
                   key={group.key}
                   session={group.session}
                   currentUserId={user?.id}
+                  notes={notesBySession.get(group.session.id) ?? null}
                   busy={busyIds.has(group.session.id)}
                   onAccept={() => acceptSession(group.session)}
                   onReject={() => rejectSession(group.session)}
@@ -648,78 +667,26 @@ function SessionsPage() {
   );
 }
 
-function StatCardSkeleton() {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 sm:rounded-3xl sm:px-5 sm:py-5">
-      <div className="flex items-center gap-3">
-        <Skeleton className="h-9 w-9 rounded-xl" />
-        <div className="flex-1 space-y-1.5">
-          <Skeleton className="h-6 w-10" />
-          <Skeleton className="h-3 w-16" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// Mirrors SessionCard's own markup (same padding, same flex switch at lg, same
+// line heights) so the real cards drop straight in without any shift.
 function SessionCardSkeleton() {
   return (
-    <div className="h-[156px] rounded-3xl glass border border-white/10 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-1 gap-4">
-          <Skeleton className="h-12 w-12 rounded-2xl" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-5 w-40" />
-            <Skeleton className="h-3 w-64" />
+    <div className="rounded-3xl glass border border-white/10 px-5 py-5 sm:px-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 gap-4">
+          <Skeleton className="h-12 w-12 shrink-0 rounded-2xl" />
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-6 w-40 rounded-md" />
+              <Skeleton className="h-5 w-20 rounded-full" />
+            </div>
+            <Skeleton className="h-4 w-36 rounded-full" />
+            <Skeleton className="h-4 w-60 rounded-full" />
           </div>
         </div>
-        <Skeleton className="h-6 w-24 rounded-full" />
-      </div>
-      <div className="mt-6 flex flex-wrap gap-2">
-        <Skeleton className="h-9 w-20 rounded-full" />
-        <Skeleton className="h-9 w-20 rounded-full" />
-        <Skeleton className="h-9 w-20 rounded-full" />
-      </div>
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  tone = "default",
-  icon,
-}: {
-  label: string;
-  value: number;
-  tone?: "default" | "pending" | "accepted" | "completed";
-  icon?: React.ReactNode;
-}) {
-  const tones = {
-    default: { value: "text-foreground", badge: "bg-brand-purple/15 text-brand-purple" },
-    pending: { value: "text-amber-500", badge: "bg-amber-400/15 text-amber-400" },
-    accepted: { value: "text-emerald-500", badge: "bg-brand-cyan/15 text-brand-cyan" },
-    completed: { value: "text-blue-500", badge: "bg-blue-400/15 text-blue-400" },
-  }[tone];
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 transition-colors hover:bg-white/[0.07] sm:rounded-3xl sm:px-5 sm:py-5">
-      <div className="flex items-center gap-3">
-        {icon && (
-          <div
-            className={cn(
-              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-              tones.badge,
-            )}
-          >
-            {icon}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <div className={cn("text-2xl font-bold leading-none sm:text-3xl", tones.value)}>
-            {value}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground sm:text-sm">{label}</div>
+        <div className="flex gap-2 lg:justify-end">
+          <Skeleton className="h-8 w-24 rounded-full" />
+          <Skeleton className="h-8 w-20 rounded-full" />
         </div>
       </div>
     </div>
@@ -744,7 +711,7 @@ function SessionPlanCard({
   const first = sessions[0];
   const isTeacher = first.teacher_id === currentUserId;
   const otherName = isTeacher ? first.learnerName : first.teacherName;
-  const roleLabel = isTeacher ? "Learner" : "Teacher";
+  const roleLabel = isTeacher ? "Teaching" : "Learning from";
   const total = progress?.total ?? sessions.length;
   const completed = progress?.completed ?? 0;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -755,29 +722,26 @@ function SessionPlanCard({
         <AvatarInitial name={otherName} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold leading-tight sm:text-xl">
+            <h2 className="text-lg font-semibold leading-tight sm:text-xl">
               {first.skills?.name ?? "Skill session"}
             </h2>
-            <Badge className="inline-flex items-center gap-1 rounded-full border-0 bg-brand-purple/15 px-2.5 py-0.5 text-xs font-medium text-brand-purple">
-              <Layers className="h-3 w-3" />
-              Plan · {total} sessions
+            <Badge className="rounded-full border-0 bg-brand-purple/15 px-2.5 py-0.5 text-xs font-medium text-brand-purple">
+              {total} sessions
             </Badge>
           </div>
-          <div className="mt-1.5 text-sm text-muted-foreground">
-            <span className="text-foreground/80">{roleLabel}:</span> {otherName}{" "}
-            <span className="mx-1 opacity-40">&bull;</span> {first.duration_minutes} min{" "}
-            <span className="mx-1 opacity-40">&bull;</span>{" "}
-            <span className="text-foreground/80">{first.credits} credits each</span>
-          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {roleLabel} {otherName}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {first.duration_minutes} min each · {first.credits} credits each
+          </p>
         </div>
       </div>
 
       <div className="mt-4 space-y-1.5">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Progress</span>
-          <span className="font-medium text-foreground/80">
-            {completed}/{total} completed
-          </span>
+          <span>{completed === total ? "All done" : `${completed} of ${total} done`}</span>
+          <span>{pct}%</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
           <div
@@ -854,15 +818,15 @@ function PlanSessionRow({
         {canRespondToPending ? (
           <>
             <Button variant="hero" size="sm" onClick={onAccept} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               Accept
             </Button>
-            <Button variant="outline" size="sm" onClick={onReject} disabled={busy}>
-              <X className="h-4 w-4" />
+            <Button variant="ghost" size="sm" onClick={onReject} disabled={busy}>
+              Decline
             </Button>
           </>
         ) : isAccepted && roomLink && joinAllowed ? (
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="hero" size="sm" asChild>
             <Link to="/video/$sessionId" preload="intent" params={{ sessionId: session.id }}>
               <Video className="h-4 w-4" />
               Join
@@ -870,13 +834,12 @@ function PlanSessionRow({
           </Button>
         ) : isAccepted && roomLink ? (
           <Button variant="outline" size="sm" disabled title={joinHint ?? "Not in session window"}>
-            <Video className="h-4 w-4" />
             {joinHint ?? "Join"}
           </Button>
         ) : (
-          <Button variant="ghost" size="sm" asChild aria-label="Session details">
+          <Button variant="ghost" size="sm" asChild>
             <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: session.id }}>
-              <Eye className="h-4 w-4" />
+              Details
             </Link>
           </Button>
         )}
@@ -888,6 +851,7 @@ function PlanSessionRow({
 function SessionCard({
   session,
   currentUserId,
+  notes,
   busy,
   onAccept,
   onReject,
@@ -897,6 +861,7 @@ function SessionCard({
 }: {
   session: SessionRow;
   currentUserId?: string;
+  notes: SessionNotesRow | null;
   busy: boolean;
   onAccept: () => void;
   onReject: () => void;
@@ -907,7 +872,7 @@ function SessionCard({
   const isTeacher = session.teacher_id === currentUserId;
   const sessionInitiatorId = session.initiator_id ?? session.learner_id;
   const otherName = isTeacher ? session.learnerName : session.teacherName;
-  const roleLabel = isTeacher ? "Learner" : "Teacher";
+  const roleLabel = isTeacher ? "Teaching" : "Learning from";
   const roomLink = getVideoRoomUrl({
     link: session.meet_link,
     sessionId: session.id,
@@ -926,7 +891,21 @@ function SessionCard({
     isAccepted && !isTeacher && earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
   const canRespondToPending =
     session.status === "pending" && Boolean(currentUserId && currentUserId !== sessionInitiatorId);
-  const displayDate = new Date(session.scheduled_at ?? session.created_at);
+  // Unscheduled sessions used to show their created_at as if it were the
+  // meeting time, which quietly lied. Say what the date actually is instead.
+  const whenLabel = session.scheduled_at
+    ? `${new Date(session.scheduled_at).toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })} at ${new Date(session.scheduled_at).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`
+    : `Requested ${new Date(session.created_at).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })} · no time set yet`;
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
   const joinHint = describeJoinWindow(session.scheduled_at, session.duration_minutes);
   const calendarDetails: SessionCalendarDetails | null = session.scheduled_at
@@ -942,6 +921,25 @@ function SessionCard({
     : null;
   const openCalendarLink = (url: string) => {
     window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const [downloadingNotes, setDownloadingNotes] = useState(false);
+  const handleDownloadNotes = async () => {
+    if (!notes?.notes) return;
+    setDownloadingNotes(true);
+    try {
+      await downloadSessionNotesPdf(notes.notes, {
+        skillName: session.skills?.name ?? null,
+        teacherName: session.teacherName,
+        learnerName: session.learnerName,
+        scheduledAt: session.scheduled_at,
+        generatedAt: notes.generated_at,
+      });
+    } catch {
+      toast.error("Could not build the PDF.");
+    } finally {
+      setDownloadingNotes(false);
+    }
   };
 
   const hoverAccent =
@@ -963,7 +961,7 @@ function SessionCard({
           <AvatarInitial name={otherName} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold leading-tight sm:text-xl">
+              <h2 className="text-lg font-semibold leading-tight sm:text-xl">
                 <Link
                   to="/sessions/$sessionId"
                   params={{ sessionId: session.id }}
@@ -975,46 +973,26 @@ function SessionCard({
               </h2>
               <StatusBadge status={session.status} />
             </div>
-            <div className="mt-1.5 text-sm text-muted-foreground">
-              <span className="text-foreground/80">{roleLabel}:</span> {otherName}{" "}
-              <span className="mx-1 opacity-40">&bull;</span> {session.duration_minutes} min{" "}
-              <span className="mx-1 opacity-40">&bull;</span>{" "}
-              <span className="text-foreground/80">{session.credits} credits</span>
-            </div>
-            <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1.5 text-xs text-muted-foreground sm:text-sm">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                <Calendar className="h-3.5 w-3.5" />
-                {displayDate.toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
-                <Clock className="h-3.5 w-3.5" />
-                {displayDate.toLocaleTimeString(undefined, {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-            </div>
+            <p className="mt-1 truncate text-sm text-muted-foreground">
+              {roleLabel} <span className="text-foreground/80">{otherName}</span>
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
+              {whenLabel} · {session.duration_minutes} min · {session.credits} credits
+            </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 lg:justify-end">
+        {/* One emphasised action per card (accept / join / book again); the
+            rest stay quiet so the row doesn't read as a wall of buttons. */}
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {canRespondToPending && (
             <>
               <Button variant="hero" size="sm" onClick={onAccept} disabled={busy}>
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Check className="h-4 w-4" />
-                )}
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
                 Accept
               </Button>
               <Button variant="outline" size="sm" onClick={onReject} disabled={busy}>
-                <X className="h-4 w-4" />
-                Reject
+                Decline
               </Button>
             </>
           )}
@@ -1022,7 +1000,7 @@ function SessionCard({
           {isAccepted && roomLink && (
             <>
               {joinAllowed ? (
-                <Button variant="outline" size="sm" asChild>
+                <Button variant="hero" size="sm" asChild>
                   <Link to="/video/$sessionId" preload="intent" params={{ sessionId: session.id }}>
                     <Video className="h-4 w-4" />
                     Join
@@ -1035,16 +1013,19 @@ function SessionCard({
                   disabled
                   title={joinHint ?? "Not in session window"}
                 >
-                  <Video className="h-4 w-4" />
                   {joinHint ?? "Join"}
                 </Button>
               )}
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/messages" preload="intent" search={{ s: session.id }}>
+                  Message
+                </Link>
+              </Button>
               {calendarDetails && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Calendar className="h-4 w-4" />
-                      Add to Calendar
+                    <Button variant="ghost" size="sm">
+                      Add to calendar
                       <ChevronDown className="h-4 w-4 opacity-60" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -1065,21 +1046,6 @@ function SessionCard({
             </>
           )}
 
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: session.id }}>
-              <Eye className="h-4 w-4" />
-              {session.status === "completed" ? "View Details" : "Details"}
-            </Link>
-          </Button>
-
-          {isAccepted && (
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/messages" preload="intent" search={{ s: session.id }}>
-                <MessageSquare className="h-4 w-4" />
-                Chat
-              </Link>
-            </Button>
-          )}
           {earlyReleaseAvailable && (
             <ConfirmAction
               title="Release credits to your teacher now?"
@@ -1092,32 +1058,41 @@ function SessionCard({
                 disabled={busy}
                 className="bg-emerald-500 text-white hover:bg-emerald-600"
               >
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                Complete Session
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                Mark as done
               </Button>
             </ConfirmAction>
           )}
 
           {session.status === "completed" && (
             <>
-              <Button variant="outline" size="sm" onClick={onReview} disabled={busy}>
-                <Star className="h-4 w-4" />
-                Review
+              <Button variant="hero" size="sm" onClick={onBookAgain} disabled={busy}>
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                {isTeacher ? "Offer help again" : "Book again"}
               </Button>
-              <Button variant="outline" size="sm" onClick={onBookAgain} disabled={busy}>
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Users className="h-4 w-4" />
-                )}
-                {isTeacher ? "Offer help again" : "Book Again"}
+              <Button variant="outline" size="sm" onClick={onReview} disabled={busy}>
+                Leave a review
               </Button>
             </>
           )}
+
+          {notes?.notes && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleDownloadNotes()}
+              disabled={downloadingNotes}
+            >
+              {downloadingNotes && <Loader2 className="h-4 w-4 animate-spin" />}
+              Notes (PDF)
+            </Button>
+          )}
+
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/sessions/$sessionId" preload="intent" params={{ sessionId: session.id }}>
+              Details
+            </Link>
+          </Button>
         </div>
       </div>
     </article>

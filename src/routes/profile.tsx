@@ -1,5 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,13 +18,25 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/ConfirmAction";
 import { SkillCombobox } from "@/components/SkillCombobox";
-import { AvailabilityEditor } from "@/components/AvailabilityEditor";
+import { AvailabilityEditor, prefetchAvailability } from "@/components/AvailabilityEditor";
 import { UserAvatar } from "@/components/UserAvatar";
-import { signSingleAvatarUrl } from "@/lib/avatars";
+import { cachedAvatarUrls, signSingleAvatarUrl } from "@/lib/avatars";
 import { notifyProfileUpdated } from "@/lib/profile-events";
 import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
-import { invalidatePageCaches } from "@/lib/page-caches";
+import { invalidatePageCaches, PROFILE_CACHE_PREFIX } from "@/lib/page-caches";
+import {
+  getCachedSkillsCatalog,
+  isSkillsCatalogFresh,
+  loadSkillsCatalog,
+} from "@/lib/skills-catalog";
+import { GetVerifiedCard } from "@/components/GetVerifiedCard";
+import {
+  loadSkillVerifications,
+  loadVerificationCooldowns,
+  type SkillVerification,
+} from "@/lib/skill-verification";
 import { Camera, ChevronDown, KeyRound, Loader2, Plus, Trash2, X } from "lucide-react";
+import { VerifiedTick } from "@/components/VerifiedTick";
 import { formatLearningMode, type LearningMode } from "@/lib/match";
 import { cn } from "@/lib/utils";
 import {
@@ -45,44 +65,103 @@ type Skill = { id: string; name: string; category: string | null };
 type ProfileState = {
   full_name: string;
   bio: string;
-  // null = balance unknown (RPC failed/unavailable). Never invent a number —
-  // a fake default like 10 would misrepresent the user's real balance.
-  credits: number | null;
+  // Raw storage key. Kept alongside the signed URL so a background refetch can
+  // tell "same photo" from "photo changed" and only re-sign when it actually
+  // moved — and so the snapshot below can persist something that doesn't expire.
+  avatar_path: string | null;
   avatar_url: string | null;
 };
 
-const SKILL_CATEGORIES = [
-  "Programming",
-  "Frontend",
-  "Backend",
-  "Database",
-  "AI",
-  "Data",
-  "Game Development",
-  "Video Games",
-  "Mobile Apps",
-  "Cybersecurity",
-  "Cloud",
-  "DevOps",
-  "Design",
-  "UI/UX",
-  "Creative",
-  "Video Editing",
-  "Photography",
-  "Music",
-  "Writing",
-  "Marketing",
-  "Business",
-  "Finance",
-  "Language",
-  "Math",
-  "Science",
-  "Soft Skills",
-  "Career",
-  "Fitness",
-  "Cooking",
-  "Other",
-];
+type TeachingEntry = {
+  id: string;
+  skill: Skill;
+  focus: string;
+  level: string;
+  teaching_mode: LearningMode;
+};
+
+type LearningEntry = {
+  id: string;
+  skill: Skill;
+  focus: string;
+  current_level: string;
+  learning_mode: LearningMode;
+};
+
+// The hero photo renders at 80×80 (h-20 w-20). Asking Supabase's image renderer
+// for 200px covers 2.5× DPR and turns a full-resolution upload — commonly a few
+// hundred KB — into a handful. The page used to request the original.
+const AVATAR_TRANSFORM = { width: 200, height: 200, quality: 80, resize: "cover" } as const;
+
+// Same stale-while-revalidate deal the dashboard / explore / credits pages
+// already make: paint last visit's snapshot immediately, then reconcile with
+// the server in the background. Profile data is edited almost exclusively by
+// its owner from this very page (which rewrites the snapshot on every change),
+// so the window for showing something stale is tiny.
+const PROFILE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
+type ProfileSnapshot = {
+  savedAt: number;
+  full_name: string;
+  bio: string;
+  avatarPath: string | null;
+  teaching: TeachingEntry[];
+  learning: LearningEntry[];
+  verifications: SkillVerification[];
+  cooldowns: [string, string][];
+};
+
+function readProfileSnapshot(userId: string | undefined): ProfileSnapshot | null {
+  if (!userId || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(`${PROFILE_CACHE_PREFIX}-${userId}`);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw) as ProfileSnapshot;
+    if (Date.now() - snapshot.savedAt > PROFILE_CACHE_MAX_AGE_MS) return null;
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function writeProfileSnapshot(userId: string, snapshot: Omit<ProfileSnapshot, "savedAt">) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      `${PROFILE_CACHE_PREFIX}-${userId}`,
+      JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies ProfileSnapshot),
+    );
+  } catch {
+    // Cache is a paint-speed boost only; quota / private mode can ignore it.
+  }
+}
+
+// Signed avatar URLs expire, so the snapshot stores the storage key instead.
+// The avatar module keeps its own (longer-lived) map of key → signed URL, so on
+// a revisit we can usually resolve one synchronously and paint the photo in the
+// very first frame; a miss just shows initials until the signer resolves.
+function snapshotToProfile(snapshot: ProfileSnapshot): ProfileState {
+  const path = snapshot.avatarPath;
+  return {
+    full_name: snapshot.full_name,
+    bio: snapshot.bio,
+    avatar_path: path,
+    avatar_url: path ? (cachedAvatarUrls([path], AVATAR_TRANSFORM).get(path) ?? null) : null,
+  };
+}
+
+// Runs `task` once the browser is idle, falling back to a short timer where
+// requestIdleCallback isn't available (Safari only shipped it in 16.4).
+// Returns a canceller for unmount.
+function whenIdle(task: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  if (typeof window.requestIdleCallback === "function") {
+    const handle = window.requestIdleCallback(task, { timeout: 1500 });
+    return () => window.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(task, 300);
+  return () => window.clearTimeout(handle);
+}
 
 const LEVEL_COLORS: Record<string, string> = {
   basic: "bg-brand-cyan/10 text-brand-cyan border-brand-cyan/20",
@@ -348,7 +427,7 @@ const ChangePasswordDialog = memo(function ChangePasswordDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="glass-strong border-white/10 sm:max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Change password</DialogTitle>
           <DialogDescription>
@@ -412,7 +491,14 @@ const ChangePasswordDialog = memo(function ChangePasswordDialog({
 function ProfilePage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
-  const [profile, setProfile] = useState<ProfileState | null>(null);
+  // Read once, at mount. On in-app navigation the signed-in user is already
+  // known here, so every slice below is seeded before the first paint and the
+  // skeleton never appears at all. On a cold load `user` is still resolving —
+  // the load effect hydrates instead, the moment the id lands.
+  const [bootSnapshot] = useState(() => readProfileSnapshot(user?.id));
+  const [profile, setProfile] = useState<ProfileState | null>(() =>
+    bootSnapshot ? snapshotToProfile(bootSnapshot) : null,
+  );
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -424,25 +510,28 @@ function ProfilePage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const nameBioRef = useRef<NameBioFormHandle>(null);
   const [nameBioDirty, setNameBioDirty] = useState(false);
-  const [allSkills, setAllSkills] = useState<Skill[]>([]);
-  const [teaching, setTeaching] = useState<
-    { id: string; skill: Skill; focus: string; level: string; teaching_mode: LearningMode }[]
-  >([]);
-  const [learning, setLearning] = useState<
-    {
-      id: string;
-      skill: Skill;
-      focus: string;
-      current_level: string;
-      learning_mode: LearningMode;
-    }[]
-  >([]);
+  // Mirrors nameBioDirty for the background refetch, which runs outside React's
+  // render and must not reset the form under someone who is mid-edit.
+  const nameBioDirtyRef = useRef(false);
+  const handleNameBioDirty = useCallback((dirty: boolean) => {
+    nameBioDirtyRef.current = dirty;
+    setNameBioDirty(dirty);
+  }, []);
+  // Seeded from the shared catalog snapshot so the "add a skill" combobox is
+  // usable on arrival; refreshed on an idle callback further down.
+  const [allSkills, setAllSkills] = useState<Skill[]>(() => getCachedSkillsCatalog());
+  const [teaching, setTeaching] = useState<TeachingEntry[]>(() => bootSnapshot?.teaching ?? []);
+  const [learning, setLearning] = useState<LearningEntry[]>(() => bootSnapshot?.learning ?? []);
+  const [verifications, setVerifications] = useState<Map<string, SkillVerification>>(
+    () => new Map((bootSnapshot?.verifications ?? []).map((v) => [v.skill_id, v] as const)),
+  );
+  const [verificationCooldowns, setVerificationCooldowns] = useState<Map<string, string>>(
+    () => new Map(bootSnapshot?.cooldowns ?? []),
+  );
   const [teachInput, setTeachInput] = useState("");
   const [teachFocusInput, setTeachFocusInput] = useState("");
   const [learnInput, setLearnInput] = useState("");
   const [learnFocusInput, setLearnFocusInput] = useState("");
-  const [teachCategory, setTeachCategory] = useState("");
-  const [learnCategory, setLearnCategory] = useState("");
   const [teachMode, setTeachMode] = useState<LearningMode | "">("");
   const [learnMode, setLearnMode] = useState<LearningMode | "">("");
   const [teachLevel, setTeachLevel] = useState<"basic" | "intermediate" | "advanced" | "">("");
@@ -456,47 +545,103 @@ function ProfilePage() {
   }, [authLoading, user, navigate]);
 
   const userId = user?.id;
+  // Guards the snapshot writer below: only state we actually trust (a snapshot
+  // hydration or a successful fetch) is worth persisting. Without it, the empty
+  // placeholder written on a failed load would be cached and then painted as a
+  // blank profile on the next visit.
+  const canPersistRef = useRef(Boolean(bootSnapshot));
+  const snapshotAppliedForRef = useRef<string | null>(bootSnapshot ? (user?.id ?? null) : null);
+
   useEffect(() => {
     if (!userId) return;
     let alive = true;
     const controller = new AbortController();
 
+    // Cold load: `user` resolved after mount, so the snapshot couldn't be read
+    // during state init. Apply it now — still synchronously, still before any
+    // request comes back — so the skeleton gives way immediately.
+    const previousUserId = snapshotAppliedForRef.current;
+    if (previousUserId !== userId) {
+      snapshotAppliedForRef.current = userId;
+      const snapshot = readProfileSnapshot(userId);
+      if (snapshot) {
+        canPersistRef.current = true;
+        setProfile(snapshotToProfile(snapshot));
+        setTeaching(snapshot.teaching);
+        setLearning(snapshot.learning);
+        setVerifications(new Map(snapshot.verifications.map((v) => [v.skill_id, v] as const)));
+        setVerificationCooldowns(new Map(snapshot.cooldowns));
+      } else if (previousUserId) {
+        // A different account than the one currently on screen, with nothing
+        // cached for it. Show the skeleton rather than the previous user's name
+        // and skills while their replacement loads.
+        canPersistRef.current = false;
+        setProfile(null);
+        setTeaching([]);
+        setLearning([]);
+        setVerifications(new Map());
+        setVerificationCooldowns(new Map());
+        setOpenSessionCount(0);
+      }
+    }
+
+    // Warm the availability schedule in parallel with the profile fetch. The
+    // editor lives at the bottom of this page, so without this it couldn't
+    // start its own RPC until the page had fully painted — the schedule then
+    // showed a whole round-trip late. This collapses that serial hop.
+    prefetchAvailability(userId);
+
+    // Applies a resolved slice unless this mount has been torn down. Each
+    // background query below settles on its own rather than through a shared
+    // Promise.all: grouping them meant the slowest one (the skills catalog,
+    // typically) held back the verified ticks and every other slice with it.
+    const settle = <T,>(promise: PromiseLike<T>, apply: (value: T) => void) => {
+      Promise.resolve(promise)
+        .then((value) => {
+          if (!alive || controller.signal.aborted) return;
+          apply(value);
+        })
+        .catch(() => {
+          // Decoration only — a failure leaves that slice as it was.
+        });
+    };
+
+    // Phase 1 — the minimum needed to paint the page: identity + skill lists.
+    // First paint is gated on `profile` when there was no snapshot to hydrate
+    // from, so keep this fetch small; everything else loads below and never
+    // blocks the render.
     (async () => {
       try {
-        const [{ data: p }, { data: creditBalance }, { data: skills }, t, l, openSessions] =
-          await Promise.all([
-            supabase
-              .from("profiles")
-              .select("full_name, bio, avatar_url")
-              .eq("id", userId)
-              .abortSignal(controller.signal)
-              .maybeSingle(),
-            supabase.rpc("my_credit_balance").abortSignal(controller.signal),
-            supabase
-              .from("skills")
-              .select("id, name, category")
-              .order("name")
-              .abortSignal(controller.signal),
-            loadTeachingSkills(userId),
-            loadLearningSkills(userId),
-            supabase
-              .from("sessions")
-              .select("id", { count: "exact", head: true })
-              .or(`teacher_id.eq.${userId},learner_id.eq.${userId}`)
-              .in("status", ["pending", "accepted", "active"])
-              .abortSignal(controller.signal),
-          ]);
+        const [{ data: p }, t, l] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("full_name, bio, avatar_url")
+            .eq("id", userId)
+            .abortSignal(controller.signal)
+            .maybeSingle(),
+          loadTeachingSkills(userId),
+          loadLearningSkills(userId),
+        ]);
         if (!alive || controller.signal.aborted) return;
 
-        const loadedProfile = {
-          full_name: p?.full_name ?? "",
-          bio: p?.bio ?? "",
-          credits: creditBalance ?? null,
-          avatar_url: null,
-        };
-        setProfile(loadedProfile);
-        setAllSkills(skills ?? []);
-        setOpenSessionCount(openSessions.count ?? 0);
+        canPersistRef.current = true;
+        const nextAvatarPath = p?.avatar_url ?? null;
+        setProfile((current) => {
+          // Don't yank the form out from under someone mid-edit: when there are
+          // unsaved changes, keep the baseline they started from and let Save
+          // reconcile. The avatar pointer still refreshes.
+          const keepText = Boolean(current) && nameBioDirtyRef.current;
+          return {
+            full_name: keepText ? current!.full_name : (p?.full_name ?? ""),
+            bio: keepText ? current!.bio : (p?.bio ?? ""),
+            avatar_path: nextAvatarPath,
+            // Same photo as the one already on screen? Keep its signed URL.
+            // Blanking it here made the avatar vanish and pop back on every
+            // background revalidation.
+            avatar_url:
+              current && current.avatar_path === nextAvatarPath ? current.avatar_url : null,
+          };
+        });
         const storedMethods = getStoredSkillMethods(userId);
         const storedFocuses = getStoredSkillFocuses(userId);
         setTeaching(
@@ -528,8 +673,10 @@ function ProfilePage() {
             .filter((x) => x.skill),
         );
 
-        if (!p?.avatar_url) return;
-        const signedAvatarUrl = await signSingleAvatarUrl(p.avatar_url).catch(() => null);
+        if (!nextAvatarPath) return;
+        const signedAvatarUrl = await signSingleAvatarUrl(nextAvatarPath, AVATAR_TRANSFORM).catch(
+          () => null,
+        );
         if (alive && !controller.signal.aborted && signedAvatarUrl) {
           setProfile((current) =>
             current ? { ...current, avatar_url: signedAvatarUrl } : current,
@@ -548,54 +695,95 @@ function ProfilePage() {
             ? String((error as { code?: unknown }).code)
             : "";
         if (name === "AbortError" || code === "20" || code === "ABORT_ERR") return;
-        setProfile({ full_name: "", bio: "", credits: null, avatar_url: null });
+        canPersistRef.current = false;
+        // A failed revalidation must not wipe content the snapshot already
+        // painted — only fall back to the empty shell when there is nothing.
+        setProfile(
+          (current) => current ?? { full_name: "", bio: "", avatar_path: null, avatar_url: null },
+        );
         toast.error(error instanceof Error ? error.message : "Could not load profile");
       }
     })();
 
+    // Phase 2 — the verified ticks. Cheap, visible above the fold, and each
+    // lands independently of the other.
+    settle(loadSkillVerifications(userId), setVerifications);
+    settle(loadVerificationCooldowns(userId), setVerificationCooldowns);
+
+    // Phase 3 — nothing here is on screen when the page opens: the catalog only
+    // feeds the "add a skill" combobox and the count only appears inside the
+    // delete-account confirmation. Both used to run on every visit, in front of
+    // the work that does paint. Wait for an idle frame instead.
+    const cancelIdle = whenIdle(() => {
+      if (!alive || controller.signal.aborted) return;
+      settle(loadSkillsCatalog(), setAllSkills);
+      settle(
+        supabase
+          .from("sessions")
+          .select("id", { count: "exact", head: true })
+          .or(`teacher_id.eq.${userId},learner_id.eq.${userId}`)
+          .in("status", ["pending", "accepted", "active"])
+          .abortSignal(controller.signal),
+        (res) => setOpenSessionCount(res.count ?? 0),
+      );
+    });
+
     return () => {
       alive = false;
+      cancelIdle();
       controller.abort();
     };
   }, [userId]);
 
-  const findOrCreate = async (name: string, category: string): Promise<Skill | null> => {
+  // Mirror whatever is on screen into the snapshot. Writing from state rather
+  // than from each fetch means local edits — add a skill, change a level, earn
+  // a badge — are captured too, so a revisit paints the current page instead of
+  // a pre-edit one.
+  useEffect(() => {
+    if (!userId || !profile || !canPersistRef.current) return;
+    writeProfileSnapshot(userId, {
+      full_name: profile.full_name,
+      bio: profile.bio,
+      avatarPath: profile.avatar_path,
+      teaching,
+      learning,
+      verifications: Array.from(verifications.values()),
+      cooldowns: Array.from(verificationCooldowns.entries()),
+    });
+  }, [userId, profile, teaching, learning, verifications, verificationCooldowns]);
+
+  // Catalog lookup only — skills are curated and selection-only, so there is no
+  // create path any more.
+  //
+  // The catalog loads lazily, so what's in state may be a stale snapshot (or
+  // nothing yet on a first visit). A name that isn't in the snapshot is far more
+  // likely to be a stale cache than a bad pick, so refresh before rejecting it.
+  const findSkill = async (name: string): Promise<Skill | null> => {
     const trimmed = name.trim();
     if (!trimmed) return null;
-    const existing = allSkills.find((s) => s.name.toLowerCase() === trimmed.toLowerCase());
-    if (existing) return existing;
-    const { data, error } = await supabase
-      .from("skills")
-      .insert({ name: trimmed, category })
-      .select("id, name, category")
-      .single();
-    // Someone else created the same skill first (unique name) — recover by
-    // using the winner's row instead of surfacing a raw conflict error.
-    if (error?.code === "23505") {
-      const { data: raced } = await supabase
-        .from("skills")
-        .select("id, name, category")
-        .ilike("name", trimmed)
-        .limit(1)
-        .maybeSingle();
-      if (raced) {
-        setAllSkills((prev) => (prev.some((s) => s.id === raced.id) ? prev : [...prev, raced]));
-        return raced;
-      }
+    let catalog = allSkills;
+    const match = (list: Skill[]) =>
+      list.find((s) => s.name.toLowerCase() === trimmed.toLowerCase()) ?? null;
+
+    const cached = match(catalog);
+    if (cached) return cached;
+
+    if (!isSkillsCatalogFresh()) {
+      catalog = await loadSkillsCatalog();
+      setAllSkills(catalog);
+      const refreshed = match(catalog);
+      if (refreshed) return refreshed;
     }
-    if (error || !data) {
-      toast.error(error?.message ?? "Could not add skill");
-      return null;
-    }
-    setAllSkills((prev) => [...prev, data]);
-    return data;
+
+    toast.error("Pick a skill from the list.");
+    return null;
   };
 
   const addTeach = async (nameOverride?: string) => {
     if (!user) return;
     const selectedTeachMode = teachMode || "teaching";
     const selectedTeachLevel = teachLevel || "basic";
-    const skill = await findOrCreate(nameOverride ?? teachInput, teachCategory || "Other");
+    const skill = await findSkill(nameOverride ?? teachInput);
     if (!skill) return;
     const existing = teaching.find((t) => t.skill.id === skill.id);
     if (existing) {
@@ -604,7 +792,6 @@ function ProfilePage() {
       setTeaching(teaching.map((t) => (t.id === existing.id ? { ...t, focus } : t)));
       setTeachInput("");
       setTeachFocusInput("");
-      setTeachCategory("");
       setTeachMode("");
       setTeachLevel("");
       return;
@@ -643,7 +830,8 @@ function ProfilePage() {
         error = null;
       }
     }
-    if (error || !data) return toast.error(error?.message ?? "Failed");
+    if (error || !data)
+      return toast.error(error?.message ?? "Couldn't add that skill. Please try again.");
     const newRow = data;
     if (!methodSavedInDatabase) {
       setStoredSkillMethod(user.id, "teaching", newRow.id, selectedTeachMode);
@@ -666,7 +854,6 @@ function ProfilePage() {
     );
     setTeachInput("");
     setTeachFocusInput("");
-    setTeachCategory("");
     setTeachMode("");
     setTeachLevel("");
     void invalidateAiSuggestionsCache();
@@ -678,7 +865,7 @@ function ProfilePage() {
     if (!user) return;
     const selectedLearnMode = learnMode || "teaching";
     const selectedLearnLevel = learnLevel || "basic";
-    const skill = await findOrCreate(nameOverride ?? learnInput, learnCategory || "Other");
+    const skill = await findSkill(nameOverride ?? learnInput);
     if (!skill) return;
     const existing = learning.find((t) => t.skill.id === skill.id);
     if (existing) {
@@ -687,7 +874,6 @@ function ProfilePage() {
       setLearning(learning.map((t) => (t.id === existing.id ? { ...t, focus } : t)));
       setLearnInput("");
       setLearnFocusInput("");
-      setLearnCategory("");
       setLearnMode("");
       setLearnLevel("");
       return;
@@ -725,7 +911,8 @@ function ProfilePage() {
         error = null;
       }
     }
-    if (error || !data) return toast.error(error?.message ?? "Failed");
+    if (error || !data)
+      return toast.error(error?.message ?? "Couldn't add that skill. Please try again.");
     const newRow = data;
     if (!methodSavedInDatabase) {
       setStoredSkillMethod(user.id, "learning", newRow.id, selectedLearnMode);
@@ -748,7 +935,6 @@ function ProfilePage() {
     );
     setLearnInput("");
     setLearnFocusInput("");
-    setLearnCategory("");
     setLearnMode("");
     setLearnLevel("");
     void invalidateAiSuggestionsCache();
@@ -756,9 +942,20 @@ function ProfilePage() {
   };
 
   const removeTeach = async (id: string) => {
+    const skillId = teaching.find((t) => t.id === id)?.skill.id;
     const { error } = await supabase.from("user_teaching_skills").delete().eq("id", id);
     if (error) return toastError(error);
     setTeaching((prev) => prev.filter((t) => t.id !== id));
+    // A DB trigger retires the badge along with the skill — mirror that here so
+    // the panel doesn't keep showing a tick for a skill that's gone.
+    if (skillId) {
+      setVerifications((prev) => {
+        if (!prev.has(skillId)) return prev;
+        const next = new Map(prev);
+        next.delete(skillId);
+        return next;
+      });
+    }
     void invalidateAiSuggestionsCache();
     invalidatePageCaches(user?.id);
   };
@@ -772,12 +969,32 @@ function ProfilePage() {
 
   const updateTeachLevel = async (id: string, level: string) => {
     const lvl = level as "basic" | "intermediate" | "advanced";
+    const row = teaching.find((t) => t.id === id);
     const { error } = await supabase
       .from("user_teaching_skills")
       .update({ level: lvl })
       .eq("id", id);
     if (error) return toastError(error);
     setTeaching((prev) => prev.map((t) => (t.id === id ? { ...t, level: lvl } : t)));
+    // Mirrors the sync_skill_verification_level trigger: claiming a HIGHER
+    // level than you tested at drops the badge (re-test required); lowering it
+    // keeps the badge, pinned to the weaker claim.
+    if (row) {
+      const skillId = row.skill.id;
+      const rank = (value: string) => (value === "advanced" ? 3 : value === "intermediate" ? 2 : 1);
+      setVerifications((prev) => {
+        const existing = prev.get(skillId);
+        if (!existing) return prev;
+        const next = new Map(prev);
+        if (rank(lvl) > rank(row.level)) {
+          next.delete(skillId);
+          toast.info(`Verification for ${row.skill.name} was reset. Re-take the quiz at ${lvl}.`);
+        } else {
+          next.set(skillId, { ...existing, level: lvl });
+        }
+        return next;
+      });
+    }
     invalidatePageCaches(user?.id);
   };
   const updateLearnLevel = async (id: string, level: string) => {
@@ -894,9 +1111,9 @@ function ProfilePage() {
         .remove([previousAvatarPath])
         .catch(() => null);
     }
-    const signedUrl = await signSingleAvatarUrl(path);
+    const signedUrl = await signSingleAvatarUrl(path, AVATAR_TRANSFORM);
     setUploadingAvatar(false);
-    setProfile({ ...profile, avatar_url: signedUrl });
+    setProfile({ ...profile, avatar_path: path, avatar_url: signedUrl });
     notifyProfileUpdated();
     invalidatePageCaches(user.id);
     toast.success("Avatar updated");
@@ -922,11 +1139,11 @@ function ProfilePage() {
     setProfile({
       full_name: nextFullName,
       bio: nextBio,
-      credits: profile.credits,
+      avatar_path: profile.avatar_path,
       avatar_url: profile.avatar_url,
     });
     nameBioRef.current?.reset({ full_name: nextFullName, bio: nextBio });
-    setNameBioDirty(false);
+    handleNameBioDirty(false);
     notifyProfileUpdated();
     void invalidateAiSuggestionsCache();
     invalidatePageCaches(user.id);
@@ -966,13 +1183,40 @@ function ProfilePage() {
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.16),transparent_55%)] pointer-events-none dark:hidden" />
 
           <div className="relative p-5 md:p-6">
-            <div className="flex flex-col gap-5 md:flex-row md:items-start md:gap-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+                Your <span className="gradient-brand-text">Profile</span>
+              </h1>
+              <div className="flex items-center gap-3">
+                <p className="hidden text-xs text-muted-foreground sm:block">
+                  {profileProgress === 100 ? (
+                    "Your profile is complete. Looking great!"
+                  ) : (
+                    <>
+                      Profile strength ·{" "}
+                      <span className="font-medium text-foreground/80">{profileProgress}%</span>
+                    </>
+                  )}
+                </p>
+                <Button
+                  variant="hero"
+                  size="sm"
+                  className="h-9 px-4 disabled:opacity-55"
+                  onClick={saveProfile}
+                  disabled={saving || !hasProfileChanges}
+                >
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Save
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-5">
               <div className="relative mx-auto shrink-0 md:mx-0">
                 <UserAvatar
                   name={profile.full_name}
                   url={profile.avatar_url}
-                  className="h-24 w-24 rounded-3xl ring-2 ring-brand-purple/30 shadow-glow"
-                  fallbackClassName="text-3xl rounded-3xl"
+                  className="h-20 w-20 rounded-2xl ring-2 ring-brand-purple/30 shadow-glow"
+                  fallbackClassName="text-2xl rounded-2xl"
                 />
                 <input
                   ref={avatarInputRef}
@@ -1002,29 +1246,25 @@ function ProfilePage() {
               </div>
 
               <div className="min-w-0 flex-1">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    Profile strength ·{" "}
-                    <span className="font-medium text-foreground/80">{profileProgress}%</span>
-                  </p>
-                  <Button
-                    variant="hero"
-                    size="sm"
-                    className="h-9 px-4 disabled:opacity-55"
-                    onClick={saveProfile}
-                    disabled={saving || !hasProfileChanges}
-                  >
-                    {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Save
-                  </Button>
-                </div>
                 <NameBioForm
                   ref={nameBioRef}
                   initialFullName={profile.full_name}
                   initialBio={profile.bio}
-                  onDirtyChange={setNameBioDirty}
+                  onDirtyChange={handleNameBioDirty}
                 />
               </div>
+
+              <GetVerifiedCard
+                teaching={teaching}
+                verifications={verifications}
+                cooldowns={verificationCooldowns}
+                onVerified={(verification) => {
+                  setVerifications((prev) =>
+                    new Map(prev).set(verification.skill_id, verification),
+                  );
+                  invalidatePageCaches(user?.id);
+                }}
+              />
             </div>
           </div>
         </section>
@@ -1045,7 +1285,7 @@ function ProfilePage() {
             {teaching.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
                 <p className="text-sm text-muted-foreground">
-                  No skills yet. Add one you can teach.
+                  What could you help someone with? Add your first skill below.
                 </p>
               </div>
             ) : (
@@ -1057,8 +1297,13 @@ function ProfilePage() {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                        <span className="truncate text-sm font-semibold text-foreground">
-                          {t.skill.name}
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="truncate text-sm font-semibold text-foreground">
+                            {t.skill.name}
+                          </span>
+                          {verifications.has(t.skill.id) && (
+                            <VerifiedTick className="h-3.5 w-3.5" />
+                          )}
                         </span>
                         <Select
                           value={t.level}
@@ -1171,18 +1416,6 @@ function ProfilePage() {
                       <SelectItem value="advanced">Advanced</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select value={teachCategory} onValueChange={setTeachCategory}>
-                    <SelectTrigger className="glass h-10 border-white/10">
-                      <SelectValue placeholder="Category: Other" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-56 overflow-y-auto">
-                      {SKILL_CATEGORIES.map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                   <Select
                     value={teachMode}
                     onValueChange={(value) => setTeachMode(value as LearningMode)}
@@ -1218,7 +1451,8 @@ function ProfilePage() {
             {learning.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
                 <p className="text-sm text-muted-foreground">
-                  No skills yet. Add one you want help with.
+                  What have you always wanted to learn? Add it below and we'll help you find a
+                  match.
                 </p>
               </div>
             ) : (
@@ -1344,18 +1578,6 @@ function ProfilePage() {
                       <SelectItem value="advanced">Advanced</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select value={learnCategory} onValueChange={setLearnCategory}>
-                    <SelectTrigger className="glass h-10 border-white/10">
-                      <SelectValue placeholder="Category: Other" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-56 overflow-y-auto">
-                      {SKILL_CATEGORIES.map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                   <Select
                     value={learnMode}
                     onValueChange={(value) => setLearnMode(value as LearningMode)}
@@ -1378,12 +1600,15 @@ function ProfilePage() {
         </div>
 
         <section className="glass rounded-3xl border border-white/10 p-5 md:p-6">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-brand-blue" aria-hidden />
               <h2 className="text-sm font-semibold tracking-wide">Availability</h2>
             </div>
-            <span className="text-xs text-muted-foreground">Your local clock</span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Let people know when you're usually free, so it's easy to find a time that works for
+              both of you.
+            </p>
           </div>
           <AvailabilityEditor defaultMode="teach" />
         </section>

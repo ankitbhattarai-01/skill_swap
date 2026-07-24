@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
-import { AlertCircle, BookOpen, GraduationCap, Loader2, Plus, Sparkles, X } from "lucide-react";
+import { AlertCircle, BookOpen, GraduationCap, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -9,6 +9,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { invalidateAiSuggestionsCache } from "@/lib/ai-suggestions";
+import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -145,20 +147,99 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
-async function loadMode(mode: Mode, signal?: AbortSignal): Promise<LocalWindow[]> {
-  let q = supabase.rpc("get_my_availability", { p_mode: mode });
+// Both modes come back in a single round-trip: get_my_availability(NULL)
+// returns every window for the caller, which we partition by mode here. This
+// is deliberately one call, not one per mode — the editor always needs both,
+// and two sequential-feeling RPCs made the "Loading your schedule…" spinner
+// linger for the sum of two network round-trips instead of one.
+type Availability = { teach: LocalWindow[]; learn: LocalWindow[] };
+
+// Raw fetch. Throws on a real error (and on abort, whose name/code lets the
+// caller tell it apart); the caller decides how to surface it.
+async function fetchAvailability(signal?: AbortSignal): Promise<Availability> {
+  let q = supabase.rpc("get_my_availability", { p_mode: null });
   if (signal) q = q.abortSignal(signal);
   const { data, error } = await q;
-  if (error) {
-    if (signal?.aborted || isAbortError(error)) return [];
-    toast.error(error.message);
-    return [];
-  }
-  return (data ?? []).map((row) => {
+  if (error) throw error;
+  const result: Availability = { teach: [], learn: [] };
+  for (const row of data ?? []) {
     const start = utcToLocal(row.day_of_week, row.start_minute);
     const end = utcToLocal(row.day_of_week, row.end_minute);
-    return { day: start.day, startMin: start.minute, endMin: end.minute };
-  });
+    const window = { day: start.day, startMin: start.minute, endMin: end.minute };
+    if (row.mode === "teach") result.teach.push(window);
+    else if (row.mode === "learn") result.learn.push(window);
+  }
+  return result;
+}
+
+// Warm cache that bridges a parent page's prefetch to this editor's mount.
+// The Profile page sits above a tall layout, so without prefetching the editor
+// couldn't even start its RPC until the whole page had painted — the schedule
+// then arrived a full round-trip late. `prefetchAvailability(userId)` lets the
+// page kick the fetch off in parallel with its own data; by the time the editor
+// mounts the result is already cached (or in flight and shared). Keyed by user
+// so a different account never reads a previous one's schedule; best-effort and
+// per-session — a successful save refreshes it, failures leave it cold.
+let availabilityCache: { userId: string; data: Availability } | null = null;
+let availabilityInflight: { userId: string; promise: Promise<Availability> } | null = null;
+
+function rememberAvailability(userId: string, data: Availability) {
+  availabilityCache = {
+    userId,
+    data: { teach: cloneWindows(data.teach), learn: cloneWindows(data.learn) },
+  };
+}
+
+// Starts — or joins — the single fetch for this user. Both entry points below
+// route through here, so whichever fires first owns the request and the other
+// shares it. That matters now that the profile page paints from a snapshot:
+// the editor mounts in the same frame as the page, and child effects run before
+// parent effects, so the editor's own load would otherwise beat the page's
+// prefetch to the punch and the two would issue duplicate RPCs.
+//
+// Deliberately not tied to any caller's AbortSignal. The payload is tiny, a
+// result landing after unmount still warms the cache for the next visit, and a
+// shared request carrying one mount's abort would strand every other sharer.
+function startAvailabilityFetch(userId: string): Promise<Availability> {
+  if (availabilityInflight?.userId === userId) return availabilityInflight.promise;
+  const promise = fetchAvailability()
+    .then((res) => {
+      rememberAvailability(userId, res);
+      return res;
+    })
+    .finally(() => {
+      if (availabilityInflight?.userId === userId) availabilityInflight = null;
+    });
+  // Handle rejection here too so a warmer whose editor never mounts can't
+  // surface as an unhandled promise rejection.
+  promise.catch(() => {});
+  availabilityInflight = { userId, promise };
+  return promise;
+}
+
+// Fire-and-forget warmer. A warmed result is reused; failures/aborts are
+// swallowed and leave the cache cold so the editor's own load retries.
+export function prefetchAvailability(userId: string | null | undefined): void {
+  if (!userId) return;
+  if (availabilityCache?.userId === userId) return;
+  void startAvailabilityFetch(userId);
+}
+
+// Used by the editor on mount. Prefers the warm cache, then the shared
+// in-flight request, and only issues its own when there is no user id to key
+// either on.
+async function loadAvailability(
+  userId: string | undefined,
+  signal?: AbortSignal,
+): Promise<Availability | "aborted"> {
+  if (userId && availabilityCache?.userId === userId) return availabilityCache.data;
+  try {
+    return userId ? await startAvailabilityFetch(userId) : await fetchAvailability(signal);
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) return "aborted";
+    toast.error(error instanceof Error ? error.message : "Could not load your schedule");
+    return { teach: [], learn: [] };
+  }
 }
 
 async function saveMode(mode: Mode, windows: LocalWindow[]) {
@@ -270,8 +351,7 @@ function ModePanel({ mode, windows, setWindows, dirty, setDirty }: ModePanelProp
 
       <div className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-muted/25 p-3">
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-          <Sparkles className="h-4 w-4 text-primary" />
-          Quick sets
+          Quick picks
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {PRESETS.map((p) => (
@@ -292,7 +372,7 @@ function ModePanel({ mode, windows, setWindows, dirty, setDirty }: ModePanelProp
       {stats.invalidCount > 0 && (
         <div className="flex items-start gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>Fix the highlighted time window before saving.</p>
+          <p>Check the highlighted day. The end time needs to come after the start time.</p>
         </div>
       )}
 
@@ -402,8 +482,8 @@ function ModePanel({ mode, windows, setWindows, dirty, setDirty }: ModePanelProp
       <div className="mt-auto rounded-2xl border border-border/70 bg-background/60 p-3">
         <p className="text-sm text-muted-foreground">
           {activeDays > 0
-            ? `Available ${activeDays} day${activeDays === 1 ? "" : "s"} a week.`
-            : "No days turned on yet."}
+            ? `You're available ${activeDays} day${activeDays === 1 ? "" : "s"} a week.`
+            : "No days added yet. Tap a day above to get started."}
         </p>
       </div>
     </section>
@@ -425,13 +505,20 @@ export const AvailabilityEditor = forwardRef<
     /** Notifies the parent of the current teaching/learning window counts so it can gate progress. */
     onWindowsChange?: (counts: { teach: number; learn: number }) => void;
   }
->(function AvailabilityEditor(
-  { compact = false, hideSaveButton = false, onWindowsChange },
-  ref,
-) {
-  const [teachWindows, setTeachWindows] = useState<LocalWindow[]>([]);
-  const [learnWindows, setLearnWindows] = useState<LocalWindow[]>([]);
-  const [loading, setLoading] = useState(true);
+>(function AvailabilityEditor({ compact = false, hideSaveButton = false, onWindowsChange }, ref) {
+  const { user } = useAuth();
+  const userId = user?.id;
+  // Seed straight from the warm cache when it's already this user's schedule
+  // (a same-session revisit, or a parent prefetch that finished before paint)
+  // so there's no "Loading your schedule…" flash at all.
+  const cached = userId && availabilityCache?.userId === userId ? availabilityCache.data : null;
+  const [teachWindows, setTeachWindows] = useState<LocalWindow[]>(() =>
+    cloneWindows(cached?.teach ?? []),
+  );
+  const [learnWindows, setLearnWindows] = useState<LocalWindow[]>(() =>
+    cloneWindows(cached?.learn ?? []),
+  );
+  const [loading, setLoading] = useState(!cached);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState<{ teach: boolean; learn: boolean }>({
     teach: false,
@@ -442,21 +529,17 @@ export const AvailabilityEditor = forwardRef<
     let alive = true;
     const controller = new AbortController();
     (async () => {
-      setLoading(true);
-      const [t, l] = await Promise.all([
-        loadMode("teach", controller.signal),
-        loadMode("learn", controller.signal),
-      ]);
-      if (!alive) return;
-      setTeachWindows(t);
-      setLearnWindows(l);
+      const res = await loadAvailability(userId, controller.signal);
+      if (!alive || res === "aborted") return;
+      setTeachWindows(cloneWindows(res.teach));
+      setLearnWindows(cloneWindows(res.learn));
       setLoading(false);
     })();
     return () => {
       alive = false;
       controller.abort();
     };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     onWindowsChange?.({ teach: teachWindows.length, learn: learnWindows.length });
@@ -467,7 +550,9 @@ export const AvailabilityEditor = forwardRef<
     for (const ws of [teachWindows, learnWindows]) {
       for (const w of ws) {
         if (w.endMin <= w.startMin) {
-          toast.error("Fix the highlighted time window before saving.");
+          toast.error(
+            "Check the highlighted day. The end time needs to come after the start time.",
+          );
           return;
         }
       }
@@ -485,6 +570,12 @@ export const AvailabilityEditor = forwardRef<
     }
     toast.success("Availability saved");
     setDirty({ teach: false, learn: false });
+    // Keep the warm cache in step with what was just persisted so a revisit
+    // this session shows the new schedule without another round-trip.
+    if (userId) rememberAvailability(userId, { teach: teachWindows, learn: learnWindows });
+    // Availability is a suggestions-engine signal (completion checklist +
+    // teach-hours nudge) — drop the cached tiles so they regenerate.
+    void invalidateAiSuggestionsCache();
   };
 
   useImperativeHandle(
@@ -494,7 +585,9 @@ export const AvailabilityEditor = forwardRef<
         for (const ws of [teachWindows, learnWindows]) {
           for (const w of ws) {
             if (w.endMin <= w.startMin) {
-              toast.error("Each availability window's end must be after its start");
+              toast.error(
+                "Check the highlighted day. The end time needs to come after the start time.",
+              );
               return false;
             }
           }
@@ -509,25 +602,27 @@ export const AvailabilityEditor = forwardRef<
           return false;
         }
         setDirty({ teach: false, learn: false });
+        if (userId) rememberAvailability(userId, { teach: teachWindows, learn: learnWindows });
+        void invalidateAiSuggestionsCache();
         return true;
       },
     }),
-    [teachWindows, learnWindows],
+    [teachWindows, learnWindows, userId],
   );
 
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-background/60 px-4 py-6 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Loading availability...
+        Loading your schedule…
       </div>
     );
   }
 
   const firstTimeHint = teachWindows.length === 0 && learnWindows.length === 0 && (
     <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
-      <span className="font-medium text-foreground">Start simple:</span> add one or two usual
-      windows, then refine them later.
+      <span className="font-medium text-foreground">Start simple:</span> add a day or two when
+      you're usually free. You can always change it later.
     </div>
   );
 
