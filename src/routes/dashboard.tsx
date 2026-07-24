@@ -1814,6 +1814,11 @@ function DashboardPage() {
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          {/* Dark-only hero wash. Gated on `dark:` so it never renders in
+              light/white mode - it mirrors the two `dark:hidden` light layers
+              above. Restrained violet + a hint of emerald in the corners, low
+              opacity so the greeting/streak/credits row stays legible on top. */}
+          <div className="absolute inset-0 hidden dark:block pointer-events-none bg-[radial-gradient(at_15%_20%,rgba(139,92,246,0.20),transparent_55%),radial-gradient(at_85%_10%,rgba(16,185,129,0.10),transparent_50%)]" />
           <div className="relative flex flex-col gap-6 p-6 md:p-10 md:flex-row md:items-center md:gap-8">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-muted-foreground">{getGreeting()},</div>
