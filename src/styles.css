@@ -536,6 +536,25 @@ body.messages-page-open {
       radial-gradient(at 15% 20%, rgb(139 92 246 / 0.2) 0%, transparent 55%),
       radial-gradient(at 85% 10%, rgb(16 185 129 / 0.1) 0%, transparent 50%);
   }
+  /* Dark-only footer-CTA band. Light mode paints nothing — that tile keeps its
+     own `.gradient-brand` (violet -> emerald) exactly as-is. In dark,
+     `.gradient-brand` starts at #8b5cf6, roughly 40x the luminance of the
+     #0a0a0a page, so a full-width band of it read as glowing plastic rather
+     than a surface — and white body text on it only made 3.3:1. Same remedy as
+     `.hero-wash`: keep the brand hue, drop the luminance, and let the colour
+     arrive as a bloom instead of a flat fill. The emerald corner stays at 0.08
+     so the accent registers without reviving the two-colour candy gradient.
+     The 1px edge is an inset ring, not a real border, so the band's box size
+     is identical in both themes. */
+  .dark .cta-band {
+    background:
+      radial-gradient(at 18% 12%, rgb(139 92 246 / 0.3) 0%, transparent 60%),
+      radial-gradient(at 95% 88%, rgb(52 211 153 / 0.08) 0%, transparent 55%),
+      linear-gradient(135deg, #4c1d95 0%, #2e1065 52%, #1c1338 100%);
+    box-shadow:
+      0 0 0 1px rgb(167 139 250 / 0.16) inset,
+      0 1px 0 rgb(255 255 255 / 0.06) inset;
+  }
   .glass {
     background: var(--glass-bg);
     backdrop-filter: blur(16px);

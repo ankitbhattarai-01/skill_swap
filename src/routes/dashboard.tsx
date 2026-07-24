@@ -2023,10 +2023,13 @@ function DashboardPage() {
 
         {/* Footer CTA - slim, supportive */}
         <section
-          className="animate-fade-up relative overflow-hidden rounded-3xl gradient-brand p-6 md:p-8 shadow-glow"
+          className="animate-fade-up relative overflow-hidden rounded-3xl gradient-brand cta-band p-6 md:p-8 shadow-glow"
           style={{ animationDelay: "360ms" }}
         >
-          <div className="absolute inset-0 bg-[radial-gradient(at_30%_30%,rgba(255,255,255,0.18),transparent_60%)]" />
+          {/* Light-mode only: this white bloom reads as "lit" over the violet ->
+              emerald gradient, but in dark it smears the corner milky. The dark
+              band brings its own bloom via .cta-band. */}
+          <div className="absolute inset-0 bg-[radial-gradient(at_30%_30%,rgba(255,255,255,0.18),transparent_60%)] dark:hidden" />
           <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-xl md:text-2xl font-bold text-white">
@@ -2034,10 +2037,14 @@ function DashboardPage() {
               </h3>
               <p className="mt-1 text-sm md:text-base text-white/85">Help others. Grow together.</p>
             </div>
+            {/* In dark the glass variant resolves to an opaque #141416 pill, which
+                on the deep violet band reads as a hole punched in the card rather
+                than the primary action. Flip it to a light pill so the CTA is the
+                brightest thing in the tile. */}
             <Button
               variant="glass"
               size="lg"
-              className="w-[88%] mx-auto h-10 rounded-lg px-5 text-sm md:mx-0 md:w-auto md:h-12 md:rounded-xl md:px-8 md:text-base"
+              className="w-[88%] mx-auto h-10 rounded-lg px-5 text-sm md:mx-0 md:w-auto md:h-12 md:rounded-xl md:px-8 md:text-base dark:border-transparent dark:bg-zinc-100 dark:text-violet-950 dark:hover:bg-white"
               asChild
             >
               <Link to="/explore" preload="intent">
