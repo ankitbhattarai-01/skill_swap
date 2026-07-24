@@ -407,6 +407,8 @@ function CreditsPage() {
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          {/* Dark-only wash - see .hero-wash in styles.css */}
+          <div className="hero-wash" />
           <div className="relative flex flex-col gap-6 p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="flex items-start gap-4">

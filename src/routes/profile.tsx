@@ -1283,6 +1283,8 @@ function ProfilePage() {
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.16),transparent_55%)] pointer-events-none dark:hidden" />
+          {/* Dark-only wash - see .hero-wash in styles.css */}
+          <div className="hero-wash" />
 
           <div className="relative p-5 md:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

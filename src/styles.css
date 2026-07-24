@@ -520,6 +520,22 @@ body.messages-page-open {
   .gradient-hero {
     background: var(--gradient-hero);
   }
+  /* Dark-only hero-tile wash. Drop-in `<div className="hero-wash" />` inside any
+     top-tile section (they're all `relative overflow-hidden`). In light/white
+     mode it paints nothing - those tiles keep their own `.gradient-hero` layers.
+     In dark it lays a restrained violet + emerald corner wash over the flat
+     glass so every page's top tile reads the same. Single source of truth: tune
+     the two radials here and every tile follows. Always pointer-events-none. */
+  .hero-wash {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .dark .hero-wash {
+    background:
+      radial-gradient(at 15% 20%, rgb(139 92 246 / 0.2) 0%, transparent 55%),
+      radial-gradient(at 85% 10%, rgb(16 185 129 / 0.1) 0%, transparent 50%);
+  }
   .glass {
     background: var(--glass-bg);
     backdrop-filter: blur(16px);

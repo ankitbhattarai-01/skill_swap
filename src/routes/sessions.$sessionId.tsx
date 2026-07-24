@@ -510,6 +510,8 @@ function SessionPage() {
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          {/* Dark-only wash - see .hero-wash in styles.css */}
+          <div className="hero-wash" />
           <div className="relative p-6 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">

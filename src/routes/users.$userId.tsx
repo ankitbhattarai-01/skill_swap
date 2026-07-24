@@ -394,6 +394,8 @@ function PublicUserPage() {
         {/* Hero - calm glass shell with a single soft brand wash */}
         <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+          {/* Dark-only wash - see .hero-wash in styles.css */}
+          <div className="hero-wash" />
           <div className="relative p-5 md:p-8">
             <Button
               variant="ghost"

@@ -505,6 +505,8 @@ function SessionsPage() {
         <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+          {/* Dark-only wash - see .hero-wash in styles.css */}
+          <div className="hero-wash" />
           {/* Generous vertical padding: with the stat tiles gone the hero has
               little content, and at p-8 it read as a squat strip against its
               own corner radius. */}

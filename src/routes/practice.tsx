@@ -333,6 +333,8 @@ function PracticePage() {
             <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
               <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
               <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+              {/* Dark-only wash - see .hero-wash in styles.css */}
+              <div className="hero-wash" />
               <div className="relative p-6 md:p-8">
                 <div className="flex items-start gap-4">
                   <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
