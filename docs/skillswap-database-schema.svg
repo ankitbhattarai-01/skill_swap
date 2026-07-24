@@ -1,0 +1,249 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1500" viewBox="0 0 2200 1500" role="img" aria-labelledby="title desc">
+  <title id="title">SkillSwap Connect Database Schema</title>
+  <desc id="desc">Academic database schema diagram showing the main SkillSwap Connect tables and relationships across core exchange, financial, safety and moderation, and AI and discovery areas.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#111111"/>
+    </marker>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 40px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; letter-spacing: 0; }
+      .subtitle { font: 400 21px Arial, Helvetica, sans-serif; fill: #444444; text-anchor: middle; letter-spacing: 0; }
+      .band-core { fill: #eef5ff; stroke: #9fb8d5; stroke-width: 2; }
+      .band-finance { fill: #eef8f1; stroke: #9bc2a7; stroke-width: 2; }
+      .band-safety { fill: #fff3ea; stroke: #d4aa88; stroke-width: 2; }
+      .band-ai { fill: #f4f0ff; stroke: #b6a8d9; stroke-width: 2; }
+      .band-title { font: 700 20px Arial, Helvetica, sans-serif; fill: #222222; text-anchor: middle; letter-spacing: 0; }
+      .table { fill: #ffffff; stroke: #111111; stroke-width: 2.2; }
+      .header-core { fill: #dcecff; stroke: #111111; stroke-width: 2.2; }
+      .header-finance { fill: #dcf0e1; stroke: #111111; stroke-width: 2.2; }
+      .header-safety { fill: #ffe3cf; stroke: #111111; stroke-width: 2.2; }
+      .header-ai { fill: #e8ddff; stroke: #111111; stroke-width: 2.2; }
+      .table-name { font: 700 20px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .field { font: 400 16px Arial, Helvetica, sans-serif; fill: #222222; letter-spacing: 0; }
+      .key { font: 700 16px Arial, Helvetica, sans-serif; fill: #111111; letter-spacing: 0; }
+      .rel { fill: none; stroke: #111111; stroke-width: 2.1; marker-end: url(#arrow); }
+      .rel-soft { fill: none; stroke: #555555; stroke-width: 1.9; marker-end: url(#arrow); }
+      .legend { fill: #ffffff; stroke: #111111; stroke-width: 2; }
+      .legend-title { font: 700 17px Arial, Helvetica, sans-serif; fill: #111111; letter-spacing: 0; }
+      .legend-text { font: 400 15px Arial, Helvetica, sans-serif; fill: #333333; letter-spacing: 0; }
+      .caption { font: 400 16px Arial, Helvetica, sans-serif; fill: #444444; text-anchor: middle; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect class="page" width="2200" height="1500"/>
+  <text class="title" x="1100" y="62">SkillSwap Connect - Database Schema</text>
+  <text class="subtitle" x="1100" y="98">Main Supabase tables and foreign-key relationships for exchange, credits, moderation, and discovery</text>
+
+  <rect class="band-core" x="60" y="145" width="1280" height="760" rx="10"/>
+  <text class="band-title" x="700" y="176">Core Exchange Tables</text>
+  <rect class="band-finance" x="1380" y="145" width="760" height="370" rx="10"/>
+  <text class="band-title" x="1760" y="176">Financial Tables</text>
+  <rect class="band-safety" x="1380" y="550" width="760" height="420" rx="10"/>
+  <text class="band-title" x="1760" y="581">Safety and Moderation Tables</text>
+  <rect class="band-ai" x="60" y="940" width="1280" height="410" rx="10"/>
+  <text class="band-title" x="700" y="971">AI and Discovery Tables</text>
+
+  <!-- Core exchange tables -->
+  <g id="profiles">
+    <rect class="table" x="110" y="215" width="285" height="190" rx="6"/>
+    <rect class="header-core" x="110" y="215" width="285" height="42" rx="6"/>
+    <text class="table-name" x="252.5" y="236">profiles</text>
+    <text class="key" x="130" y="286">PK id</text>
+    <text class="field" x="130" y="314">full_name, bio</text>
+    <text class="field" x="130" y="342">credits</text>
+    <text class="field" x="130" y="370">learning_mode, onboarded</text>
+  </g>
+
+  <g id="skills">
+    <rect class="table" x="485" y="215" width="285" height="160" rx="6"/>
+    <rect class="header-core" x="485" y="215" width="285" height="42" rx="6"/>
+    <text class="table-name" x="627.5" y="236">skills</text>
+    <text class="key" x="505" y="286">PK id</text>
+    <text class="field" x="505" y="314">name</text>
+    <text class="field" x="505" y="342">category</text>
+  </g>
+
+  <g id="teaching">
+    <rect class="table" x="110" y="480" width="285" height="180" rx="6"/>
+    <rect class="header-core" x="110" y="480" width="285" height="42" rx="6"/>
+    <text class="table-name" x="252.5" y="501">user_teaching_skills</text>
+    <text class="key" x="130" y="551">FK user_id</text>
+    <text class="key" x="130" y="579">FK skill_id</text>
+    <text class="field" x="130" y="607">level</text>
+    <text class="field" x="130" y="635">credits_per_hour</text>
+  </g>
+
+  <g id="learning">
+    <rect class="table" x="485" y="480" width="285" height="160" rx="6"/>
+    <rect class="header-core" x="485" y="480" width="285" height="42" rx="6"/>
+    <text class="table-name" x="627.5" y="501">user_learning_skills</text>
+    <text class="key" x="505" y="551">FK user_id</text>
+    <text class="key" x="505" y="579">FK skill_id</text>
+    <text class="field" x="505" y="607">current_level</text>
+  </g>
+
+  <g id="sessions">
+    <rect class="table" x="860" y="270" width="285" height="245" rx="6"/>
+    <rect class="header-core" x="860" y="270" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1002.5" y="291">sessions</text>
+    <text class="key" x="880" y="341">PK id</text>
+    <text class="key" x="880" y="369">FK teacher_id</text>
+    <text class="key" x="880" y="397">FK learner_id</text>
+    <text class="key" x="880" y="425">FK skill_id</text>
+    <text class="field" x="880" y="453">status, credits</text>
+    <text class="field" x="880" y="481">scheduled_at, duration_minutes</text>
+  </g>
+
+  <g id="conversations">
+    <rect class="table" x="110" y="720" width="285" height="145" rx="6"/>
+    <rect class="header-core" x="110" y="720" width="285" height="42" rx="6"/>
+    <text class="table-name" x="252.5" y="741">conversations</text>
+    <text class="key" x="130" y="791">PK id</text>
+    <text class="key" x="130" y="819">FK user_1_id</text>
+    <text class="key" x="130" y="847">FK user_2_id</text>
+  </g>
+
+  <g id="messages">
+    <rect class="table" x="485" y="710" width="285" height="170" rx="6"/>
+    <rect class="header-core" x="485" y="710" width="285" height="42" rx="6"/>
+    <text class="table-name" x="627.5" y="731">messages</text>
+    <text class="key" x="505" y="781">PK id</text>
+    <text class="key" x="505" y="809">FK conversation_id</text>
+    <text class="key" x="505" y="837">FK sender_id</text>
+    <text class="field" x="505" y="865">text, attachment_path</text>
+  </g>
+
+  <g id="notifications">
+    <rect class="table" x="860" y="650" width="285" height="175" rx="6"/>
+    <rect class="header-core" x="860" y="650" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1002.5" y="671">notifications</text>
+    <text class="key" x="880" y="721">PK id</text>
+    <text class="key" x="880" y="749">FK user_id</text>
+    <text class="field" x="880" y="777">type, title</text>
+    <text class="field" x="880" y="805">body, link</text>
+  </g>
+
+  <!-- Financial tables -->
+  <g id="ledger">
+    <rect class="table" x="1450" y="220" width="285" height="170" rx="6"/>
+    <rect class="header-finance" x="1450" y="220" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1592.5" y="241">credit_ledger</text>
+    <text class="key" x="1470" y="291">PK id</text>
+    <text class="key" x="1470" y="319">FK user_id</text>
+    <text class="key" x="1470" y="347">FK session_id</text>
+    <text class="field" x="1470" y="375">amount, type</text>
+  </g>
+
+  <g id="escrow">
+    <rect class="table" x="1810" y="220" width="285" height="190" rx="6"/>
+    <rect class="header-finance" x="1810" y="220" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1952.5" y="241">credit_escrow</text>
+    <text class="key" x="1830" y="291">PK id</text>
+    <text class="key" x="1830" y="319">FK session_id</text>
+    <text class="key" x="1830" y="347">FK learner_id</text>
+    <text class="key" x="1830" y="375">FK teacher_id</text>
+    <text class="field" x="1830" y="403">credits_amount, status</text>
+  </g>
+
+  <!-- Safety and moderation tables -->
+  <g id="reviews">
+    <rect class="table" x="1450" y="625" width="285" height="170" rx="6"/>
+    <rect class="header-safety" x="1450" y="625" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1592.5" y="646">reviews</text>
+    <text class="key" x="1470" y="696">PK id</text>
+    <text class="key" x="1470" y="724">FK session_id</text>
+    <text class="key" x="1470" y="752">FK reviewer_id</text>
+    <text class="field" x="1470" y="780">rating, text, blind_until</text>
+  </g>
+
+  <g id="reports">
+    <rect class="table" x="1810" y="625" width="285" height="190" rx="6"/>
+    <rect class="header-safety" x="1810" y="625" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1952.5" y="646">user_reports</text>
+    <text class="key" x="1830" y="696">PK id</text>
+    <text class="key" x="1830" y="724">FK reporter_id</text>
+    <text class="key" x="1830" y="752">FK reportee_id</text>
+    <text class="field" x="1830" y="780">category, evidence</text>
+    <text class="field" x="1830" y="808">status</text>
+  </g>
+
+  <g id="strikes">
+    <rect class="table" x="1450" y="845" width="285" height="110" rx="6"/>
+    <rect class="header-safety" x="1450" y="845" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1592.5" y="866">user_strikes</text>
+    <text class="key" x="1470" y="916">FK user_id</text>
+    <text class="field" x="1470" y="944">strike_count, reason</text>
+  </g>
+
+  <g id="cases">
+    <rect class="table" x="1810" y="845" width="285" height="110" rx="6"/>
+    <rect class="header-safety" x="1810" y="845" width="285" height="42" rx="6"/>
+    <text class="table-name" x="1952.5" y="866">moderation_cases</text>
+    <text class="key" x="1830" y="916">FK report_id, assigned_to</text>
+    <text class="field" x="1830" y="944">action, status</text>
+  </g>
+
+  <!-- AI and discovery tables -->
+  <g id="ai">
+    <rect class="table" x="110" y="1030" width="305" height="150" rx="6"/>
+    <rect class="header-ai" x="110" y="1030" width="305" height="42" rx="6"/>
+    <text class="table-name" x="262.5" y="1051">ai_suggestions</text>
+    <text class="key" x="130" y="1101">FK user_id</text>
+    <text class="field" x="130" y="1129">suggestions JSON</text>
+    <text class="field" x="130" y="1157">expires_at</text>
+  </g>
+
+  <g id="trending">
+    <rect class="table" x="535" y="1030" width="305" height="150" rx="6"/>
+    <rect class="header-ai" x="535" y="1030" width="305" height="42" rx="6"/>
+    <text class="table-name" x="687.5" y="1051">trending_skills</text>
+    <text class="key" x="555" y="1101">FK skill_id</text>
+    <text class="field" x="555" y="1129">new_learners</text>
+    <text class="field" x="555" y="1157">recent_sessions</text>
+  </g>
+
+  <g id="availability">
+    <rect class="table" x="960" y="1030" width="305" height="170" rx="6"/>
+    <rect class="header-ai" x="960" y="1030" width="305" height="42" rx="6"/>
+    <text class="table-name" x="1112.5" y="1051">user_availability</text>
+    <text class="key" x="980" y="1101">FK user_id</text>
+    <text class="field" x="980" y="1129">day_of_week</text>
+    <text class="field" x="980" y="1157">start_time, end_time</text>
+  </g>
+
+  <!-- Relationships: orthogonal routing avoids table bodies and labels. -->
+  <path class="rel" d="M 252 405 L 252 470"/>
+  <path class="rel" d="M 395 570 L 475 570"/>
+  <path class="rel" d="M 627 375 L 627 470"/>
+  <path class="rel" d="M 770 560 L 845 560 L 845 425 L 860 425"/>
+  <path class="rel" d="M 627 215 L 627 195 L 845 195 L 845 425 L 860 425"/>
+  <path class="rel" d="M 395 300 L 430 300 L 430 195 L 830 195 L 830 369 L 860 369"/>
+  <path class="rel" d="M 395 335 L 420 335 L 420 185 L 820 185 L 820 397 L 860 397"/>
+  <path class="rel" d="M 252 405 L 252 705 L 252 720"/>
+  <path class="rel" d="M 395 792 L 475 792"/>
+  <path class="rel" d="M 627 880 L 627 910 L 80 910 L 80 310 L 110 310"/>
+  <path class="rel" d="M 1002 515 L 1002 640"/>
+
+  <path class="rel" d="M 1145 365 L 1360 365 L 1360 347 L 1450 347"/>
+  <path class="rel" d="M 1145 390 L 1350 390 L 1350 505 L 1775 505 L 1775 319 L 1810 319"/>
+  <path class="rel-soft" d="M 252 215 L 252 125 L 1415 125 L 1415 319 L 1450 319"/>
+  <path class="rel-soft" d="M 252 215 L 252 115 L 1785 115 L 1785 347 L 1810 347"/>
+  <path class="rel-soft" d="M 252 215 L 252 105 L 1775 105 L 1775 375 L 1810 375"/>
+
+  <path class="rel" d="M 1145 455 L 1320 455 L 1320 724 L 1450 724"/>
+  <path class="rel-soft" d="M 252 405 L 252 925 L 1425 925 L 1425 752 L 1450 752"/>
+  <path class="rel-soft" d="M 395 275 L 420 275 L 420 125 L 1765 125 L 1765 724 L 1810 724"/>
+  <path class="rel-soft" d="M 395 355 L 410 355 L 410 135 L 1755 135 L 1755 752 L 1810 752"/>
+  <path class="rel-soft" d="M 1952 815 L 1952 835"/>
+  <path class="rel-soft" d="M 252 405 L 252 935 L 1425 935 L 1425 916 L 1450 916"/>
+
+  <path class="rel-soft" d="M 262 405 L 262 1020"/>
+  <path class="rel-soft" d="M 687 375 L 687 1020"/>
+  <path class="rel-soft" d="M 1112 825 L 1112 1020"/>
+
+  <rect class="legend" x="60" y="1380" width="2080" height="70" rx="8"/>
+  <text class="legend-title" x="85" y="1410">Notation</text>
+  <text class="legend-text" x="85" y="1435">PK = primary key, FK = foreign key. Arrows point from referencing tables toward the parent table or referenced entity. Colors group the four database categories described in Chapter 12.</text>
+  <text class="caption" x="1100" y="1480">Figure 7: Database schema of SkillSwap Connect.</text>
+</svg>

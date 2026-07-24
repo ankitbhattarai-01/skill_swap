@@ -1,0 +1,159 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+  <title id="title">SkillSwap Session Lifecycle State Machine</title>
+  <desc id="desc">State machine diagram for SkillSwap sessions showing PENDING, ACCEPTED, ACTIVE, COMPLETED, REJECTED, and CANCELLED states with server-enforced transitions and credit escrow effects.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#1f2937"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#4b5563"/>
+    </marker>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 38px Arial, Helvetica, sans-serif; fill: #111827; text-anchor: middle; letter-spacing: 0; }
+      .subtitle { font: 400 20px Arial, Helvetica, sans-serif; fill: #4b5563; text-anchor: middle; letter-spacing: 0; }
+      .state { fill: #ffffff; stroke: #1f2937; stroke-width: 3; }
+      .state-pending { fill: #eef2ff; stroke: #1f2937; stroke-width: 3; }
+      .state-terminal { fill: #f9fafb; stroke: #1f2937; stroke-width: 3; }
+      .state-label { font: 700 29px Arial, Helvetica, sans-serif; fill: #111827; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .state-note { font: 400 17px Arial, Helvetica, sans-serif; fill: #4b5563; text-anchor: middle; letter-spacing: 0; }
+      .arrow { fill: none; stroke: #1f2937; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-muted { fill: none; stroke: #4b5563; stroke-width: 2.6; marker-end: url(#arrow-muted); }
+      .transition-box { fill: #ffffff; stroke: #d1d5db; stroke-width: 1.5; rx: 8; }
+      .transition { font: 700 18px Arial, Helvetica, sans-serif; fill: #111827; text-anchor: middle; letter-spacing: 0; }
+      .transition-small { font: 400 15px Arial, Helvetica, sans-serif; fill: #4b5563; text-anchor: middle; letter-spacing: 0; }
+      .credit-box { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; rx: 10; }
+      .credit-title { font: 700 17px Arial, Helvetica, sans-serif; fill: #111827; text-anchor: middle; letter-spacing: 0; }
+      .credit-text { font: 400 15px Arial, Helvetica, sans-serif; fill: #374151; text-anchor: middle; letter-spacing: 0; }
+      .lane-label { font: 700 16px Arial, Helvetica, sans-serif; fill: #4b5563; text-anchor: middle; letter-spacing: 0; }
+      .lane-line { stroke: #e5e7eb; stroke-width: 2; stroke-dasharray: 7 9; }
+      .legend-box { fill: #ffffff; stroke: #d1d5db; stroke-width: 1.5; }
+      .legend-title { font: 700 17px Arial, Helvetica, sans-serif; fill: #111827; letter-spacing: 0; }
+      .legend-text { font: 400 15px Arial, Helvetica, sans-serif; fill: #374151; letter-spacing: 0; }
+      .dot { fill: #111827; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1800" height="1120"/>
+  <text class="title" x="900" y="76">SkillSwap Session Lifecycle State Machine</text>
+  <text class="subtitle" x="900" y="112">Server-enforced status transitions and credit escrow settlement</text>
+
+  <line class="lane-line" x1="110" y1="505" x2="1690" y2="505"/>
+  <line class="lane-line" x1="110" y1="735" x2="1690" y2="735"/>
+
+  <g id="pending">
+    <rect class="state-pending" x="150" y="310" width="260" height="120" rx="12"/>
+    <text class="state-label" x="280" y="362">PENDING</text>
+    <text class="state-note" x="280" y="401">learner request created</text>
+  </g>
+
+  <g id="accepted">
+    <rect class="state" x="550" y="310" width="260" height="120" rx="12"/>
+    <text class="state-label" x="680" y="362">ACCEPTED</text>
+    <text class="state-note" x="680" y="401">credits held in escrow</text>
+  </g>
+
+  <g id="active">
+    <rect class="state" x="950" y="310" width="260" height="120" rx="12"/>
+    <text class="state-label" x="1080" y="362">ACTIVE</text>
+    <text class="state-note" x="1080" y="401">session in progress</text>
+  </g>
+
+  <g id="completed">
+    <rect class="state-terminal" x="1350" y="310" width="260" height="120" rx="12"/>
+    <text class="state-label" x="1480" y="362">COMPLETED</text>
+    <text class="state-note" x="1480" y="401">reviews enabled</text>
+  </g>
+
+  <g id="rejected">
+    <rect class="state-terminal" x="150" y="600" width="260" height="120" rx="12"/>
+    <text class="state-label" x="280" y="652">REJECTED</text>
+    <text class="state-note" x="280" y="691">request declined</text>
+  </g>
+
+  <g id="cancelled">
+    <rect class="state-terminal" x="750" y="600" width="260" height="120" rx="12"/>
+    <text class="state-label" x="880" y="652">CANCELLED</text>
+    <text class="state-note" x="880" y="691">escrow returned</text>
+  </g>
+
+  <g id="review-window">
+    <rect class="credit-box" x="1290" y="835" width="380" height="105"/>
+    <text class="credit-title" x="1480" y="870">Review window opens</text>
+    <text class="credit-text" x="1480" y="900">learner and teacher can submit</text>
+    <text class="credit-text" x="1480" y="924">post-session reviews</text>
+  </g>
+
+  <circle class="dot" cx="92" cy="370" r="14"/>
+  <path class="arrow" d="M 110 370 L 140 370"/>
+  <rect class="transition-box" x="106" y="255" width="230" height="58"/>
+  <text class="transition" x="221" y="278">learner initiates</text>
+  <text class="transition-small" x="221" y="301">starting state: PENDING</text>
+
+  <path class="arrow" d="M 410 370 L 540 370"/>
+  <rect class="transition-box" x="430" y="247" width="150" height="64"/>
+  <text class="transition" x="505" y="272">teacher</text>
+  <text class="transition" x="505" y="296">accepts</text>
+
+  <path class="arrow" d="M 810 370 L 940 370"/>
+  <rect class="transition-box" x="830" y="247" width="150" height="64"/>
+  <text class="transition" x="905" y="272">teacher</text>
+  <text class="transition" x="905" y="296">starts</text>
+
+  <path class="arrow" d="M 1210 370 L 1340 370"/>
+  <rect class="transition-box" x="1218" y="226" width="214" height="82"/>
+  <text class="transition" x="1325" y="251">teacher marks</text>
+  <text class="transition" x="1325" y="275">complete</text>
+  <text class="transition-small" x="1325" y="298">session settles</text>
+
+  <path class="arrow-muted" d="M 280 430 L 280 590"/>
+  <rect class="transition-box" x="315" y="478" width="150" height="64"/>
+  <text class="transition" x="390" y="503">teacher</text>
+  <text class="transition" x="390" y="527">rejects</text>
+
+  <path class="arrow-muted" d="M 680 430 C 680 520, 745 566, 816 593"/>
+  <rect class="transition-box" x="512" y="496" width="194" height="82"/>
+  <text class="transition" x="609" y="521">either party</text>
+  <text class="transition" x="609" y="545">cancels</text>
+  <text class="transition-small" x="609" y="568">from ACCEPTED</text>
+
+  <path class="arrow-muted" d="M 1080 430 C 1080 528, 1010 578, 940 598"/>
+  <rect class="transition-box" x="1055" y="496" width="194" height="82"/>
+  <text class="transition" x="1152" y="521">either party</text>
+  <text class="transition" x="1152" y="545">cancels</text>
+  <text class="transition-small" x="1152" y="568">from ACTIVE</text>
+
+  <g id="refund-note">
+    <rect class="credit-box" x="730" y="762" width="300" height="90"/>
+    <text class="credit-title" x="880" y="795">Refund on cancellation</text>
+    <text class="credit-text" x="880" y="824">escrowed credits return</text>
+    <text class="credit-text" x="880" y="847">to the learner</text>
+  </g>
+  <path class="arrow-muted" d="M 880 720 L 880 752"/>
+
+  <g id="transfer-note">
+    <rect class="credit-box" x="1330" y="500" width="300" height="90"/>
+    <text class="credit-title" x="1480" y="533">Completion settlement</text>
+    <text class="credit-text" x="1480" y="562">escrowed credits transfer</text>
+    <text class="credit-text" x="1480" y="585">to the teacher</text>
+  </g>
+  <path class="arrow-muted" d="M 1480 430 L 1480 488"/>
+  <path class="arrow-muted" d="M 1480 606 L 1480 823"/>
+
+  <g id="legend" transform="translate(150 985)">
+    <rect class="legend-box" x="0" y="0" width="1500" height="86" rx="10"/>
+    <text class="legend-title" x="26" y="33">Notation</text>
+    <circle class="dot" cx="155" cy="28" r="8"/>
+    <text class="legend-text" x="176" y="33">initial marker</text>
+    <rect class="state-terminal" x="320" y="14" width="70" height="34" rx="7"/>
+    <text class="legend-text" x="410" y="35">terminal state</text>
+    <path class="arrow" d="M 560 31 L 635 31"/>
+    <text class="legend-text" x="657" y="35">valid transition</text>
+    <path class="arrow-muted" d="M 830 31 L 905 31"/>
+    <text class="legend-text" x="927" y="35">transition with credit side effect</text>
+    <text class="legend-text" x="26" y="66">All transitions are validated on the server side; clients cannot move a session to an invalid status directly.</text>
+  </g>
+</svg>
+
+
+

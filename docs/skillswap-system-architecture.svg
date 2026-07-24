@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1500" viewBox="0 0 2400 1500" role="img" aria-labelledby="title desc">
+  <title id="title">SkillSwap Connect System Architecture</title>
+  <desc id="desc">Academic system architecture diagram showing a user browser connecting to Cloudflare CDN and Pages, the React and TanStack single-page application calling Supabase services, and Supabase Edge Functions connecting to Gemini Flash 2.5, Gmail SMTP, Jitsi JaaS, and a planned n8n automation endpoint.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#111111"/>
+    </marker>
+    <marker id="arrow-soft" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#555555"/>
+    </marker>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 42px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; letter-spacing: 0; }
+      .subtitle { font: 400 22px Arial, Helvetica, sans-serif; fill: #444444; text-anchor: middle; letter-spacing: 0; }
+      .section-client { fill: #eef5ff; stroke: #9fb8d5; stroke-width: 2; }
+      .section-hosting { fill: #fff3ea; stroke: #d4aa88; stroke-width: 2; }
+      .section-platform { fill: #eef8f1; stroke: #9bc2a7; stroke-width: 2; }
+      .section-external { fill: #f4f0ff; stroke: #b6a8d9; stroke-width: 2; }
+      .section-title { font: 700 22px Arial, Helvetica, sans-serif; fill: #222222; text-anchor: middle; letter-spacing: 0; }
+      .box { fill: #ffffff; stroke: #111111; stroke-width: 2.4; }
+      .box-soft { fill: #ffffff; stroke: #555555; stroke-width: 2; }
+      .header-client { fill: #dcecff; stroke: #111111; stroke-width: 2.4; }
+      .header-hosting { fill: #ffe3cf; stroke: #111111; stroke-width: 2.4; }
+      .header-platform { fill: #dcf0e1; stroke: #111111; stroke-width: 2.4; }
+      .header-edge { fill: #e2f4e8; stroke: #111111; stroke-width: 2.4; }
+      .header-external { fill: #e8ddff; stroke: #111111; stroke-width: 2.4; }
+      .box-title { font: 700 21px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .body { font: 400 18px Arial, Helvetica, sans-serif; fill: #222222; letter-spacing: 0; }
+      .body-bold { font: 700 18px Arial, Helvetica, sans-serif; fill: #111111; letter-spacing: 0; }
+      .small { font: 400 15px Arial, Helvetica, sans-serif; fill: #333333; letter-spacing: 0; }
+      .small-bold { font: 700 15px Arial, Helvetica, sans-serif; fill: #111111; letter-spacing: 0; }
+      .connector { fill: none; stroke: #111111; stroke-width: 2.8; marker-end: url(#arrow); }
+      .connector-soft { fill: none; stroke: #555555; stroke-width: 2.2; marker-end: url(#arrow-soft); }
+      .connector-dashed { fill: none; stroke: #666666; stroke-width: 2.2; stroke-dasharray: 10 8; marker-end: url(#arrow-soft); }
+      .label-bg { fill: #ffffff; stroke: #ffffff; stroke-width: 8; stroke-linejoin: round; }
+      .flow-label { font: 700 17px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .flow-label-soft { font: 700 16px Arial, Helvetica, sans-serif; fill: #555555; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .caption { font: 400 16px Arial, Helvetica, sans-serif; fill: #444444; text-anchor: middle; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect class="page" width="2400" height="1500"/>
+  <text class="title" x="1200" y="64">SkillSwap Connect - System Architecture</text>
+  <text class="subtitle" x="1200" y="102">Cloudflare-hosted React/TanStack SPA with Supabase backend services, Edge Functions, and external integrations</text>
+
+  <!-- Architecture zones -->
+  <rect class="section-client" x="70" y="170" width="470" height="1000" rx="8"/>
+  <text class="section-title" x="305" y="208">Client Layer</text>
+
+  <rect class="section-hosting" x="605" y="170" width="470" height="1000" rx="8"/>
+  <text class="section-title" x="840" y="208">Hosting and Delivery Layer</text>
+
+  <rect class="section-platform" x="1140" y="170" width="800" height="1000" rx="8"/>
+  <text class="section-title" x="1540" y="208">Supabase Platform Layer</text>
+
+  <rect class="section-external" x="2005" y="170" width="325" height="1000" rx="8"/>
+  <text class="section-title" x="2167.5" y="208">External Services</text>
+
+  <!-- Client -->
+  <g id="user-browser">
+    <rect class="box" x="120" y="345" width="370" height="320" rx="8"/>
+    <rect class="header-client" x="120" y="345" width="370" height="58" rx="8"/>
+    <text class="box-title" x="305" y="374">User Browser</text>
+    <text class="body-bold" x="155" y="454">Runs downloaded SPA</text>
+    <text class="body" x="155" y="493">React user interface</text>
+    <text class="body" x="155" y="532">TanStack Router</text>
+    <text class="body" x="155" y="571">TanStack Query state</text>
+    <text class="body" x="155" y="610">Authenticated user session</text>
+  </g>
+
+  <g id="spa-runtime">
+    <rect class="box-soft" x="120" y="755" width="370" height="240" rx="8"/>
+    <text class="box-title" x="305" y="792">Application Runtime</text>
+    <text class="body" x="155" y="846">Issues REST API requests</text>
+    <text class="body" x="155" y="886">Subscribes to WebSocket</text>
+    <text class="body" x="155" y="926">Uploads and reads files</text>
+    <text class="body" x="155" y="966">Invokes Edge Functions</text>
+  </g>
+
+  <!-- Cloudflare -->
+  <g id="cloudflare">
+    <rect class="box" x="655" y="350" width="370" height="310" rx="8"/>
+    <rect class="header-hosting" x="655" y="350" width="370" height="58" rx="8"/>
+    <text class="box-title" x="840" y="379">Cloudflare CDN / Pages</text>
+    <text class="body-bold" x="690" y="455">Static delivery</text>
+    <text class="body" x="690" y="494">HTML shell</text>
+    <text class="body" x="690" y="533">JavaScript bundles</text>
+    <text class="body" x="690" y="572">CSS and public assets</text>
+    <text class="body" x="690" y="611">Global HTTPS edge cache</text>
+  </g>
+
+  <g id="deployment">
+    <rect class="box-soft" x="655" y="755" width="370" height="240" rx="8"/>
+    <text class="box-title" x="840" y="792">Deployment Target</text>
+    <text class="body" x="690" y="846">Cloudflare Pages project</text>
+    <text class="body" x="690" y="886">Vite / TanStack build output</text>
+    <text class="body" x="690" y="926">No server rendering dependency</text>
+    <text class="body" x="690" y="966">SPA fallback routing</text>
+  </g>
+
+  <!-- Supabase platform -->
+  <g id="supabase-boundary">
+    <rect class="box" x="1195" y="260" width="690" height="825" rx="8"/>
+    <rect class="header-platform" x="1195" y="260" width="690" height="62" rx="8"/>
+    <text class="box-title" x="1540" y="291">Supabase Project</text>
+  </g>
+
+  <g id="postgres">
+    <rect class="box" x="1240" y="365" width="285" height="120" rx="8"/>
+    <rect class="header-platform" x="1240" y="365" width="285" height="45" rx="8"/>
+    <text class="box-title" x="1382.5" y="388">PostgreSQL Database</text>
+    <text class="small" x="1265" y="442">Application tables</text>
+    <text class="small" x="1265" y="468">163+ migrations</text>
+  </g>
+
+  <g id="auth">
+    <rect class="box" x="1240" y="535" width="285" height="110" rx="8"/>
+    <rect class="header-platform" x="1240" y="535" width="285" height="45" rx="8"/>
+    <text class="box-title" x="1382.5" y="558">Supabase Auth</text>
+    <text class="small" x="1265" y="611">Login, signup, session JWTs</text>
+  </g>
+
+  <g id="realtime">
+    <rect class="box" x="1240" y="695" width="285" height="110" rx="8"/>
+    <rect class="header-platform" x="1240" y="695" width="285" height="45" rx="8"/>
+    <text class="box-title" x="1382.5" y="718">Supabase Realtime</text>
+    <text class="small" x="1265" y="771">WebSocket updates</text>
+  </g>
+
+  <g id="storage">
+    <rect class="box" x="1240" y="855" width="285" height="110" rx="8"/>
+    <rect class="header-platform" x="1240" y="855" width="285" height="45" rx="8"/>
+    <text class="box-title" x="1382.5" y="878">Supabase Storage</text>
+    <text class="small" x="1265" y="931">Avatar and attachment files</text>
+  </g>
+
+  <g id="edge-functions">
+    <rect class="box" x="1575" y="365" width="265" height="600" rx="8"/>
+    <rect class="header-edge" x="1575" y="365" width="265" height="48" rx="8"/>
+    <text class="box-title" x="1707.5" y="389">Deno Edge Functions</text>
+
+    <rect class="box-soft" x="1600" y="455" width="215" height="68" rx="8"/>
+    <text class="small-bold" x="1707.5" y="482" text-anchor="middle">generate-suggestions</text>
+    <text class="small" x="1707.5" y="505" text-anchor="middle">AI recommendation calls</text>
+
+    <rect class="box-soft" x="1600" y="575" width="215" height="68" rx="8"/>
+    <text class="small-bold" x="1707.5" y="602" text-anchor="middle">send-session-email</text>
+    <text class="small" x="1707.5" y="625" text-anchor="middle">Session email dispatch</text>
+
+    <rect class="box-soft" x="1600" y="695" width="215" height="68" rx="8"/>
+    <text class="small-bold" x="1707.5" y="722" text-anchor="middle">mint-jitsi-token</text>
+    <text class="small" x="1707.5" y="745" text-anchor="middle">JaaS meeting JWTs</text>
+
+    <rect class="box-soft" x="1600" y="815" width="215" height="68" rx="8"/>
+    <text class="small-bold" x="1707.5" y="842" text-anchor="middle">n8n-webhook</text>
+    <text class="small" x="1707.5" y="865" text-anchor="middle">Future automation hook</text>
+  </g>
+
+  <!-- External services -->
+  <g id="gemini">
+    <rect class="box" x="2045" y="445" width="245" height="95" rx="8"/>
+    <rect class="header-external" x="2045" y="445" width="245" height="42" rx="8"/>
+    <text class="box-title" x="2167.5" y="466">Google Gemini API</text>
+    <text class="small" x="2070" y="515">Gemini Flash 2.5 model</text>
+  </g>
+
+  <g id="gmail">
+    <rect class="box" x="2045" y="565" width="245" height="95" rx="8"/>
+    <rect class="header-external" x="2045" y="565" width="245" height="42" rx="8"/>
+    <text class="box-title" x="2167.5" y="586">Gmail SMTP</text>
+    <text class="small" x="2070" y="635">Transactional session email</text>
+  </g>
+
+  <g id="jitsi">
+    <rect class="box" x="2045" y="685" width="245" height="95" rx="8"/>
+    <rect class="header-external" x="2045" y="685" width="245" height="42" rx="8"/>
+    <text class="box-title" x="2167.5" y="706">Jitsi JaaS</text>
+    <text class="small" x="2070" y="755">Video meeting service</text>
+  </g>
+
+  <g id="n8n">
+    <rect class="box-soft" x="2045" y="805" width="245" height="95" rx="8"/>
+    <rect class="header-external" x="2045" y="805" width="245" height="42" rx="8"/>
+    <text class="box-title" x="2167.5" y="826">n8n Automation</text>
+    <text class="small" x="2070" y="875">Planned workflow target</text>
+  </g>
+
+  <!-- Cross-layer flows -->
+  <path class="connector" d="M 490 455 L 655 455"/>
+  <rect class="label-bg" x="520" y="425" width="105" height="24" rx="4"/>
+  <text class="flow-label" x="572.5" y="437">HTTPS</text>
+
+  <path class="connector" d="M 655 555 L 490 555"/>
+  <rect class="label-bg" x="507" y="574" width="132" height="24" rx="4"/>
+  <text class="flow-label" x="573" y="586">SPA assets</text>
+
+  <path class="connector" d="M 490 875 L 555 875 L 555 1040 L 1195 1040"/>
+  <rect class="label-bg" x="673" y="1012" width="340" height="30" rx="4"/>
+  <text class="flow-label" x="843" y="1027">REST + WebSocket API calls</text>
+
+  <path class="connector-soft" d="M 1195 1040 L 1195 425 L 1240 425"/>
+  <path class="connector-soft" d="M 1195 1040 L 1195 590 L 1240 590"/>
+  <path class="connector-soft" d="M 1195 1040 L 1195 750 L 1240 750"/>
+  <path class="connector-soft" d="M 1195 1040 L 1195 925 L 1240 925"/>
+  <path class="connector-soft" d="M 1525 590 L 1575 590"/>
+  <path class="connector-soft" d="M 1525 750 L 1575 750"/>
+  <path class="connector-soft" d="M 1525 925 L 1575 925"/>
+  <path class="connector-soft" d="M 1525 425 L 1575 425"/>
+
+  <path class="connector" d="M 1815 489 L 2045 489"/>
+  <path class="connector" d="M 1815 609 L 2045 609"/>
+  <path class="connector" d="M 1815 729 L 2045 729"/>
+  <path class="connector-dashed" d="M 1815 849 L 2045 849"/>
+  <rect class="label-bg" x="1892" y="392" width="110" height="26" rx="4"/>
+  <text class="flow-label-soft" x="1947" y="405">Outbound</text>
+
+  <!-- Notes -->
+  <g id="legend">
+    <rect class="box-soft" x="120" y="1235" width="2210" height="155" rx="8"/>
+    <text class="body-bold" x="160" y="1290">Architecture summary:</text>
+    <text class="body" x="160" y="1330">Cloudflare serves the static React/TanStack single-page application. After loading, the browser communicates directly with Supabase over REST and WebSocket protocols.</text>
+    <text class="body" x="160" y="1370">Supabase hosts the PostgreSQL database, authentication, realtime subscriptions, storage, and four Deno Edge Functions. Edge Functions integrate with AI, email, video, and planned automation services.</text>
+  </g>
+
+</svg>

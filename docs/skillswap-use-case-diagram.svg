@@ -1,0 +1,117 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1280" viewBox="0 0 1800 1280" role="img" aria-labelledby="title desc">
+  <title id="title">SkillSwap Connect UML Use Case Diagram</title>
+  <desc id="desc">Academic UML use case diagram showing Learner, Teacher, and Administrator actors connected to their platform use cases.</desc>
+  <defs>
+    <style>
+      .page { fill: #ffffff; }
+      .system { fill: #ffffff; stroke: #111111; stroke-width: 3; }
+      .heading { font: 700 34px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; letter-spacing: 0; }
+      .system-title { font: 700 25px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; letter-spacing: 0; }
+      .actor { fill: none; stroke: #111111; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      .actor-label { font: 700 22px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; letter-spacing: 0; }
+      .actor-note { font: 400 15px Arial, Helvetica, sans-serif; fill: #444444; text-anchor: middle; letter-spacing: 0; }
+      .case { fill: #ffffff; stroke: #111111; stroke-width: 2.3; }
+      .case-text { font: 600 17px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .case-text-small { font: 600 16px Arial, Helvetica, sans-serif; fill: #111111; text-anchor: middle; dominant-baseline: middle; letter-spacing: 0; }
+      .assoc { fill: none; stroke: #111111; stroke-width: 2; stroke-linecap: round; }
+      .divider { stroke: #c9c9c9; stroke-width: 1.4; stroke-dasharray: 8 8; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1800" height="1280"/>
+  <text class="heading" x="900" y="58">SkillSwap Connect - UML Use Case Diagram</text>
+
+  <rect class="system" x="135" y="105" width="1530" height="1120" rx="10"/>
+  <text class="system-title" x="900" y="150">SkillSwap Connect Platform</text>
+  <line class="divider" x1="660" y1="185" x2="660" y2="1185"/>
+  <line class="divider" x1="1140" y1="185" x2="1140" y2="1185"/>
+
+  <path class="assoc" d="M415 422 L415 462"/>
+  <path class="assoc" d="M438 426 L438 552"/>
+  <path class="assoc" d="M461 428 L461 642"/>
+  <path class="assoc" d="M484 428 L484 732"/>
+  <path class="assoc" d="M507 428 L507 822"/>
+  <path class="assoc" d="M530 426 L530 912"/>
+  <path class="assoc" d="M553 422 L553 1002"/>
+  <path class="assoc" d="M576 418 L576 1092"/>
+
+  <path class="assoc" d="M848 422 L848 462"/>
+  <path class="assoc" d="M871 426 L871 552"/>
+  <path class="assoc" d="M894 428 L894 642"/>
+  <path class="assoc" d="M917 428 L917 732"/>
+  <path class="assoc" d="M940 428 L940 822"/>
+  <path class="assoc" d="M963 426 L963 912"/>
+  <path class="assoc" d="M986 422 L986 1002"/>
+  <path class="assoc" d="M1009 418 L1009 1092"/>
+
+  <path class="assoc" d="M1285 422 L1285 522"/>
+  <path class="assoc" d="M1325 428 L1325 662"/>
+  <path class="assoc" d="M1365 428 L1365 802"/>
+  <path class="assoc" d="M1405 426 L1405 942"/>
+  <path class="assoc" d="M1445 418 L1445 1082"/>
+
+  <g id="learner-actor" transform="translate(495 258)">
+    <text class="actor-label" x="0" y="-56">Learner</text>
+    <text class="actor-note" x="0" y="-32">role-based actor</text>
+    <circle class="actor" cx="0" cy="0" r="27"/>
+    <path class="actor" d="M0 27 L0 105 M-56 61 L56 61 M0 105 L-46 165 M0 105 L46 165"/>
+  </g>
+
+  <g id="teacher-actor" transform="translate(928 258)">
+    <text class="actor-label" x="0" y="-56">Teacher</text>
+    <text class="actor-note" x="0" y="-32">role-based actor</text>
+    <circle class="actor" cx="0" cy="0" r="27"/>
+    <path class="actor" d="M0 27 L0 105 M-56 61 L56 61 M0 105 L-46 165 M0 105 L46 165"/>
+  </g>
+
+  <g id="administrator-actor" transform="translate(1365 258)">
+    <text class="actor-label" x="0" y="-56">Administrator</text>
+    <circle class="actor" cx="0" cy="0" r="27"/>
+    <path class="actor" d="M0 27 L0 105 M-56 61 L56 61 M0 105 L-46 165 M0 105 L46 165"/>
+  </g>
+
+  <ellipse class="case" cx="495" cy="500" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="500">Browse skills database</text>
+  <ellipse class="case" cx="495" cy="590" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="590">Request session</text>
+  <ellipse class="case" cx="495" cy="680" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="680">Cancel session</text>
+  <ellipse class="case" cx="495" cy="770" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="770">Communicate</text>
+  <ellipse class="case" cx="495" cy="860" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="860">Attend video calls</text>
+  <ellipse class="case" cx="495" cy="950" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="950">Submit reviews</text>
+  <ellipse class="case" cx="495" cy="1040" rx="172" ry="38"/>
+  <text class="case-text-small" x="495" y="1040">Receive AI recommendations</text>
+  <ellipse class="case" cx="495" cy="1130" rx="157" ry="38"/>
+  <text class="case-text" x="495" y="1130">Propose swaps</text>
+
+  <ellipse class="case" cx="928" cy="500" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="500">Accept requests</text>
+  <ellipse class="case" cx="928" cy="590" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="590">Reject requests</text>
+  <ellipse class="case" cx="928" cy="680" rx="154" ry="38"/>
+  <text class="case-text" x="928" y="680">Reschedule sessions</text>
+  <ellipse class="case" cx="928" cy="770" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="770">Initiate sessions</text>
+  <ellipse class="case" cx="928" cy="860" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="860">Complete sessions</text>
+  <ellipse class="case" cx="928" cy="950" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="950">Communicate</text>
+  <ellipse class="case" cx="928" cy="1040" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="1040">Attend video calls</text>
+  <ellipse class="case" cx="928" cy="1130" rx="140" ry="38"/>
+  <text class="case-text" x="928" y="1130">Submit reviews</text>
+
+  <ellipse class="case" cx="1365" cy="560" rx="160" ry="38"/>
+  <text class="case-text" x="1365" y="560">Manage skills catalogue</text>
+  <ellipse class="case" cx="1365" cy="700" rx="160" ry="38"/>
+  <text class="case-text" x="1365" y="700">Suspend users</text>
+  <ellipse class="case" cx="1365" cy="840" rx="160" ry="38"/>
+  <text class="case-text" x="1365" y="840">View finance dashboard</text>
+  <ellipse class="case" cx="1365" cy="980" rx="160" ry="38"/>
+  <text class="case-text" x="1365" y="980">Resolve user reports</text>
+  <ellipse class="case" cx="1365" cy="1120" rx="178" ry="38"/>
+  <text class="case-text-small" x="1365" y="1120">Forcefully complete sessions</text>
+</svg>
