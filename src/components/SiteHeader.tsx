@@ -257,7 +257,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
                       />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="glass-strong w-56">
+                  <DropdownMenuContent align="end" className="chrome-panel w-56">
                     <div className="px-2 py-2">
                       <div className="truncate text-sm font-medium">{user.email}</div>
                       <div className="text-xs text-muted-foreground">Signed in</div>
@@ -299,7 +299,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
 
       {isMobile && (
         <>
-          <header className="fixed inset-x-0 top-0 z-40 border-b border-border/50 glass pt-[env(safe-area-inset-top)] md:hidden">
+          <header className="fixed inset-x-0 top-0 z-40 border-b border-border/50 glass chrome-surface pt-[env(safe-area-inset-top)] md:hidden">
             <div className="flex h-14 items-center justify-between px-4">
               <Link to={user ? "/dashboard" : "/"} preload="intent" className="flex items-center">
                 <Logo size="sm" />
@@ -333,7 +333,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
                         />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="glass-strong w-56">
+                    <DropdownMenuContent align="end" className="chrome-panel w-56">
                       <div className="px-2 py-2">
                         <div className="truncate text-sm font-medium">{user.email}</div>
                         <div className="text-xs text-muted-foreground">Signed in</div>
@@ -370,7 +370,7 @@ function SiteHeaderInner({ sidebarCollapsed, onToggleSidebar }: SiteHeaderProps)
 
           <nav
             aria-label="Primary"
-            className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/50 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] glass-strong md:hidden"
+            className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/50 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] glass-strong chrome-surface md:hidden"
           >
             <div className="flex items-center justify-around">
               {resolvedNav

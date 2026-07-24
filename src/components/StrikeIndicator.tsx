@@ -81,7 +81,7 @@ export function StrikeIndicator() {
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="glass-strong w-80 p-4">
+      <PopoverContent align="end" className="chrome-panel w-80 p-4">
         <div className="flex items-start gap-3">
           <div
             className={cn(

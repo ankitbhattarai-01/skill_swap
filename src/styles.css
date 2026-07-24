@@ -75,6 +75,13 @@
   --glass-bg: rgb(255 255 255 / 0.7);
   --glass-border: rgb(255 255 255 / 0.5);
   --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.08);
+  /* Fixed navigation chrome (sidebar, top header, mobile bars) and floating
+     overlays (dropdowns, notification panel) must NOT be see-through: at 0.7
+     alpha the page content behind them bled through and read as two elements
+     overlapping. These surfaces get a near-opaque frost instead — the blur
+     still softens edges, but content can't leak through. Content *cards* keep
+     the lighter --glass-bg. */
+  --chrome-bg: rgb(255 255 255 / 0.97);
   --gradient-brand: linear-gradient(135deg, #7c3aed, #10b981);
   --gradient-brand-soft: linear-gradient(135deg, rgb(124 58 237 / 0.12), rgb(16 185 129 / 0.12));
   --gradient-hero:
@@ -158,6 +165,9 @@
      card visual elsewhere. */
   --glass-bg: #141416;
   --glass-border: rgb(255 255 255 / 0.06);
+  /* Dark chrome is already opaque (parity with the card surface) — nothing to
+     fix here, but the variable exists so the same rules apply in both themes. */
+  --chrome-bg: #141416;
   /* No drop shadow in dark. Heavy black box-shadows on a near-black page
      read as a smudged halo around the element ("shadow bending space"),
      not as elevation. Premium dark UIs use a 1px border + a hairline inset
@@ -535,6 +545,11 @@ body.messages-page-open {
      shorthand here beats them and the utility classes never applied. */
   .chrome-sidebar,
   .chrome-header {
+    /* Near-opaque so page content scrolling underneath the fixed chrome can't
+       bleed through. Overrides the see-through background set by
+       .glass/.glass-strong above (same layer, later rule wins); the blur those
+       classes set is kept for the frosted edge. */
+    background: var(--chrome-bg);
     border-color: var(--border);
     border-color: color-mix(in oklab, var(--border) 50%, transparent);
   }
@@ -543,6 +558,22 @@ body.messages-page-open {
   }
   .chrome-header {
     border-width: 0 0 1px;
+  }
+  /* Background-only override for chrome surfaces that keep their own Tailwind
+     border (the mobile top header and bottom nav). Pairs with .glass/
+     .glass-strong for the blur. */
+  .chrome-surface {
+    background: var(--chrome-bg);
+  }
+  /* Floating overlays — dropdown menus, the notification panel, header
+     popovers. Same frosted-but-opaque treatment as the fixed chrome so a menu
+     never shows the page (or the surface below it) through its own body. */
+  .chrome-panel {
+    background: var(--chrome-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
   }
   /* .glass plus a brand tint. Declared as one `background` shorthand rather
      than composing with a Tailwind bg-gradient-* class, because .glass already

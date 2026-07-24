@@ -509,7 +509,7 @@ export function NotificationsMenu() {
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="glass-strong w-80">
+      <DropdownMenuContent align="end" className="chrome-panel w-80">
         <div className="flex items-center justify-between gap-3 px-2 py-2">
           <div>
             <div className="text-sm font-semibold">Notifications</div>
