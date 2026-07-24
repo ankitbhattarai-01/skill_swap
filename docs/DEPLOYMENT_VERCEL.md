@@ -6,26 +6,33 @@ functions) is unchanged** — Vercel only hosts the TanStack Start web app. Ever
 
 ## What changed in the codebase
 
-The app used to build for **Cloudflare Workers** (`@cloudflare/vite-plugin` +
-`server.ts` + `wrangler.jsonc`). To run on Vercel it now builds with **Nitro**,
-which is TanStack Start's official Vercel path.
+The app deploys to Vercel as a **static single-page app (SPA)**. Every backend
+call goes straight to Supabase from the browser — there are **no server functions**
+— so there is nothing to server-render. `vite build` produces a static client
+bundle plus a prerendered SPA shell, and Vercel hosts those files directly. No
+serverless function, no server runtime.
 
-| Before (Cloudflare)                              | After (Vercel)                                        |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| `@cloudflare/vite-plugin` on build               | `nitro()` from `nitro/vite`                            |
-| `server.ts` injected security headers (CSP etc.) | Headers ported to Nitro `routeRules` in `vite.config` |
-| Per-request CSP **nonce** via CF `HTMLRewriter`  | Static CSP (`script-src 'unsafe-inline'`) — CF-only API is gone |
-| `wrangler deploy`                                | `git push` → Vercel auto-build                        |
+| Concern                | How it works now                                                             |
+| ---------------------- | --------------------------------------------------------------------------- |
+| Build                  | `npm run build` → static output in `dist/client`                            |
+| SPA entry              | TanStack Start prerenders `dist/client/_shell.html`; `postbuild` copies it to `index.html` |
+| Client routing         | `vercel.json` rewrites every route to `/index.html`                         |
+| Security headers (CSP) | `vercel.json` `headers` (applied at Vercel's CDN edge)                       |
+| Deploy                 | `git push` → Vercel auto-build                                              |
 
-`server.ts` and `wrangler.jsonc` are now **dormant** (Vercel ignores them). They're
-left in place so a Cloudflare deploy is still possible; delete them only if you're
-sure you'll never go back.
+> **Why not Nitro/SSR?** The `nitro()` Vite plugin (v3 beta) co-orchestrates the
+> Vite build and clobbers TanStack Start's own client→server build pass. The result
+> is a production manifest whose client entry still points at the dev-only module
+> `/@id/virtual:tanstack-start-client-entry`, which **404s in production** — so
+> nothing hydrates and every page renders blank. This is broken across every
+> currently-published nitro + TanStack Start beta (nitro issues #3905 / #4011 /
+> #3921). Because this app needs no SSR, shipping a static SPA sidesteps the bug
+> entirely and is the more reliable host anyway.
 
-> **Note on the CSP:** Cloudflare's nonce-based CSP relied on a Cloudflare-only
-> browser API that doesn't exist on Vercel, so `script-src` falls back to
-> `'unsafe-inline'`. This is the standard tradeoff for a non-Cloudflare host and is
-> defined in `vite.config.ts` (`SECURITY_HEADERS`). All the tight origin
-> allowlists (Supabase, Jitsi/8x8, hCaptcha, Google) are preserved.
+> **Note on the CSP:** `script-src` uses `'unsafe-inline'` (there is no server to
+> inject a per-request nonce). All the tight origin allowlists (Supabase, Jitsi/8x8,
+> hCaptcha, Google) are preserved in `vercel.json`. `server.ts` and `wrangler.jsonc`
+> remain in the repo but are dormant (a leftover from the old Cloudflare target).
 
 ---
 
@@ -41,18 +48,31 @@ git commit -m "build: target Vercel via Nitro instead of Cloudflare Workers"
 git push
 ```
 
-## Step 2 — Import the repo on Vercel
+## Step 2 — Import the repo on Vercel (or fix an existing project)
 
 1. Go to **[vercel.com/new](https://vercel.com/new)** and sign in with GitHub.
 2. **Import** the `skillswap-connect` repository.
-3. **Framework Preset:** Vercel should auto-detect **TanStack Start**. If it shows
-   "Other", that's fine — leave the **Build Command** as `npm run build` and leave
-   **Output Directory** blank (Nitro writes to `.vercel/output` via the Build
-   Output API; do not override it).
+3. **Framework Preset:** choose **Other**. This is a static SPA — do **not** pick a
+   framework preset. The build settings live in `vercel.json` (which takes
+   precedence over the dashboard), so you can leave the fields on their defaults:
+   - Build Command: `npm run build`
+   - Output Directory: `dist/client`
 4. **Root Directory:** leave as the repo root.
 5. Don't click Deploy yet — set env vars first (Step 3).
 
+> **Already imported?** If the project already exists (e.g. it was set up for the
+> old Nitro/SSR build), you do **not** need to re-import. Just open **Settings →
+> Build and Deployment**, set **Framework Preset** to **Other** (or turn *off* any
+> Build Command / Output Directory overrides so `vercel.json` wins), confirm the
+> env vars in Step 3, then trigger a redeploy.
+
 ## Step 3 — Environment variables
+
+> ⚠️ **This step is not optional.** These vars are read at **build time** and baked
+> into the browser bundle. If `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`
+> are missing when Vercel builds, the app loads and then throws *"Missing Supabase
+> environment variables"* on startup — a **blank white page**. (You can tell they're
+> missing if the deployed page's HTML contains no `supabase` string at all.)
 
 Add these under **Project → Settings → Environment Variables** (apply to
 **Production** and **Preview**). These are all **public / publishable** client keys —
@@ -156,9 +176,20 @@ To go back to Cloudflare entirely, restore the `@cloudflare/vite-plugin` block i
 
 ## Troubleshooting
 
-- **Blank page / all scripts blocked:** a CSP origin is missing. Check the console
-  for the blocked URL and add it to `SECURITY_HEADERS` in `vite.config.ts`, then
+- **Blank white page (most common):** two usual causes, in order —
+  1. **Missing `VITE_` env vars** (Step 3): the deployed HTML contains no `supabase`
+     string and the console shows *"Missing Supabase environment variables"*. Add the
+     vars and redeploy.
+  2. **A dev-only client entry shipped to prod:** the page's `<script>` imports
+     `/@id/virtual:tanstack-start-client-entry` (which 404s). This is the Nitro-SSR
+     build bug — it must **not** come back. Keep the build static (no `nitro()` plugin
+     in `vite.config.ts`); `dist/client/index.html` must reference a real
+     `/assets/index-*.js` entry, never an `@id/virtual` path.
+- **A specific script/frame is CSP-blocked:** the console names the blocked URL. Add
+  its origin to the matching directive in **`vercel.json`** (`headers` → CSP), then
   redeploy.
+- **Deep link / refresh 404s (e.g. reloading `/dashboard`):** the SPA rewrite in
+  `vercel.json` is missing or the Output Directory isn't `dist/client`.
 - **Edge function calls fail with CORS:** `CORS_ALLOWED_ORIGINS` (5b) is missing or
   doesn't match the exact origin (scheme + host, no trailing slash).
 - **Auth redirects to localhost or errors:** Supabase redirect URLs (5a) not set.

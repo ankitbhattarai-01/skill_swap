@@ -8,7 +8,6 @@ import { cwd } from "node:process";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { nitro } from "nitro/vite";
 import { defineConfig, loadEnv, type Plugin, type PluginOption } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 
@@ -305,53 +304,28 @@ function getClientEnvDefines(mode: string): Record<string, string> {
   );
 }
 
-// Security headers applied to every deployed response. Ported from the old
-// Cloudflare Worker entry (server.ts), which is no longer in the request path
-// on Vercel/Nitro. The CSP is the static ("legacy") variant: Cloudflare's
-// per-request nonce injection relied on its HTMLRewriter global, which doesn't
-// exist on Vercel, so script-src falls back to 'unsafe-inline'. Every origin
-// listed is one the app actually talks to — prune these if a feature is
-// dropped (e.g. hCaptcha, Jitsi/8x8, Gemini). Nitro compiles these into the
-// Vercel Build Output config so they apply at the CDN edge, not just the SSR
-// function. Applied on `build` only so the CSP's connect-src doesn't block
-// Vite's dev HMR websocket.
-const SECURITY_HEADERS: Record<string, string> = {
-  "Content-Security-Policy": [
-    "frame-ancestors 'none'",
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://js.hcaptcha.com https://hcaptcha.com https://*.hcaptcha.com",
-    "style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com",
-    "font-src 'self' data:",
-    "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://*.googleusercontent.com https://hcaptcha.com https://*.hcaptcha.com",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://generativelanguage.googleapis.com https://accounts.google.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
-    "frame-src 'self' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
-    "worker-src 'self' blob:",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self' https://accounts.google.com",
-    "upgrade-insecure-requests",
-  ].join("; "),
-  "X-Frame-Options": "DENY",
-  "X-Content-Type-Options": "nosniff",
-  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-  "Referrer-Policy": "strict-origin-when-cross-origin",
-  "Permissions-Policy":
-    'camera=(self "https://8x8.vc" "https://meet.jit.si"), microphone=(self "https://8x8.vc" "https://meet.jit.si"), display-capture=(self "https://8x8.vc" "https://meet.jit.si"), geolocation=(), payment=(), usb=(), bluetooth=(), midi=()',
-  "Cross-Origin-Opener-Policy": "same-origin",
-  "Cross-Origin-Resource-Policy": "same-site",
-};
-
-function getPlugins(command: "build" | "serve"): PluginOption[] {
-  // Nitro is TanStack Start's universal server layer; it detects the Vercel
-  // build environment automatically and emits Vercel Functions output there,
-  // while producing a plain Node server build locally. It replaces the old
-  // @cloudflare/vite-plugin target. Plugin order follows the TanStack + Vercel
-  // reference config: tanstackStart() → nitro() → viteReact().
+function getPlugins(): PluginOption[] {
+  // SPA / static deployment. The app has no server functions — every backend
+  // call goes straight to Supabase from the browser — so there is nothing to
+  // server-render. We ship a static client build (TanStack Start prerenders a
+  // single SPA shell, `dist/client/_shell.html`) and host it on Vercel as
+  // static files.
+  //
+  // Why no `nitro()` plugin: the Nitro Vite plugin (v3 beta) co-orchestrates
+  // Vite's build and clobbers TanStack Start's own client→server build pass.
+  // The result is a production manifest whose `clientEntry` still points at the
+  // dev-only virtual module `/@id/virtual:tanstack-start-client-entry`, which
+  // 404s in production, so nothing hydrates and every page is blank. This is
+  // broken at every currently-published nitro + TanStack Start beta (see nitro
+  // issues #3905 / #4011 / #3921). Static/SPA output sidesteps it entirely.
+  //
+  // Security headers (CSP etc.) used to be injected here via Nitro routeRules;
+  // they now live in `vercel.json` (applied at Vercel's CDN edge). Keep the two
+  // in sync if the origin allowlist changes.
   return [
     tailwindcss(),
     tsConfigPaths({ projects: ["./tsconfig.json"] }),
-    ...tanstackStart(),
-    nitro(command === "build" ? { routeRules: { "/**": { headers: SECURITY_HEADERS } } } : undefined),
+    ...tanstackStart({ spa: { enabled: true } }),
     viteReact(),
     skillswapDevLoggingPlugin(),
   ];
@@ -390,7 +364,7 @@ export default defineConfig((env) => ({
       "@tanstack/query-core",
     ],
   },
-  plugins: getPlugins(env.command),
+  plugins: getPlugins(),
   environments: {
     client: {
       build: {
