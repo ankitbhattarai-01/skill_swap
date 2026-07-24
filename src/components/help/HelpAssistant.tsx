@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TOUR_CARDS, type TourCard } from "@/lib/help/tour-content";
-import { FAQ_CATEGORIES, FAQ_ENTRIES } from "@/lib/help/faq-content";
+import { FAQ_CATEGORIES, FAQ_ENTRIES, type FaqCategory } from "@/lib/help/faq-content";
 import { useSpeech } from "@/lib/help/use-speech";
 
 const VOICE_PREF_KEY = "skillswap-help-voice";
@@ -38,6 +38,9 @@ type HelpAssistantProps = {
 export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
   const [tab, setTab] = useState<"tour" | "faq">("tour");
   const [query, setQuery] = useState("");
+  // The FAQ now spans a dozen topics, so a plain scroll is too long to skim.
+  // "All" keeps the old grouped view; picking a chip narrows to one topic.
+  const [category, setCategory] = useState<FaqCategory | "All">("All");
   const [openFaqId, setOpenFaqId] = useState<string>("");
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -70,19 +73,21 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
 
   const filteredFaq = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return FAQ_ENTRIES;
-    return FAQ_ENTRIES.filter(
+    const inCategory =
+      category === "All" ? FAQ_ENTRIES : FAQ_ENTRIES.filter((entry) => entry.category === category);
+    if (!q) return inCategory;
+    return inCategory.filter(
       (entry) =>
         entry.question.toLowerCase().includes(q) ||
         entry.answer.toLowerCase().includes(q) ||
         entry.category.toLowerCase().includes(q),
     );
-  }, [query]);
+  }, [query, category]);
 
   const groupedFaq = useMemo(() => {
-    return FAQ_CATEGORIES.map((category) => ({
-      category,
-      entries: filteredFaq.filter((entry) => entry.category === category),
+    return FAQ_CATEGORIES.map((name) => ({
+      category: name,
+      entries: filteredFaq.filter((entry) => entry.category === name),
     })).filter((group) => group.entries.length > 0);
   }, [filteredFaq]);
 
@@ -258,10 +263,34 @@ export function HelpAssistant({ open, onOpenChange }: HelpAssistantProps) {
               />
             </div>
 
-            <div className="mt-5 space-y-6">
+            <div className="-mx-6 mt-3 overflow-x-auto px-6 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex w-max gap-1.5">
+                {(["All", ...FAQ_CATEGORIES] as const).map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => setCategory(name)}
+                    aria-pressed={category === name}
+                    className={cn(
+                      "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium",
+                      "transition-colors duration-200",
+                      category === name
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/50 text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-6">
               {groupedFaq.length === 0 && (
                 <p className="rounded-2xl border border-dashed border-border/60 bg-card/40 p-6 text-center text-sm text-muted-foreground">
-                  Nothing matches "{query}". Try a different word, or check the Tour tab.
+                  {query.trim()
+                    ? `Nothing matches "${query}"${category === "All" ? "" : ` in ${category}`}. Try a different word, or pick All.`
+                    : "Nothing here yet. Try another topic."}
                 </p>
               )}
 
