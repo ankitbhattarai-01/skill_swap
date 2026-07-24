@@ -5,11 +5,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { cwd } from "node:process";
 
-import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { defineConfig, loadEnv, type ConfigEnv, type Plugin, type PluginOption } from "vite";
+import { nitro } from "nitro/vite";
+import { defineConfig, loadEnv, type Plugin, type PluginOption } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 
 type DevLogLevel = "info" | "warn" | "error";
@@ -305,24 +305,64 @@ function getClientEnvDefines(mode: string): Record<string, string> {
   );
 }
 
-function getPlugins(env: ConfigEnv): PluginOption[] {
-  const plugins: PluginOption[] = [tailwindcss(), tsConfigPaths({ projects: ["./tsconfig.json"] })];
+// Security headers applied to every deployed response. Ported from the old
+// Cloudflare Worker entry (server.ts), which is no longer in the request path
+// on Vercel/Nitro. The CSP is the static ("legacy") variant: Cloudflare's
+// per-request nonce injection relied on its HTMLRewriter global, which doesn't
+// exist on Vercel, so script-src falls back to 'unsafe-inline'. Every origin
+// listed is one the app actually talks to — prune these if a feature is
+// dropped (e.g. hCaptcha, Jitsi/8x8, Gemini). Nitro compiles these into the
+// Vercel Build Output config so they apply at the CDN edge, not just the SSR
+// function. Applied on `build` only so the CSP's connect-src doesn't block
+// Vite's dev HMR websocket.
+const SECURITY_HEADERS: Record<string, string> = {
+  "Content-Security-Policy": [
+    "frame-ancestors 'none'",
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://js.hcaptcha.com https://hcaptcha.com https://*.hcaptcha.com",
+    "style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com",
+    "font-src 'self' data:",
+    "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://*.googleusercontent.com https://hcaptcha.com https://*.hcaptcha.com",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://generativelanguage.googleapis.com https://accounts.google.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "frame-src 'self' https://8x8.vc https://meet.jit.si https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://accounts.google.com",
+    "upgrade-insecure-requests",
+  ].join("; "),
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy":
+    'camera=(self "https://8x8.vc" "https://meet.jit.si"), microphone=(self "https://8x8.vc" "https://meet.jit.si"), display-capture=(self "https://8x8.vc" "https://meet.jit.si"), geolocation=(), payment=(), usb=(), bluetooth=(), midi=()',
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-site",
+};
 
-  if (env.command === "build") {
-    plugins.push(...cloudflare({ viteEnvironment: { name: "ssr" } }));
-  }
-
-  plugins.push(...tanstackStart(), viteReact(), skillswapDevLoggingPlugin());
-
-  return plugins;
+function getPlugins(command: "build" | "serve"): PluginOption[] {
+  // Nitro is TanStack Start's universal server layer; it detects the Vercel
+  // build environment automatically and emits Vercel Functions output there,
+  // while producing a plain Node server build locally. It replaces the old
+  // @cloudflare/vite-plugin target. Plugin order follows the TanStack + Vercel
+  // reference config: tanstackStart() → nitro() → viteReact().
+  return [
+    tailwindcss(),
+    tsConfigPaths({ projects: ["./tsconfig.json"] }),
+    ...tanstackStart(),
+    nitro(command === "build" ? { routeRules: { "/**": { headers: SECURITY_HEADERS } } } : undefined),
+    viteReact(),
+    skillswapDevLoggingPlugin(),
+  ];
 }
 
 // Split the big shared vendors out of the single eager entry chunk so they get
 // their own long-lived cache entries. App code changes between deploys no longer
 // invalidate React/Supabase/TanStack/Radix for returning visitors, and it keeps
 // any one chunk under Rollup's 500 kB warning threshold. Scoped to the client
-// build only (see `environments.client`) so the Cloudflare worker bundle that
-// the @cloudflare/vite-plugin produces is left untouched.
+// build only (see `environments.client`) so the Nitro SSR server bundle is
+// left untouched.
 function vendorChunk(id: string): string | undefined {
   if (!id.includes("node_modules")) return undefined;
   // Supabase is independent of the React tree, so it gets its own cache entry.
@@ -350,7 +390,7 @@ export default defineConfig((env) => ({
       "@tanstack/query-core",
     ],
   },
-  plugins: getPlugins(env),
+  plugins: getPlugins(env.command),
   environments: {
     client: {
       build: {
