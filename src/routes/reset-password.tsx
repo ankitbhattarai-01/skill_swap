@@ -40,7 +40,7 @@ function ResetPasswordPage() {
 
     // Revoke every OTHER active session for this account. Without this, a
     // compromised browser that still holds a valid refresh token stays
-    // signed in even though the password was just rotated — defeating
+    // signed in even though the password was just rotated - defeating
     // the point of the reset. We keep the current session (scope=others)
     // so this page can transition the user to their dashboard.
     await supabase.auth.signOut({ scope: "others" }).catch(() => {

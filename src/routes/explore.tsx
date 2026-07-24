@@ -51,7 +51,7 @@ import { useFeatureEnabled } from "@/lib/feature-flags";
 import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 
 // Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
-// Keeping it out of the explore route chunk strips ~40–60kb from first paint
+// Keeping it out of the explore route chunk strips ~40-60kb from first paint
 // since the request/offer dialogs only mount when a user actually opens one.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
@@ -189,7 +189,7 @@ type ExploreCache = {
   savedAt: number;
   rows: TeachingSkillRow[];
   ratings: [string, TeacherRating][];
-  // Optional so snapshots written before verification shipped still parse —
+  // Optional so snapshots written before verification shipped still parse -
   // they just render without ticks until the next fetch replaces them.
   verified?: string[];
   hasMore?: boolean;
@@ -197,7 +197,7 @@ type ExploreCache = {
 
 // Level as a quiet difficulty scale: green → amber → violet. Fixed Tailwind
 // scales (not brand tokens) so the three tiers stay visually distinct in BOTH
-// light and dark — the brand palette collapses to one violet in dark mode.
+// light and dark - the brand palette collapses to one violet in dark mode.
 const LEVEL_DOT: Record<string, string> = {
   basic: "bg-emerald-500",
   intermediate: "bg-amber-500",
@@ -212,7 +212,7 @@ const LEVEL_TEXT: Record<string, string> = {
 // Entry-animation offset per card. Each card is a `.glass` element, i.e. its
 // own `backdrop-filter` compositing layer, so a long stagger means the browser
 // animates two dozen blurred layers for the better part of a second after the
-// data has already arrived — the page reads as "still loading" long after it
+// data has already arrived - the page reads as "still loading" long after it
 // isn't. Kept short enough to stay a flourish: the last card of a full page
 // starts 216ms in rather than 440ms.
 function cardDelayMs(index: number) {
@@ -266,7 +266,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
   const isSessionActive = openSession && openSession.status !== "pending";
   return (
     <article className="group glass relative flex h-full flex-col overflow-hidden rounded-2xl border border-black/[0.06] p-4 transition-all duration-300 hover:-translate-y-1 hover:border-brand-purple/30 hover:shadow-glow dark:border-white/[0.06]">
-      {/* Hairline gradient accent that fades in on hover — a quiet premium detail. */}
+      {/* Hairline gradient accent that fades in on hover - a quiet premium detail. */}
       <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-purple/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
       {/* Identity + overflow menu */}
@@ -319,7 +319,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
         )}
       </div>
 
-      {/* Skill — the hero of the card */}
+      {/* Skill - the hero of the card */}
       <div className="mt-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
           Teaches
@@ -336,7 +336,7 @@ const ExploreSkillCard = memo(function ExploreSkillCard({
         </p>
       )}
 
-      {/* Session status only — the "matches"/"swap" text indicators were
+      {/* Session status only - the "matches"/"swap" text indicators were
           removed to keep the card compact; the swap button in the action
           row below still surfaces a mutual match. */}
       {hasOpenSession && (
@@ -470,7 +470,7 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
   const isSelf = currentUserId === r.user_id;
   return (
     <article className="group glass relative flex h-full flex-col overflow-hidden rounded-2xl border border-black/[0.06] p-4 transition-all duration-300 hover:-translate-y-1 hover:border-brand-purple/30 hover:shadow-glow dark:border-white/[0.06]">
-      {/* Hairline gradient accent that fades in on hover — a quiet premium detail. */}
+      {/* Hairline gradient accent that fades in on hover - a quiet premium detail. */}
       <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-purple/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
       <div className="flex items-center justify-between gap-3">
@@ -496,7 +496,7 @@ const ExploreLearnerCard = memo(function ExploreLearnerCard({
         </Link>
       </div>
 
-      {/* Skill — the hero of the card */}
+      {/* Skill - the hero of the card */}
       <div className="mt-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
           Wants to learn
@@ -763,7 +763,7 @@ function applySignedAvatars<T extends { profiles: ExploreProfile | null }>(
   );
 }
 
-// Rows resolved from the avatar cache alone — no network. `complete` means
+// Rows resolved from the avatar cache alone - no network. `complete` means
 // every avatar on the page was already signed, so the caller can paint once
 // and skip the async pass entirely. That matters because the async pass
 // replaces every row object, which repaints the whole grid (24 cards, each a
@@ -813,13 +813,13 @@ function ExplorePage() {
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [teacherLoadingMore, setTeacherLoadingMore] = useState(false);
-  // Skill categories for the filter popover — the full catalog, fetched once,
+  // Skill categories for the filter popover - the full catalog, fetched once,
   // instead of just whatever categories appear on the loaded page.
   const [categories, setCategories] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   // Shared with the site header via TanStack Query (staleTime: Infinity, kept
   // fresh by the realtime credit bridge). Explore used to fire its own
-  // my_credit_balance RPC on mount for a number only the request dialog reads —
+  // my_credit_balance RPC on mount for a number only the request dialog reads -
   // one guaranteed round trip on the critical path for a value nothing on
   // first paint displays.
   const { data: creditBalance } = useMyCreditBalance();
@@ -830,10 +830,10 @@ function ExplorePage() {
   const [learnerHasMore, setLearnerHasMore] = useState(false);
   const [learnerLoadingMore, setLearnerLoadingMore] = useState(false);
   const [offerRow, setOfferRow] = useState<LearningSkillRow | null>(null);
-  // Swap shortcut from a mutual-match card — the dialog loads the full
+  // Swap shortcut from a mutual-match card - the dialog loads the full
   // reciprocal match itself, so only the counterpart's id/name is needed.
   const [swapTarget, setSwapTarget] = useState<{ userId: string; name?: string } | null>(null);
-  // Skills the viewer can teach — used in learner mode to highlight rows that
+  // Skills the viewer can teach - used in learner mode to highlight rows that
   // match what they offer and to default the offer dialog's credits/hour.
   const [myTeachingPrices, setMyTeachingPrices] = useState<Map<string, number>>(new Map());
   const [openSessions, setOpenSessions] = useState<Map<string, OpenSessionInfo>>(new Map());
@@ -946,12 +946,12 @@ function ExplorePage() {
   // a stale "load more") can never clobber newer state.
   const teacherSeqRef = useRef(0);
   const learnerSeqRef = useRef(0);
-  // Teacher ids whose availability has already been requested — avoids
+  // Teacher ids whose availability has already been requested - avoids
   // re-fetching the same ids when more pages append.
   const availabilityFetchedRef = useRef(new Set<string>());
 
   // Availability is per-teacher, not per-filter; accumulate it as pages load.
-  // Depends on the user ID string rather than the user object — this callback
+  // Depends on the user ID string rather than the user object - this callback
   // is in the teacher-fetch effect's dependency list, so a new-but-equivalent
   // `user` object used to abort the in-flight explore query and start it over.
   const loadAvailabilityFor = useCallback(
@@ -1019,7 +1019,7 @@ function ExplorePage() {
     };
   }, []);
 
-  // Load learners (people seeking skills) lazily — only when the user toggles
+  // Load learners (people seeking skills) lazily - only when the user toggles
   // to learner mode. Filtered/paginated server-side by explore_learners.
   useEffect(() => {
     if (mode !== "learners") return;
@@ -1044,7 +1044,7 @@ function ExplorePage() {
       setLoading(true);
     }
 
-    // Don't fetch until the session finishes restoring — the RPC's match/swap
+    // Don't fetch until the session finishes restoring - the RPC's match/swap
     // flags and self-exclusion depend on auth.uid(), so an early request is an
     // anon-flavored one that gets thrown away and refetched seconds later.
     if (authLoading) {
@@ -1161,7 +1161,7 @@ function ExplorePage() {
       setLoading(true);
     }
 
-    // Don't fetch until the session finishes restoring — the RPC's match/swap
+    // Don't fetch until the session finishes restoring - the RPC's match/swap
     // flags and self-exclusion depend on auth.uid(), so an early request is an
     // anon-flavored one that gets thrown away and refetched moments later.
     // The cached snapshot above still paints instantly in the meantime.
@@ -1221,9 +1221,9 @@ function ExplorePage() {
         // Availability no longer waits behind avatar signing. The two are
         // unrelated round trips and awaiting the signer first pushed the
         // (much heavier) teachers_free_time_status call to the very end of the
-        // chain. It is also deferred to idle: nothing on first paint reads it —
+        // chain. It is also deferred to idle: nothing on first paint reads it -
         // it only powers the "Available soonest" sort and the "Only free times"
-        // filter — so it must never compete with the avatar/tick requests.
+        // filter - so it must never compete with the avatar/tick requests.
         whenIdle(() => {
           if (!alive || seq !== teacherSeqRef.current) return;
           void loadAvailabilityFor(userIds, seq, controller.signal);
@@ -1274,7 +1274,7 @@ function ExplorePage() {
         offset: rows.length,
       });
       if (seq !== teacherSeqRef.current) return;
-      // Ticks and avatar signing are independent round trips — run them in
+      // Ticks and avatar signing are independent round trips - run them in
       // parallel and let the ticks merge in whenever they land.
       const verifiedPromise = loadVerifiedPairs(page.rows.map((r) => r.user_id));
       const signedRows = await withSignedAvatars(page.rows);
@@ -1316,7 +1316,7 @@ function ExplorePage() {
   // newest orderings now happen server-side in explore_teachers. Locally we
   // only hide the viewer's own rows (a cached snapshot can predate sign-in),
   // apply the availability toggle, and reorder for "available soonest" and
-  // "verified" — both signals arrive per page after first paint, so the
+  // "verified" - both signals arrive per page after first paint, so the
   // server fetches by rating and we re-sort what's already on screen.
   const filtered = useMemo(() => {
     const visible = rows.filter((r) => {
@@ -1414,7 +1414,7 @@ function ExplorePage() {
           if (!user) return;
           setBusyAction(`message-${row.id}`);
           // Chat is decoupled from sessions: open (or lazily create) the
-          // conversation with this user. No session request is created — that
+          // conversation with this user. No session request is created - that
           // stays an explicit action via the "Request session" button.
           const { conversationId, error } = await getOrCreateConversation(row.user_id);
           setBusyAction(null);
@@ -1457,7 +1457,7 @@ function ExplorePage() {
         return;
       }
       if (sessionId) {
-        // Flip the card to "View session" right away — otherwise it keeps
+        // Flip the card to "View session" right away - otherwise it keeps
         // showing "Request session" until the next full reload re-fetches the
         // sessions list.
         const key = `${requestRow.user_id}:${requestRow.skills.id}`;
@@ -1473,7 +1473,7 @@ function ExplorePage() {
 
   // Multi-session path from the same dialog: book one ordinary pending session
   // per chosen slot. Each shows up for the teacher to accept individually, just
-  // like a single request — credits are only escrowed as each is accepted.
+  // like a single request - credits are only escrowed as each is accepted.
   const requestMultiple = async (params: MultiSessionParams): Promise<void> => {
     if (!user || !requestRow?.skills) return;
     setBusyAction(`request-${requestRow.id}`);
@@ -1753,7 +1753,7 @@ function ExplorePage() {
               )}
             </div>
 
-            {/* Active filter chips — only render when something is set so the
+            {/* Active filter chips - only render when something is set so the
                 row collapses entirely otherwise. */}
             {hasActiveFilters && (
               <div className="flex flex-wrap items-center gap-2">

@@ -61,7 +61,7 @@ const LEVEL_LABELS: Record<SkillLevel, string> = {
 const levelRank = (level: SkillLevel) => LEVEL_ORDER.indexOf(level);
 
 // A skill can appear in both lists, but you can't learn what you already teach
-// at the same (or lower) level — learning must sit at least one level above
+// at the same (or lower) level - learning must sit at least one level above
 // teaching. `relation` is read from the perspective of the list being edited:
 // learning entries must stay "above" the matching teach level, teaching entries
 // must stay "below" the matching learn level.
@@ -180,7 +180,7 @@ function OnboardingPage() {
     if (!authLoading && !user && !emailRedirectPending) {
       navigate({ to: "/login", search: { redirect: "/onboarding" } });
     }
-    // user?.id only — auth events rotate the user object reference even when
+    // user?.id only - auth events rotate the user object reference even when
     // the underlying user hasn't changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, authLoading, emailRedirectPending, navigate]);
@@ -269,7 +269,7 @@ function OnboardingPage() {
       }
       setHydrated(true);
     })();
-    // user?.id only — see the auth-rotation note on the redirect effect above.
+    // user?.id only - see the auth-rotation note on the redirect effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, authLoading, navigate, hydrated]);
 
@@ -299,7 +299,7 @@ function OnboardingPage() {
       const maxRank = levelRank(learned.level) - 1;
       if (maxRank < levelRank("basic")) {
         toast.error(
-          `You're learning ${skill.name} at basic level — teach it only once you're past the level you're learning.`,
+          `You're learning ${skill.name} at basic level, so teach it only once you're past the level you're learning.`,
         );
         return;
       }
@@ -334,7 +334,7 @@ function OnboardingPage() {
       const minRank = levelRank(taught.level) + 1;
       if (minRank > levelRank("advanced")) {
         toast.error(
-          `You already teach ${skill.name} at advanced level — there's no higher level to learn.`,
+          `You already teach ${skill.name} at advanced level, and there's no higher level to learn.`,
         );
         return;
       }
@@ -509,7 +509,7 @@ function OnboardingPage() {
     // The skills and mode just saved here are the engine's primary signals. Any
     // suggestions row generated before this point (a /dashboard bounce during
     // signup can produce one) describes a user with no skills and would be
-    // served for the next 30 minutes — including on the very first dashboard
+    // served for the next 30 minutes - including on the very first dashboard
     // this user ever sees.
     void invalidateAiSuggestionsCache();
     toast.success("Welcome to SkillSwap 🎉");

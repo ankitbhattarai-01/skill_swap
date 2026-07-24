@@ -67,7 +67,7 @@ type ProfileState = {
   bio: string;
   // Raw storage key. Kept alongside the signed URL so a background refetch can
   // tell "same photo" from "photo changed" and only re-sign when it actually
-  // moved — and so the snapshot below can persist something that doesn't expire.
+  // moved - and so the snapshot below can persist something that doesn't expire.
   avatar_path: string | null;
   avatar_url: string | null;
 };
@@ -89,8 +89,8 @@ type LearningEntry = {
 };
 
 // The hero photo renders at 80×80 (h-20 w-20). Asking Supabase's image renderer
-// for 200px covers 2.5× DPR and turns a full-resolution upload — commonly a few
-// hundred KB — into a handful. The page used to request the original.
+// for 200px covers 2.5× DPR and turns a full-resolution upload - commonly a few
+// hundred KB - into a handful. The page used to request the original.
 const AVATAR_TRANSFORM = { width: 200, height: 200, quality: 80, resize: "cover" } as const;
 
 // Same stale-while-revalidate deal the dashboard / explore / credits pages
@@ -493,7 +493,7 @@ function ProfilePage() {
   const navigate = useNavigate();
   // Read once, at mount. On in-app navigation the signed-in user is already
   // known here, so every slice below is seeded before the first paint and the
-  // skeleton never appears at all. On a cold load `user` is still resolving —
+  // skeleton never appears at all. On a cold load `user` is still resolving -
   // the load effect hydrates instead, the moment the id lands.
   const [bootSnapshot] = useState(() => readProfileSnapshot(user?.id));
   const [profile, setProfile] = useState<ProfileState | null>(() =>
@@ -503,7 +503,7 @@ function ProfilePage() {
   const [deleting, setDeleting] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   // Only users with an email/password identity can change a password. OAuth-
-  // only accounts (Google, GitHub) have no password on file — they recover
+  // only accounts (Google, GitHub) have no password on file - they recover
   // access via the OAuth provider, not via this dialog.
   const hasPasswordAuth = (user?.identities ?? []).some((i) => i.provider === "email");
   const [openSessionCount, setOpenSessionCount] = useState(0);
@@ -558,8 +558,8 @@ function ProfilePage() {
     const controller = new AbortController();
 
     // Cold load: `user` resolved after mount, so the snapshot couldn't be read
-    // during state init. Apply it now — still synchronously, still before any
-    // request comes back — so the skeleton gives way immediately.
+    // during state init. Apply it now - still synchronously, still before any
+    // request comes back - so the skeleton gives way immediately.
     const previousUserId = snapshotAppliedForRef.current;
     if (previousUserId !== userId) {
       snapshotAppliedForRef.current = userId;
@@ -587,7 +587,7 @@ function ProfilePage() {
 
     // Warm the availability schedule in parallel with the profile fetch. The
     // editor lives at the bottom of this page, so without this it couldn't
-    // start its own RPC until the page had fully painted — the schedule then
+    // start its own RPC until the page had fully painted - the schedule then
     // showed a whole round-trip late. This collapses that serial hop.
     prefetchAvailability(userId);
 
@@ -602,11 +602,11 @@ function ProfilePage() {
           apply(value);
         })
         .catch(() => {
-          // Decoration only — a failure leaves that slice as it was.
+          // Decoration only - a failure leaves that slice as it was.
         });
     };
 
-    // Phase 1 — the minimum needed to paint the page: identity + skill lists.
+    // Phase 1 - the minimum needed to paint the page: identity + skill lists.
     // First paint is gated on `profile` when there was no snapshot to hydrate
     // from, so keep this fetch small; everything else loads below and never
     // blocks the render.
@@ -683,7 +683,7 @@ function ProfilePage() {
           );
         }
       } catch (error) {
-        // Silently swallow any cancellation/abort signal — these fire whenever
+        // Silently swallow any cancellation/abort signal - these fire whenever
         // the user's auth token refreshes mid-load and aren't real failures.
         if (!alive || controller.signal.aborted) return;
         const name =
@@ -697,7 +697,7 @@ function ProfilePage() {
         if (name === "AbortError" || code === "20" || code === "ABORT_ERR") return;
         canPersistRef.current = false;
         // A failed revalidation must not wipe content the snapshot already
-        // painted — only fall back to the empty shell when there is nothing.
+        // painted - only fall back to the empty shell when there is nothing.
         setProfile(
           (current) => current ?? { full_name: "", bio: "", avatar_path: null, avatar_url: null },
         );
@@ -705,12 +705,12 @@ function ProfilePage() {
       }
     })();
 
-    // Phase 2 — the verified ticks. Cheap, visible above the fold, and each
+    // Phase 2 - the verified ticks. Cheap, visible above the fold, and each
     // lands independently of the other.
     settle(loadSkillVerifications(userId), setVerifications);
     settle(loadVerificationCooldowns(userId), setVerificationCooldowns);
 
-    // Phase 3 — nothing here is on screen when the page opens: the catalog only
+    // Phase 3 - nothing here is on screen when the page opens: the catalog only
     // feeds the "add a skill" combobox and the count only appears inside the
     // delete-account confirmation. Both used to run on every visit, in front of
     // the work that does paint. Wait for an idle frame instead.
@@ -736,8 +736,8 @@ function ProfilePage() {
   }, [userId]);
 
   // Mirror whatever is on screen into the snapshot. Writing from state rather
-  // than from each fetch means local edits — add a skill, change a level, earn
-  // a badge — are captured too, so a revisit paints the current page instead of
+  // than from each fetch means local edits - add a skill, change a level, earn
+  // a badge - are captured too, so a revisit paints the current page instead of
   // a pre-edit one.
   useEffect(() => {
     if (!userId || !profile || !canPersistRef.current) return;
@@ -752,7 +752,7 @@ function ProfilePage() {
     });
   }, [userId, profile, teaching, learning, verifications, verificationCooldowns]);
 
-  // Catalog lookup only — skills are curated and selection-only, so there is no
+  // Catalog lookup only - skills are curated and selection-only, so there is no
   // create path any more.
   //
   // The catalog loads lazily, so what's in state may be a stale snapshot (or
@@ -816,7 +816,7 @@ function ProfilePage() {
         .single();
     }
     let { data, error } = result;
-    // Double-submit race on the (user, skill) unique constraint — the row
+    // Double-submit race on the (user, skill) unique constraint - the row
     // already exists, so adopt it instead of surfacing a conflict error.
     if (error?.code === "23505") {
       const { data: raced } = await supabase
@@ -857,7 +857,7 @@ function ProfilePage() {
     setTeachMode("");
     setTeachLevel("");
     void invalidateAiSuggestionsCache();
-    // Explore/dashboard rankings key off teaching skills — drop their snapshots.
+    // Explore/dashboard rankings key off teaching skills - drop their snapshots.
     invalidatePageCaches(user.id);
   };
 
@@ -946,7 +946,7 @@ function ProfilePage() {
     const { error } = await supabase.from("user_teaching_skills").delete().eq("id", id);
     if (error) return toastError(error);
     setTeaching((prev) => prev.filter((t) => t.id !== id));
-    // A DB trigger retires the badge along with the skill — mirror that here so
+    // A DB trigger retires the badge along with the skill - mirror that here so
     // the panel doesn't keep showing a tick for a skill that's gone.
     if (skillId) {
       setVerifications((prev) => {
@@ -1019,7 +1019,7 @@ function ProfilePage() {
       .update({ teaching_mode: mode })
       .eq("id", id);
     if (error) {
-      // A missing teaching_mode column (migration drift) is expected — the
+      // A missing teaching_mode column (migration drift) is expected - the
       // localStorage fallback above already holds the choice. Anything else
       // means the optimistic flip didn't stick: roll back and tell the user.
       if (error.message.includes("teaching_mode")) return;
@@ -1095,7 +1095,7 @@ function ProfilePage() {
       .eq("id", user.id);
     if (updateError) {
       // The pointer never moved, so the freshly-uploaded object is
-      // unreachable — remove it rather than orphaning it in the bucket.
+      // unreachable - remove it rather than orphaning it in the bucket.
       await supabase.storage
         .from("avatars")
         .remove([path])
@@ -1104,7 +1104,7 @@ function ProfilePage() {
       return toastError(updateError);
     }
     // Best-effort cleanup of the previous avatar object. Failure here must not
-    // surface to the user — the new avatar is already saved and live.
+    // surface to the user - the new avatar is already saved and live.
     if (previousAvatarPath && previousAvatarPath !== path) {
       await supabase.storage
         .from("avatars")

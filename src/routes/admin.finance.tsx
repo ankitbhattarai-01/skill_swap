@@ -63,7 +63,7 @@ export const Route = createFileRoute("/admin/finance")({
   head: () => ({ meta: [{ title: "Finance - SkillSwap Admin" }] }),
   // Sub-role boundary: even an admin with other domains needs `wallet:read`
   // before the finance dashboard mounts. Component-level checks (canRead,
-  // canOverride, etc.) still gate every dangerous action — this just stops
+  // canOverride, etc.) still gate every dangerous action - this just stops
   // an unauthorized admin from seeing the page chrome and loading the
   // finance queries at all. SSR-safe: skip on server where the Supabase
   // session lives in localStorage.
@@ -88,7 +88,7 @@ function payloadText(payload: Record<string, unknown> | undefined, key: string) 
 }
 
 // Convert a Date to the local-time string that <input type="datetime-local">
-// expects: "YYYY-MM-DDTHH:mm" — the wire format the browser produces in
+// expects: "YYYY-MM-DDTHH:mm" - the wire format the browser produces in
 // `event.target.value`, with no timezone suffix. Building it manually so we
 // don't lose minutes to a Date#toISOString() round-trip through UTC.
 function toLocalDateTimeString(date: Date): string {
@@ -292,7 +292,7 @@ function AdminFinancePage() {
       toast.success("Finance request submitted for approval.");
       closeRequest();
       // Fire-and-forget: the dashboard refetch shouldn't block the dialog's
-      // busy spinner from clearing — the RPC has already succeeded.
+      // busy spinner from clearing - the RPC has already succeeded.
       void invalidate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not submit finance request.");

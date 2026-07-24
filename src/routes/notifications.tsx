@@ -126,7 +126,7 @@ function NotificationsPage() {
       alive = false;
       controller.abort();
     };
-    // user?.id only — auth events rotate the user object reference even when
+    // user?.id only - auth events rotate the user object reference even when
     // the underlying user hasn't changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -228,7 +228,7 @@ function NotificationsPage() {
   const clearAll = async () => {
     if (!user || filtered.length === 0) return;
     // Only clear what the user can see. Previously this deleted every row
-    // for the user regardless of which type/read filter was active — easy
+    // for the user regardless of which type/read filter was active - easy
     // way to nuke notifications the user didn't intend to lose. Build the
     // query off the same predicates that produced `filtered`.
     setBusy(true);

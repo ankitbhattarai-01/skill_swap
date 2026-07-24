@@ -131,7 +131,7 @@ function SignupPage() {
 
   useEffect(() => {
     if (authLoading || !user) return;
-    // Already signed in — don't show the signup form. Resolve against the
+    // Already signed in - don't show the signup form. Resolve against the
     // onboarded flag so a returning user doesn't flash the onboarding wizard
     // before being bounced back to /dashboard.
     let cancelled = false;
@@ -169,7 +169,7 @@ function SignupPage() {
     }
   };
 
-  // If we already have a user, don't paint the signup form — the useEffect
+  // If we already have a user, don't paint the signup form - the useEffect
   // above will navigate them away on the next tick. Showing a loader prevents
   // the "form flashes then disappears" jank.
   if (!authLoading && user) {

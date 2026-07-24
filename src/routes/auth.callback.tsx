@@ -25,7 +25,7 @@ function AuthCallbackPage() {
   const { user, loading } = useAuth();
   const navigatedRef = useRef(false);
 
-  // Drive the exchange ourselves too — exchangeAuthCodeFromUrl dedupes with
+  // Drive the exchange ourselves too - exchangeAuthCodeFromUrl dedupes with
   // AuthProvider's call so this is safe. Without this, hard refreshes that
   // land directly on /auth/callback (skipping the provider's first mount) get
   // stuck on the skeleton.

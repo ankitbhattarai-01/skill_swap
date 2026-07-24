@@ -113,8 +113,8 @@ function CreditsPage() {
   const { data: liveCreditBalance } = useMyCreditBalance();
   const [profile, setProfile] = useState<Profile | null>(null);
   // Mirrors `profile` so loadCredits can tell (without adding it as a dep)
-  // whether the page already has painted content — from a previous load or
-  // from the cache-hydration effect below — and skip re-showing the skeleton
+  // whether the page already has painted content - from a previous load or
+  // from the cache-hydration effect below - and skip re-showing the skeleton
   // on a background revalidation.
   const profileRef = useRef<Profile | null>(null);
   profileRef.current = profile;
@@ -125,7 +125,7 @@ function CreditsPage() {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/credits" } });
     }
-    // user?.id is sufficient — the redirect only cares whether a user exists.
+    // user?.id is sufficient - the redirect only cares whether a user exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, navigate, user?.id]);
 
@@ -190,7 +190,7 @@ function CreditsPage() {
         const session = row.sessions;
         const description = row.description ?? "";
         // Escrow movements: a hold sets credits aside, a refund returns them.
-        // Neither is real income/spend — they must not land in the earned card,
+        // Neither is real income/spend - they must not land in the earned card,
         // and a hold+refund pair has to net to zero in the spent card.
         const isRefund = description.startsWith("Refund");
         const isHold = description === "Held for upcoming session";
@@ -300,7 +300,7 @@ function CreditsPage() {
     } finally {
       setLoading(false);
     }
-    // user.id is the only field read above — depending on the whole user object
+    // user.id is the only field read above - depending on the whole user object
     // re-created loadCredits on every auth event, which made the
     // useEffect(loadCredits) below refire and double-fetch the page on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -308,7 +308,7 @@ function CreditsPage() {
 
   // Hydrate from the last successful snapshot before the network round-trip
   // resolves, so a revisit within the TTL paints real numbers immediately
-  // instead of the skeleton — same trade-off dashboard/explore already make.
+  // instead of the skeleton - same trade-off dashboard/explore already make.
   useEffect(() => {
     if (!user) return;
     const cache = getCreditsCache(user.id);
@@ -316,7 +316,7 @@ function CreditsPage() {
     setProfile(cache.profile);
     setTransactions(cache.transactions);
     setLoading(false);
-    // user?.id only — see the auth-rotation note on loadCredits above.
+    // user?.id only - see the auth-rotation note on loadCredits above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -369,7 +369,7 @@ function CreditsPage() {
     [transactions],
   );
 
-  // Earned counts teaching income only — refunds (escrow returning your own
+  // Earned counts teaching income only - refunds (escrow returning your own
   // credits) are not earnings.
   const totalEarned = useMemo(
     () =>

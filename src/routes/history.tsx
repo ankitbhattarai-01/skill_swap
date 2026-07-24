@@ -37,7 +37,7 @@ import type { Enums } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
 // Icons are deliberately rare on this page: only the join button keeps one,
 // because it is the single action people hunt for. Everything else is plain
-// text — a button per icon made the list read like a generated template.
+// text - a button per icon made the list read like a generated template.
 import { ChevronDown, Loader2, Video } from "lucide-react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors";
@@ -45,7 +45,7 @@ import { fetchReadySessionNotes, type SessionNotesRow } from "@/lib/session-note
 import { downloadSessionNotesPdf } from "@/lib/session-notes-pdf";
 
 // Lazy: SessionRequestDialog pulls in react-day-picker via the Calendar UI.
-// Keeping it out of the history route chunk strips ~40–60kb from first paint
+// Keeping it out of the history route chunk strips ~40-60kb from first paint
 // since the rebook dialog only mounts when a user actually opens it.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
@@ -159,7 +159,7 @@ function SessionsPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const invalidateCreditBalance = useInvalidateMyCreditBalance();
-  // "Book again" on a past session opens a code-split dialog — fetch it while
+  // "Book again" on a past session opens a code-split dialog - fetch it while
   // the list is idle rather than on the click.
   useEffect(() => {
     warmBookingDialogs();
@@ -282,7 +282,7 @@ function SessionsPage() {
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
-    // user?.id only — auth events rotate the user object reference even when
+    // user?.id only - auth events rotate the user object reference even when
     // the underlying user hasn't changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -582,7 +582,7 @@ function SessionsPage() {
               </h2>
               <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
                 {filter === "all"
-                  ? "Once you book a session — or someone books you — it shows up here."
+                  ? "Once you book a session, or someone books you, it shows up here."
                   : "Try another filter, or book something new."}
               </p>
               <Button variant="hero" className="mt-5" asChild>

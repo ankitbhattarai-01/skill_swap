@@ -87,8 +87,8 @@ function VideoCallPage() {
   const [loading, setLoading] = useState(true);
   const [callReady, setCallReady] = useState(false);
   // The scrim only hides Jitsi's initial near-black loading flash. It must
-  // lift the moment the iframe paints *any* interactive UI — the prejoin/join
-  // controls or the moderator Google login — not wait for `callReady`
+  // lift the moment the iframe paints *any* interactive UI - the prejoin/join
+  // controls or the moderator Google login - not wait for `callReady`
   // (videoConferenceJoined), which never fires while the user is still sitting
   // on those pre-join screens, leaving the scrim covering the controls.
   const [connecting, setConnecting] = useState(true);
@@ -183,7 +183,7 @@ function VideoCallPage() {
         const profiles = new Map((people ?? []).map((p) => [p.id, p]));
 
         // meet_link is locked at accept time (UPDATE grant revoked). The
-        // real Jitsi URL is always derived from sessionId — meet_link is just
+        // real Jitsi URL is always derived from sessionId - meet_link is just
         // the internal /video/<id> deep link.
         const roomLink = getVideoRoomUrl({
           link: row.meet_link,
@@ -221,7 +221,7 @@ function VideoCallPage() {
       alive = false;
       controller.abort();
     };
-    // user?.id only — auth token refreshes rotate the user object reference
+    // user?.id only - auth token refreshes rotate the user object reference
     // without changing the user. Depending on `user` re-ran this load, which
     // produced a new `session`/`viewer` object and re-initialized the Jitsi
     // iframe mid-call, kicking the user out of the conference.
@@ -236,7 +236,7 @@ function VideoCallPage() {
   // Ring the other party once when we join, and play a ringback ("calling…")
   // tone to ourselves while we wait for them to pick up. The ringback is
   // stopped as soon as another participant is detected in the room (see the
-  // Jitsi effect's participant handlers), on decline, on timeout, or unmount —
+  // Jitsi effect's participant handlers), on decline, on timeout, or unmount -
   // so the answerer, who joins to an already-present caller, hears at most a
   // single burst.
   const ringedRef = useRef(false);
@@ -259,7 +259,7 @@ function VideoCallPage() {
       callerName: viewer.displayName,
       skillName: session.skills?.name ?? null,
     }).catch(() => {
-      // Realtime not available — silently skip; the other party can still
+      // Realtime not available - silently skip; the other party can still
       // open the call from the dashboard "Join" button.
     });
     return () => {
@@ -272,7 +272,7 @@ function VideoCallPage() {
   // doesn't sit indefinitely in an empty Jitsi room.
   //
   // Previously this used Supabase Realtime Broadcast on a per-session
-  // channel — broadcast has no sender authentication, so anyone with the
+  // channel - broadcast has no sender authentication, so anyone with the
   // session id could push a fake decline. We now subscribe to
   // postgres_changes on call_decline_signals (RLS-gated to participants),
   // and only act when the inserted row's decliner is the counterparty.
@@ -345,7 +345,7 @@ function VideoCallPage() {
       recordLeave();
       // If a recording is still running when the call ends, hold the user here
       // while we stop, upload, and generate. Navigating immediately would
-      // unmount the recorder mid-flight and throw the capture away — the
+      // unmount the recorder mid-flight and throw the capture away - the
       // effect cleanup calls cancel(). The overlay below explains the wait.
       if (notesRecorderRef.current.isActive) {
         void notesRecorderRef.current.stopAndGenerate().finally(goToSession);
@@ -359,7 +359,7 @@ function VideoCallPage() {
       );
       setSharing(on);
     };
-    // The other party is here — stop ringing out to ourselves.
+    // The other party is here - stop ringing out to ourselves.
     const handleParticipantJoined = () => {
       stopRingback();
     };
@@ -462,7 +462,7 @@ function VideoCallPage() {
       api.addListener("participantJoined", handleParticipantJoined);
       // Lift the scrim once the iframe has painted its UI (prejoin/join
       // controls, moderator login, or the conference itself), rather than
-      // waiting on videoConferenceJoined — otherwise the scrim covers the
+      // waiting on videoConferenceJoined - otherwise the scrim covers the
       // very controls the user needs to tap to get into the call.
       const iframe = api.getIFrame();
       if (iframe) {
@@ -499,7 +499,7 @@ function VideoCallPage() {
         api?.removeListener("participantJoined", handleParticipantJoined);
         api?.dispose();
       } catch {
-        // ignore — disposed iframe may already be detached
+        // ignore - disposed iframe may already be detached
       }
       apiRef.current = null;
       setCallReady(false);
@@ -515,7 +515,7 @@ function VideoCallPage() {
 
   // Refuse to render the call surface when no authenticated provider is
   // configured. The previous behaviour fell back to public meet.jit.si with
-  // a deterministic room name — anyone with that URL could enter the room
+  // a deterministic room name - anyone with that URL could enter the room
   // without joining the app. Now we treat "no JaaS" the same as the admin
   // disable flag and route the user back to chat instead.
   if (!videoCallsEnabled || !isJaasMode()) {
@@ -644,7 +644,7 @@ function VideoCallPage() {
         {connecting && (
           // Scrim sits on top of whatever Jitsi has painted into the iframe
           // (often a near-black backdrop), so we tint it with a theme-aware
-          // wash and lift the text to foreground/80 instead of muted —
+          // wash and lift the text to foreground/80 instead of muted -
           // muted-foreground washed out against the dark iframe.
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-sm font-medium text-foreground/80 backdrop-blur-sm">
             Connecting to your secure SkillSwap room…

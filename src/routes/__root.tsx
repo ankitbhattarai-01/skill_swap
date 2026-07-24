@@ -125,7 +125,7 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 // Single QueryClient for the whole app. Defaults keep network noise low:
 // data is fresh for 30s before re-fetch, retries fail fast (1 retry), and
-// we don't auto-refetch on every focus change — most SkillSwap data is
+// we don't auto-refetch on every focus change - most SkillSwap data is
 // authoritatively pushed through realtime channels.
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -166,7 +166,7 @@ function RootComponent() {
             {/* These mount globally and subscribe to realtime channels.
                 Wrapping each in its own boundary means a crash in one
                 (e.g. a malformed realtime payload) can't blank the whole
-                app — the boundary swallows it and the rest keeps working. */}
+                app - the boundary swallows it and the rest keeps working. */}
             <ErrorBoundary label="CreditBalanceRealtimeBridge">
               <CreditBalanceRealtimeBridge />
             </ErrorBoundary>

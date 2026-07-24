@@ -844,7 +844,7 @@ const PII_FIELD_ORDER = [
 const PII_DATE_FIELDS = new Set(["created_at", "last_sign_in_at"]);
 
 function formatPiiValue(key: string, value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "N/A";
   if (PII_DATE_FIELDS.has(key)) return formatDate(value as string);
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);

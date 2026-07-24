@@ -221,7 +221,7 @@ function AdminReportsPage() {
     }
   }, [canRead, navigate, permissionsQuery.isLoading, user]);
 
-  // Reload happens automatically via TanStack Query — surface RPC errors as a
+  // Reload happens automatically via TanStack Query - surface RPC errors as a
   // toast (the old hand-rolled fetch did the same).
   useEffect(() => {
     if (!reportsQuery.error) return;

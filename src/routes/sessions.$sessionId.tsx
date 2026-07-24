@@ -75,7 +75,7 @@ async function querySessionRow(sessionId: string) {
 
 // Same trick dashboard/explore/credits use: keep the last successful payload in
 // sessionStorage so re-entering a session paints instantly instead of sitting
-// on the skeleton for the whole fetch. The fetch still runs on every mount —
+// on the skeleton for the whole fetch. The fetch still runs on every mount -
 // the snapshot only decides whether the user stares at placeholders while it
 // does. Scoped to the viewer so a cached payload can never render for someone
 // who isn't a participant.
@@ -153,7 +153,7 @@ function SessionPage() {
     const token = ++loadTokenRef.current;
     const isCurrent = () => token === loadTokenRef.current;
 
-    // Paint the last known payload first. Everything below still runs — this
+    // Paint the last known payload first. Everything below still runs - this
     // only decides whether the wait happens behind a skeleton or behind real
     // content. It also lets the two child cards (RescheduleSection,
     // SessionNotesPanel) mount and start their own queries immediately rather
@@ -166,7 +166,7 @@ function SessionPage() {
         hasSessionRef.current = true;
       }
     }
-    // Never blank out content we're already showing — a refetch after
+    // Never blank out content we're already showing - a refetch after
     // accept/cancel/reschedule used to drop the whole page back to the
     // skeleton and read as a full page reload.
     setLoading(!hasSessionRef.current);
@@ -239,7 +239,7 @@ function SessionPage() {
       };
       setSession(nextSession);
       hasSessionRef.current = true;
-      // Everything the page needs to render is in hand — the plan card is the
+      // Everything the page needs to render is in hand - the plan card is the
       // only thing still outstanding, and it's optional, so don't hold the
       // first paint for it.
       setLoading(false);
@@ -267,14 +267,14 @@ function SessionPage() {
     setSession(null);
     setPlanSiblings([]);
     void loadSession();
-    // user?.id (not user) — auth token refreshes rotate the user object
+    // user?.id (not user) - auth token refreshes rotate the user object
     // reference without changing the user; depending on the object re-ran
     // this whole load (and its profile fan-out) on every refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, user?.id]);
 
   // Has the scheduled start already passed? After that point cancel_session()
-  // no longer blanket-refunds — it routes through attendance-based settlement
+  // no longer blanket-refunds - it routes through attendance-based settlement
   // (see migration 20260523010000_fix_cancel_refund_exploit.sql), so the UI
   // copy must not promise a refund.
   const sessionStartPassed = Boolean(
@@ -285,7 +285,7 @@ function SessionPage() {
     if (!session || busy) return;
     setBusy("accept");
     try {
-      // meet_link is derived server-side by accept_session() — the second arg
+      // meet_link is derived server-side by accept_session() - the second arg
       // is accepted for backward compatibility but ignored. We pass null so
       // there's no chance of a teacher-supplied URL leaking through.
       const { error } = await supabase.rpc("accept_session", {
@@ -330,7 +330,7 @@ function SessionPage() {
       if (error) return toast.error(error.message);
       markSelfAction(session.id, ["session_completed"]);
       void invalidateCreditBalance();
-      // Completion changes streak/momentum signals — regenerate suggestions.
+      // Completion changes streak/momentum signals - regenerate suggestions.
       void invalidateAiSuggestionsCache();
       // During pending_review this routes through the attendance rule, so the
       // outcome might be a refund (no-show) rather than a transfer. Use a
@@ -361,7 +361,7 @@ function SessionPage() {
       toast(
         wasOpenEscrow
           ? sessionStartPassed
-            ? "Session ended. Credits were settled based on attendance — see history for the outcome."
+            ? "Session ended. Credits were settled based on attendance. See history for the outcome."
             : "Session cancelled. Credits refunded."
           : "Request cancelled.",
       );
@@ -402,7 +402,7 @@ function SessionPage() {
       toast.error("Invalid date and time");
       return;
     }
-    // 60s buffer matches RescheduleSection — accounts for the user typing the
+    // 60s buffer matches RescheduleSection - accounts for the user typing the
     // current minute exactly. The DB trigger is still authoritative.
     if (scheduledAt.getTime() < Date.now() - 60_000) {
       toast.error("Pick a time in the future");
@@ -457,7 +457,7 @@ function SessionPage() {
   const isAcceptedSession = session.status === "accepted" || session.status === "active";
   const isInReview = session.status === "pending_review";
   const isDisputed = session.status === "disputed";
-  // Finished for good — nothing left to join, schedule, or act on. These
+  // Finished for good - nothing left to join, schedule, or act on. These
   // sessions previously still rendered the live "Video room" card ("your
   // secure video room is ready") which is both wrong and the main reason the
   // completed view read as a stack of empty white boxes.
@@ -469,7 +469,7 @@ function SessionPage() {
   // before the scheduled end, AND only after the session's halfway point
   // (scheduled_at + duration/2) has passed. The server
   // (private.complete_session) re-checks the same time gate AND requires
-  // BOTH parties to have attended ≥ 50% of the planned duration via Jitsi —
+  // BOTH parties to have attended ≥ 50% of the planned duration via Jitsi -
   // those checks gate against Sybil farming where fake learners funnel
   // credits to a main account without any real teaching.
   const earlyReleaseUnlockAt =
@@ -477,7 +477,7 @@ function SessionPage() {
       ? Date.parse(session.scheduled_at) + (session.duration_minutes * 60_000) / 2
       : null;
   const earlyReleaseUnlocked = earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
-  // Swaps hold no escrow, so there are no credits to release early — the cron
+  // Swaps hold no escrow, so there are no credits to release early - the cron
   // sweeper auto-completes swap legs after their scheduled end.
   const canEarlyRelease = !isSwap && isAcceptedSession && !isTeacher && earlyReleaseUnlocked;
   const joinAllowed = canJoinSession(session.scheduled_at, session.duration_minutes);
@@ -499,7 +499,7 @@ function SessionPage() {
   return (
     <div className="relative min-h-screen flex flex-col">
       {/* Ambient page wash. Without it the white glass cards sit on a plain
-          white page and the whole detail view reads as a blank sheet — most
+          white page and the whole detail view reads as a blank sheet - most
           noticeable on completed sessions, where the cards carry little
           content. Light mode only; dark mode gets its depth from surfaces. */}
       <div
@@ -654,7 +654,7 @@ function SessionPage() {
                       ? "Pick a date and time to let the learner know when to join."
                       : "The teacher hasn't scheduled this session yet."}
               </p>
-              {/* Direct schedule edit only on pending sessions — once accepted,
+              {/* Direct schedule edit only on pending sessions - once accepted,
                   changes must go through the two-sided propose_reschedule flow. */}
               {isTeacher && !isSwap && session.status === "pending" && (
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -692,7 +692,7 @@ function SessionPage() {
               )}
             </div>
 
-            {/* Hidden once the session is over — meet_link survives completion,
+            {/* Hidden once the session is over - meet_link survives completion,
                 so this card used to claim the room was "ready" for sessions
                 that had already ended. */}
             {!isFinished && (
@@ -887,7 +887,7 @@ function SessionPage() {
                     isSwap
                       ? "This session is one half of a skill swap, so cancelling calls off both linked sessions. No credits are involved."
                       : sessionStartPassed
-                        ? `The session has already started, so the ${session.credits} escrowed credits are settled based on who attended the call — they may transfer to the teacher, be refunded, or split. There's no blanket refund after the start time.`
+                        ? `The session has already started, so the ${session.credits} escrowed credits are settled based on who attended the call. They may transfer to the teacher, be refunded, or split. There's no blanket refund after the start time.`
                         : `Cancelling will refund the ${session.credits} credits held in escrow back to the learner. You can re-request later if plans change.`
                   }
                   confirmLabel={
@@ -938,7 +938,7 @@ function SessionPage() {
 }
 
 // Quiet, consistent card heading: a solid title and an optional muted note.
-// Deliberately no icon or colored icon-chip — a symbol on every card reads as
+// Deliberately no icon or colored icon-chip - a symbol on every card reads as
 // a generated template rather than a considered layout.
 function SectionTitle({
   note,

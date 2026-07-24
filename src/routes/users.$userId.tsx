@@ -38,7 +38,7 @@ import { toast } from "sonner";
 import { VerifiedTick } from "@/components/VerifiedTick";
 
 // Lazy: the dialog pulls in react-day-picker via the Calendar UI. Keeping it
-// out of the route chunk strips ~40–60kb from first paint — it isn't open on
+// out of the route chunk strips ~40-60kb from first paint - it isn't open on
 // initial render. It handles both single and multi-session requests.
 const SessionRequestDialog = lazy(() =>
   import("@/components/SessionRequestDialog").then((m) => ({ default: m.SessionRequestDialog })),
@@ -85,7 +85,7 @@ function PublicUserPage() {
   const { userId } = Route.useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  // This page exists to be booked from — warm the request/swap dialogs as soon
+  // This page exists to be booked from - warm the request/swap dialogs as soon
   // as it settles so the first click opens instantly.
   useEffect(() => {
     warmBookingDialogs();
@@ -237,7 +237,7 @@ function PublicUserPage() {
       alive = false;
       controller.abort();
     };
-    // user?.id only — auth events rotate the user object reference even when
+    // user?.id only - auth events rotate the user object reference even when
     // the underlying user hasn't changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -274,7 +274,7 @@ function PublicUserPage() {
     }
 
     // Chat is decoupled from sessions: open (or lazily create) the
-    // conversation with this user. No session request is created — that
+    // conversation with this user. No session request is created - that
     // stays an explicit action via the "Request session" button.
     setOpeningChat(true);
     const { error } = await getOrCreateConversation(userId);
@@ -359,7 +359,7 @@ function PublicUserPage() {
 
   // Multi-session path: book one ordinary pending session per chosen slot. Each
   // shows up for the teacher to accept individually, exactly like a single
-  // request — credits are only escrowed as each session is accepted.
+  // request - credits are only escrowed as each session is accepted.
   const requestMultiple = async (params: MultiSessionParams): Promise<void> => {
     if (!user || !requestSkill) return;
     setRequesting(true);
@@ -391,7 +391,7 @@ function PublicUserPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 md:py-8 space-y-4 md:space-y-6">
-        {/* Hero — calm glass shell with a single soft brand wash */}
+        {/* Hero - calm glass shell with a single soft brand wash */}
         <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10">
           <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
           <div className="relative p-5 md:p-8">
@@ -612,10 +612,10 @@ function PublicUserPage() {
           )}
         </section>
       </main>
-      {/* Which skill? — a light first step when a teacher offers several, so
+      {/* Which skill? - a light first step when a teacher offers several, so
           the hero "Request session" button doesn't guess for the learner. */}
       <Dialog open={skillPickerOpen} onOpenChange={setSkillPickerOpen}>
-        {/* Same header shape as SessionRequestDialog — this is the step right
+        {/* Same header shape as SessionRequestDialog - this is the step right
             before it, so the two must read as one flow. */}
         <DialogContent className="max-w-[380px] gap-3.5 p-4">
           <DialogHeader className="space-y-1">

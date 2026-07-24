@@ -147,7 +147,7 @@ function persistLastOpened(userId: string, map: Record<string, string>) {
 
 const OPEN_STATUSES = new Set(["accepted", "active"]);
 // Chat is decoupled from sessions: a thread is a conversation (one row per
-// user pair). Sessions are attached for context only — they drive the session
+// user pair). Sessions are attached for context only - they drive the session
 // dividers, the Teaching/Learning split, and attachment gating. `activeSession`
 // (accepted/active) unlocks attachments and lifts the pre-acceptance caps;
 // `chatSession` prefers it, falling back to the most recent pending session for
@@ -161,12 +161,12 @@ type ThreadItem = {
   otherUserId: string;
   otherName: string;
   otherAvatar: string | null;
-  sessions: SessionRow[]; // ascending by created_at — chronological so Session 1 is oldest
+  sessions: SessionRow[]; // ascending by created_at - chronological so Session 1 is oldest
   activeSession: SessionRow | null;
   chatSession: SessionRow | null;
   latestSession: SessionRow | null; // null = chat-only conversation, no session
   lastMessage: MessagePreview | null;
-  lastActivityAt: string; // last_message_at | latest session | conversation created — for sorting
+  lastActivityAt: string; // last_message_at | latest session | conversation created - for sorting
 };
 
 type FilterKey = "all" | "active" | "closed";
@@ -181,7 +181,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 // A swap thread holds sessions in both roles at once, so anything rendered
 // inside a role tab (the status filter, list sublines, chat header) derives
 // its active/pending/latest session from only the sessions matching that
-// tab's role — never from the thread-wide pick.
+// tab's role - never from the thread-wide pick.
 function roleSessionView(t: ThreadItem, userId: string, tab: RoleTab) {
   const sessions = t.sessions.filter((s) =>
     tab === "teaching" ? s.teacher_id === userId : s.learner_id === userId,
@@ -238,7 +238,7 @@ function MessagesIndexPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  // Synchronous mirror of `sending` — the state setter is async, so two rapid
+  // Synchronous mirror of `sending` - the state setter is async, so two rapid
   // submits could both pass an `if (sending)` check before the first re-render.
   const sendingRef = useRef(false);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
@@ -317,7 +317,7 @@ function MessagesIndexPage() {
     setHiddenIds(loadHiddenMessageIds(user.id));
     setLastOpened(loadLastOpened(user.id));
     void refreshQuota();
-    // user?.id only — auth events rotate the user object reference even when
+    // user?.id only - auth events rotate the user object reference even when
     // the underlying user hasn't changed; depending on `user` refires every
     // such effect 3× during bootstrap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -409,7 +409,7 @@ function MessagesIndexPage() {
     };
   }, []);
 
-  // Mobile viewport adjustments — unchanged from earlier.
+  // Mobile viewport adjustments - unchanged from earlier.
   useEffect(() => {
     document.body.classList.toggle("messages-chat-open", Boolean(selectedUserId));
     const root = document.documentElement;
@@ -460,7 +460,7 @@ function MessagesIndexPage() {
         // Threads are conversations now. We still load the user's sessions to
         // attach session context (dividers, role, attachment gating) onto the
         // matching conversation. A pair may have sessions but no conversation
-        // yet (a freshly requested session with no chat) — those still show,
+        // yet (a freshly requested session with no chat) - those still show,
         // with conversationId null until the first message lazily creates one.
         const [{ data: sessionsData }, { data: conversationsData }] = await Promise.all([
           supabase
@@ -531,7 +531,7 @@ function MessagesIndexPage() {
         );
         const conversationIds = Array.from(conversationByOther.values()).map((c) => c.id);
 
-        // Kick the last-message previews off *now* — they only need the
+        // Kick the last-message previews off *now* - they only need the
         // conversation ids from the round trip above, not the profile lookup
         // below. Firing them in parallel with profiles (instead of after) and
         // applying them independently of avatar signing lets the inbox sublines
@@ -566,7 +566,7 @@ function MessagesIndexPage() {
               )
               .in("conversation_id", conversationIds)
               .order("created_at", { ascending: false })
-              // Sidebar preview cap only — the active thread has its own paginated query.
+              // Sidebar preview cap only - the active thread has its own paginated query.
               .limit(Math.min(conversationIds.length * 5, 200))
               .abortSignal(controller.signal);
             for (const m of windowed ?? []) {
@@ -581,7 +581,7 @@ function MessagesIndexPage() {
               }
             }
           } catch {
-            // Aborted or transient — return whatever we accumulated.
+            // Aborted or transient - return whatever we accumulated.
           }
           return lastMsgByConversation;
         })();
@@ -637,7 +637,7 @@ function MessagesIndexPage() {
 
         // Sort on the activity timestamp we already have (conversation
         // last_message_at ?? latest session) so the very first paint is already
-        // in final order — previews then fill the sublines in place without
+        // in final order - previews then fill the sublines in place without
         // reshuffling the list.
         baseThreads.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
 
@@ -645,7 +645,7 @@ function MessagesIndexPage() {
         setThreads(baseThreads);
         setLoadingList(false);
 
-        // Drop previews in the moment they arrive — no longer blocked behind
+        // Drop previews in the moment they arrive - no longer blocked behind
         // avatar signing (the slowest, least important leg).
         void previewsPromise.then((lastMsgByConversation) => {
           if (!alive || lastMsgByConversation.size === 0) return;
@@ -681,7 +681,7 @@ function MessagesIndexPage() {
               );
             })
             .catch(() => {
-              // Signing failed — initials-based avatars stay in place.
+              // Signing failed - initials-based avatars stay in place.
             });
         }
       } catch (error) {
@@ -697,7 +697,7 @@ function MessagesIndexPage() {
       alive = false;
       controller.abort();
     };
-    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // user?.id only - see the auth-rotation note on the bootstrap effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -713,7 +713,7 @@ function MessagesIndexPage() {
         replace: true,
       });
     }
-    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // user?.id only - see the auth-rotation note on the bootstrap effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, search.s, search.u, threads, navigate]);
 
@@ -729,7 +729,7 @@ function MessagesIndexPage() {
 
   // Auto-switch tab to where the selected thread lives. A swap thread lives
   // under both tabs, so only switch when the current tab doesn't show it.
-  // A chat-only conversation (no session) has no fixed role — leave the tab
+  // A chat-only conversation (no session) has no fixed role - leave the tab
   // as-is.
   useEffect(() => {
     if (!selectedThread || !user || !selectedThread.sessions.length) return;
@@ -752,7 +752,7 @@ function MessagesIndexPage() {
 
   // The selected thread's conversation id. Depending on this (instead of the
   // whole `selectedThread` object) keeps the chat-load effect from refiring
-  // when only `lastMessage` updates — otherwise every realtime INSERT would
+  // when only `lastMessage` updates - otherwise every realtime INSERT would
   // re-sort threads, hand us a new `selectedThread` reference, and trigger a
   // skeleton-flicker + scroll-reset on every send.
   const selectedConversationId = selectedThread?.conversationId ?? null;
@@ -956,7 +956,7 @@ function MessagesIndexPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-    // user?.id only — see the auth-rotation note on the bootstrap effect above.
+    // user?.id only - see the auth-rotation note on the bootstrap effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, conversationIdsKey, markOpened]);
 
@@ -1139,7 +1139,7 @@ function MessagesIndexPage() {
         );
         if (onThread()) selectedConversationIdRef.current = newId;
       }
-      if (!conversationId) return; // unreachable — narrows the type to string
+      if (!conversationId) return; // unreachable - narrows the type to string
 
       const stagedSnapshot = staged;
       const tempId = `temp-${
@@ -1214,7 +1214,7 @@ function MessagesIndexPage() {
         void refreshQuota();
       }
       if (error) {
-        // The object was uploaded but its message row never landed — remove it
+        // The object was uploaded but its message row never landed - remove it
         // so it doesn't become an unreachable orphan in storage.
         if (attachmentMeta?.path) void removeMessageAttachment(attachmentMeta.path);
         restoreComposer();
@@ -1243,7 +1243,7 @@ function MessagesIndexPage() {
   if (authLoading || (loadingList && threads.length === 0)) {
     return <PageLoading variant="messages" />;
   }
-  // Auth resolved but no user — the redirect effect is about to fire.
+  // Auth resolved but no user - the redirect effect is about to fire.
   // Without this gate, the empty messages shell would render for a tick
   // before /login takes over.
   if (!user) return null;
@@ -1253,7 +1253,7 @@ function MessagesIndexPage() {
   // message OR a pending request). Caps apply and attachments stay locked.
   const preAcceptance = Boolean(selectedThread) && !selectedThread?.activeSession;
   // The header describes the leg of the relationship matching the tab in
-  // view — for a swap that's one of two live sessions. Thread-wide fallbacks
+  // view - for a swap that's one of two live sessions. Thread-wide fallbacks
   // cover the tick before the tab auto-switch effect runs.
   const headerView = selectedThread ? roleSessionView(selectedThread, user.id, roleTab) : null;
   const headerChatSession = headerView?.chatSession ?? chatSession;
@@ -1812,7 +1812,7 @@ function MessagesIndexPage() {
 function ChatBubbleSkeletons() {
   // A chat can be entirely one person's messages (all on the right), so a
   // two-sided bubble skeleton would paint ghost "received" bubbles on the left
-  // that never materialise — jarring against a right-only thread. There's no
+  // that never materialise - jarring against a right-only thread. There's no
   // way to know the message distribution before it loads, so show a neutral,
   // centered loading indicator that can never contradict the loaded chat.
   return (

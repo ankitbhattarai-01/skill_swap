@@ -10,7 +10,7 @@ import { useAdminPermissions } from "@/lib/admin";
 export const Route = createFileRoute("/admin")({
   // Route-level guard. Runs before the layout component (and any cached child
   // route) mounts, so a non-admin can't briefly see the admin chrome on a
-  // direct navigation. We keep the in-component checks in AdminLayout too —
+  // direct navigation. We keep the in-component checks in AdminLayout too -
   // they cover the auth-loading window and the case where this beforeLoad
   // returned early on the server (Supabase session lives in localStorage and
   // is unavailable to SSR, so we only guard client-side here).

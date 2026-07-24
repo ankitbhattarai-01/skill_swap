@@ -62,14 +62,14 @@ function LoginPage() {
 
   useEffect(() => {
     if (authLoading || !user) return;
-    // Email-verification redirect path takes priority — these users are mid-
+    // Email-verification redirect path takes priority - these users are mid-
     // signup and belong in onboarding, not wherever `search.redirect` points.
     if (emailRedirectPending) {
       toast.success("Email verified. Let's finish your profile.");
       navigate({ to: "/onboarding" });
       return;
     }
-    // Already signed in — don't show the login form. Send them through to the
+    // Already signed in - don't show the login form. Send them through to the
     // post-login destination (defaults to /dashboard via safeRedirectPath).
     let cancelled = false;
     void resolvePostAuthRoute(user.id, search.redirect).then((to) => {
@@ -160,7 +160,7 @@ function LoginPage() {
     }
   };
 
-  // If we already have a user, don't paint the login form — the useEffect
+  // If we already have a user, don't paint the login form - the useEffect
   // above will navigate them away on the next tick. Showing a loader prevents
   // the "form flashes then disappears" jank.
   if (!authLoading && user) {
