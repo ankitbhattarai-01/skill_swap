@@ -169,6 +169,45 @@ const LEVEL_COLORS: Record<string, string> = {
   advanced: "bg-brand-purple/15 text-brand-purple border-brand-purple/25",
 };
 
+type SkillLevel = "basic" | "intermediate" | "advanced";
+const LEVEL_ORDER: SkillLevel[] = ["basic", "intermediate", "advanced"];
+const LEVEL_LABELS: Record<SkillLevel, string> = {
+  basic: "Basic",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+};
+const levelRank = (level: string) => LEVEL_ORDER.indexOf(level as SkillLevel);
+
+// Same rule the onboarding step enforces: a skill can sit in both lists, but you
+// can't learn what you already teach at the same (or lower) level - learning
+// must be at least one level above teaching. `relation` is read from the
+// perspective of the list being edited: learning entries must stay "above" the
+// matching teach level, teaching entries must stay "below" the matching learn
+// level. With no matching cross entry, every level is allowed.
+function allowedLevelsFor(
+  crossLevel: string | undefined,
+  relation: "above" | "below",
+): SkillLevel[] {
+  if (!crossLevel) return LEVEL_ORDER;
+  const crossRank = levelRank(crossLevel);
+  return LEVEL_ORDER.filter((level) =>
+    relation === "above" ? levelRank(level) > crossRank : levelRank(level) < crossRank,
+  );
+}
+
+// Options for an existing entry's level select: the constrained set, but always
+// keep the entry's own current level so the trigger never renders blank and a
+// legacy row saved before this rule existed can still be corrected.
+function levelOptionsFor(
+  current: string,
+  crossLevel: string | undefined,
+  relation: "above" | "below",
+): SkillLevel[] {
+  const allowed = allowedLevelsFor(crossLevel, relation);
+  if (allowed.includes(current as SkillLevel)) return allowed;
+  return LEVEL_ORDER.filter((l) => allowed.includes(l) || l === current);
+}
+
 const LEARNING_METHODS: LearningMode[] = [
   "teaching",
   "mentorship",
@@ -782,7 +821,7 @@ function ProfilePage() {
   const addTeach = async (nameOverride?: string) => {
     if (!user) return;
     const selectedTeachMode = teachMode || "teaching";
-    const selectedTeachLevel = teachLevel || "basic";
+    let selectedTeachLevel: SkillLevel = teachLevel || "basic";
     const skill = await findSkill(nameOverride ?? teachInput);
     if (!skill) return;
     const existing = teaching.find((t) => t.skill.id === skill.id);
@@ -795,6 +834,19 @@ function ProfilePage() {
       setTeachMode("");
       setTeachLevel("");
       return;
+    }
+    // Keep teaching at least one level below the same skill on the learn side
+    // (e.g. learning Guitar at intermediate ⇒ teach basic only).
+    const learnedSame = learning.find((l) => l.skill.id === skill.id);
+    if (learnedSame) {
+      const maxRank = levelRank(learnedSame.current_level) - 1;
+      if (maxRank < levelRank("basic")) {
+        toast.error(
+          `You're learning ${skill.name} at basic level, so teach it only once you're past the level you're learning.`,
+        );
+        return;
+      }
+      if (levelRank(selectedTeachLevel) > maxRank) selectedTeachLevel = LEVEL_ORDER[maxRank];
     }
     let methodSavedInDatabase = true;
     let result = await supabase
@@ -864,7 +916,7 @@ function ProfilePage() {
   const addLearn = async (nameOverride?: string) => {
     if (!user) return;
     const selectedLearnMode = learnMode || "teaching";
-    const selectedLearnLevel = learnLevel || "basic";
+    let selectedLearnLevel: SkillLevel = learnLevel || "basic";
     const skill = await findSkill(nameOverride ?? learnInput);
     if (!skill) return;
     const existing = learning.find((t) => t.skill.id === skill.id);
@@ -877,6 +929,19 @@ function ProfilePage() {
       setLearnMode("");
       setLearnLevel("");
       return;
+    }
+    // Learning must be at least one level above the same skill on the teach side
+    // (e.g. teaching basic ⇒ learn intermediate/advanced, never basic).
+    const taughtSame = teaching.find((t) => t.skill.id === skill.id);
+    if (taughtSame) {
+      const minRank = levelRank(taughtSame.level) + 1;
+      if (minRank > levelRank("advanced")) {
+        toast.error(
+          `You already teach ${skill.name} at advanced level, and there's no higher level to learn.`,
+        );
+        return;
+      }
+      if (levelRank(selectedLearnLevel) < minRank) selectedLearnLevel = LEVEL_ORDER[minRank];
     }
     let methodSavedInDatabase = true;
     let result = await supabase
@@ -970,6 +1035,15 @@ function ProfilePage() {
   const updateTeachLevel = async (id: string, level: string) => {
     const lvl = level as "basic" | "intermediate" | "advanced";
     const row = teaching.find((t) => t.id === id);
+    // Teaching must stay at least one level below the same skill on the learn
+    // side, so a user can't set teach and learn to the same level.
+    const learnedSame = row && learning.find((l) => l.skill.id === row.skill.id);
+    if (learnedSame && levelRank(lvl) >= levelRank(learnedSame.current_level)) {
+      toast.error(
+        `You're learning ${row!.skill.name} at ${learnedSame.current_level} level. Teach it below the level you're learning.`,
+      );
+      return;
+    }
     const { error } = await supabase
       .from("user_teaching_skills")
       .update({ level: lvl })
@@ -999,6 +1073,16 @@ function ProfilePage() {
   };
   const updateLearnLevel = async (id: string, level: string) => {
     const lvl = level as "basic" | "intermediate" | "advanced";
+    const row = learning.find((t) => t.id === id);
+    // Learning must stay at least one level above the same skill on the teach
+    // side (mirror of the guard in updateTeachLevel).
+    const taughtSame = row && teaching.find((t) => t.skill.id === row.skill.id);
+    if (taughtSame && levelRank(lvl) <= levelRank(taughtSame.level)) {
+      toast.error(
+        `You teach ${row!.skill.name} at ${taughtSame.level} level. Learn it above the level you teach.`,
+      );
+      return;
+    }
     const { error } = await supabase
       .from("user_learning_skills")
       .update({ current_level: lvl })
@@ -1175,6 +1259,24 @@ function ProfilePage() {
     (learning.length ? 25 : 0);
   const hasProfileChanges = nameBioDirty;
 
+  // Levels offered in each "add a skill" form depend on whether the typed skill
+  // already sits in the opposite list, matching the onboarding constraint.
+  const typedTeachSkillId = allSkills.find(
+    (s) => s.name.trim().toLowerCase() === teachInput.trim().toLowerCase(),
+  )?.id;
+  const teachAddLevels = typedTeachSkillId
+    ? allowedLevelsFor(
+        learning.find((l) => l.skill.id === typedTeachSkillId)?.current_level,
+        "below",
+      )
+    : LEVEL_ORDER;
+  const typedLearnSkillId = allSkills.find(
+    (s) => s.name.trim().toLowerCase() === learnInput.trim().toLowerCase(),
+  )?.id;
+  const learnAddLevels = typedLearnSkillId
+    ? allowedLevelsFor(teaching.find((t) => t.skill.id === typedLearnSkillId)?.level, "above")
+    : LEVEL_ORDER;
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-4">
@@ -1318,9 +1420,15 @@ function ProfilePage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="basic">Basic</SelectItem>
-                            <SelectItem value="intermediate">Intermediate</SelectItem>
-                            <SelectItem value="advanced">Advanced</SelectItem>
+                            {levelOptionsFor(
+                              t.level,
+                              learning.find((l) => l.skill.id === t.skill.id)?.current_level,
+                              "below",
+                            ).map((lvl) => (
+                              <SelectItem key={lvl} value={lvl}>
+                                {LEVEL_LABELS[lvl]}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <Select
@@ -1411,9 +1519,11 @@ function ProfilePage() {
                       <SelectValue placeholder="Level: Basic" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="basic">Basic</SelectItem>
-                      <SelectItem value="intermediate">Intermediate</SelectItem>
-                      <SelectItem value="advanced">Advanced</SelectItem>
+                      {teachAddLevels.map((lvl) => (
+                        <SelectItem key={lvl} value={lvl}>
+                          {LEVEL_LABELS[lvl]}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Select
@@ -1480,9 +1590,15 @@ function ProfilePage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="basic">Basic</SelectItem>
-                            <SelectItem value="intermediate">Intermediate</SelectItem>
-                            <SelectItem value="advanced">Advanced</SelectItem>
+                            {levelOptionsFor(
+                              t.current_level,
+                              teaching.find((tt) => tt.skill.id === t.skill.id)?.level,
+                              "above",
+                            ).map((lvl) => (
+                              <SelectItem key={lvl} value={lvl}>
+                                {LEVEL_LABELS[lvl]}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <Select
@@ -1573,9 +1689,11 @@ function ProfilePage() {
                       <SelectValue placeholder="Level: Basic" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="basic">Basic</SelectItem>
-                      <SelectItem value="intermediate">Intermediate</SelectItem>
-                      <SelectItem value="advanced">Advanced</SelectItem>
+                      {learnAddLevels.map((lvl) => (
+                        <SelectItem key={lvl} value={lvl}>
+                          {LEVEL_LABELS[lvl]}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Select
