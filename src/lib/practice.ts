@@ -20,7 +20,7 @@ export const DIFFICULTY_LABEL: Record<PracticeLevel, string> = {
   advanced: "Hard",
 };
 
-// Tailwind color classes per difficulty, reusing the app's brand tokens — green
+// Tailwind color classes per difficulty, reusing the app's brand tokens: green
 // for Easy, amber for Medium, red for Hard, LeetCode-style.
 export const DIFFICULTY_TONE: Record<PracticeLevel, { text: string; chip: string; dot: string }> = {
   basic: {
@@ -44,7 +44,7 @@ export type PracticeProblem = {
   position: number;
   prompt: string;
   options: string[];
-  // Practice ships the key so the client can grade instantly — see the header.
+  // Practice ships the key so the client can grade instantly; see the header.
   correctIndex: number;
   explanation: string;
 };
@@ -113,7 +113,7 @@ export function generatePracticeSet(
     skillId,
     level,
     count,
-    // Cap what we send — the function caps again, this just keeps the request small.
+    // Cap what we send; the function caps again, this just keeps the request small.
     avoidPrompts: avoidPrompts.slice(-40),
   });
 }
@@ -144,7 +144,7 @@ function progressKey(skillId: string, level: PracticeLevel) {
 
 // Every counter the user holds, keyed `${skillId}:${level}` for direct lookup
 // while rendering the stat cards. Fail-soft: a missing table (migration not run
-// yet) or a failed request must not take the page down — just show zeroes.
+// yet) or a failed request must not take the page down, so just show zeroes.
 export async function loadPracticeProgress(): Promise<Map<string, PracticeProgress>> {
   const { data, error } = await supabase
     .from("practice_progress")
@@ -167,7 +167,7 @@ export async function loadPracticeProgress(): Promise<Map<string, PracticeProgre
   );
 }
 
-// The skills the user is currently learning — the quick-pick chips on the
+// The skills the user is currently learning: the quick-pick chips on the
 // picker. Deduped and sorted by name.
 export async function loadLearningSkills(userId: string): Promise<PracticeSkill[]> {
   const { data, error } = await supabase
@@ -188,7 +188,7 @@ export async function loadLearningSkills(userId: string): Promise<PracticeSkill[
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Resolve skill names for a set of ids — used to label the "Your progress" list,
+// Resolve skill names for a set of ids, used to label the "Your progress" list,
 // whose rows are keyed only by skill id. Returns a Map<id, name>.
 export async function loadSkillNames(skillIds: string[]): Promise<Map<string, string>> {
   const ids = Array.from(new Set(skillIds));
@@ -198,7 +198,7 @@ export async function loadSkillNames(skillIds: string[]): Promise<Map<string, st
   return new Map((data ?? []).map((row) => [row.id, row.name] as const));
 }
 
-// Catalog search for "practice any skill" — active skills whose name matches,
+// Catalog search for "practice any skill": active skills whose name matches,
 // capped for the dropdown.
 export async function searchSkills(query: string, limit = 12): Promise<PracticeSkill[]> {
   const trimmed = query.trim();

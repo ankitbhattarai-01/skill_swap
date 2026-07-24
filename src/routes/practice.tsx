@@ -186,7 +186,7 @@ function PracticePage() {
         return [...prev, ...more.filter((p) => !have.has(p.prompt.toLowerCase()))];
       });
     } catch {
-      // A failed prefetch is silent — the synchronous fetch in advance() will
+      // A failed prefetch is silent; the synchronous fetch in advance() will
       // surface any real problem if the queue actually empties.
     } finally {
       prefetchingRef.current = false;
@@ -217,7 +217,7 @@ function PracticePage() {
       return;
     }
 
-    // Queue empty and no prefetch landed — fetch synchronously.
+    // Queue empty and no prefetch landed, so fetch synchronously.
     const runId = runIdRef.current;
     setAdvancing(true);
     try {
@@ -277,7 +277,7 @@ function PracticePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6 animate-in fade-in duration-150">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6 animate-in fade-in duration-150">
         {phase === "solving" || phase === "loading" ? (
           <>
             {session && (
@@ -330,17 +330,21 @@ function PracticePage() {
         ) : (
           <>
             {/* Hero + aggregate stats */}
-            <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
-              <div className="p-6 md:p-8">
+            <section className="animate-fade-up relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+              <div className="absolute inset-0 gradient-hero pointer-events-none dark:hidden" />
+              <div className="absolute inset-0 bg-[radial-gradient(at_85%_15%,rgba(167,139,250,0.18),transparent_55%)] pointer-events-none dark:hidden" />
+              <div className="relative p-6 md:p-8">
                 <div className="flex items-start gap-4">
-                  <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl gradient-brand shadow-glow sm:flex">
-                    <Target className="h-6 w-6 text-white" />
+                  <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-purple/15 ring-1 ring-brand-purple/25">
+                    <Target className="h-5 w-5 text-brand-purple" />
                   </div>
                   <div className="min-w-0">
-                    <h1 className="text-2xl font-bold gradient-brand-text md:text-3xl">Practice</h1>
-                    <p className="mt-1 text-sm text-muted-foreground md:text-base">
-                      Drill any skill with instant-feedback problems. Pick a skill and difficulty,
-                      then solve — no timer, no pressure.
+                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+                      <span className="gradient-brand-text">Practice</span>
+                    </h1>
+                    <p className="mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
+                      Pick a skill and a difficulty, then work through short questions with instant
+                      feedback. Go at your own pace, there's no timer running.
                     </p>
                   </div>
                 </div>

@@ -78,7 +78,7 @@ export function PracticeStatsBar({ skillName, level, solved, attempted, streak, 
       {streak >= 3 && (
         <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-brand-yellow">
           <Flame className="h-3.5 w-3.5" />
-          {streak} in a row — keep it going!
+          {streak} in a row, keep it going!
         </div>
       )}
     </div>

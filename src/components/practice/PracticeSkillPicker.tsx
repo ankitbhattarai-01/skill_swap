@@ -75,7 +75,7 @@ export function PracticeSkillPicker({
   };
 
   // A selected skill that isn't one of the learning chips still needs to show as
-  // selected somewhere — surface it as an extra chip at the front.
+  // selected somewhere, so surface it as an extra chip at the front.
   const chips: PracticeSkill[] =
     selected && !learningSkills.some((s) => s.id === selected.id)
       ? [selected, ...learningSkills]
@@ -118,7 +118,7 @@ export function PracticeSkillPicker({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            You're not learning any skills yet — search the catalog below to practice anything.
+            You're not learning any skills yet. Search the catalog below to practice anything.
           </p>
         )}
 
