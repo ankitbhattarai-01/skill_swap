@@ -87,6 +87,9 @@ type SessionRow = {
   created_at: string;
   updated_at: string;
   batch_id: string | null;
+  // Swap legs travel through this list like ordinary sessions, but they must
+  // never be accepted/declined one at a time — see canRespondToPending below.
+  is_swap?: boolean;
   skills: { id: string; name: string } | null;
   learnerName: string;
   teacherName: string;
@@ -786,8 +789,13 @@ function PlanSessionRow({
   onReject: () => void;
 }) {
   const sessionInitiatorId = session.initiator_id ?? session.learner_id;
+  // Swaps are accepted/declined as a PAIR from the dashboard's Skill swaps
+  // card (respond_to_swap). Accepting one leg here would leave the other stuck
+  // in pending on the proposer's side — same rule the detail page applies.
   const canRespondToPending =
-    session.status === "pending" && Boolean(currentUserId && currentUserId !== sessionInitiatorId);
+    !session.is_swap &&
+    session.status === "pending" &&
+    Boolean(currentUserId && currentUserId !== sessionInitiatorId);
   const isAccepted = session.status === "accepted" || session.status === "active";
   const roomLink = getVideoRoomUrl({
     link: session.meet_link,
@@ -891,8 +899,11 @@ function SessionCard({
       : null;
   const earlyReleaseAvailable =
     isAccepted && !isTeacher && earlyReleaseUnlockAt !== null && earlyReleaseUnlockAt <= Date.now();
+  // Swap legs are responded to as a pair from the dashboard's Skill swaps card.
   const canRespondToPending =
-    session.status === "pending" && Boolean(currentUserId && currentUserId !== sessionInitiatorId);
+    !session.is_swap &&
+    session.status === "pending" &&
+    Boolean(currentUserId && currentUserId !== sessionInitiatorId);
   // Unscheduled sessions used to show their created_at as if it were the
   // meeting time, which quietly lied. Say what the date actually is instead.
   const whenLabel = session.scheduled_at
