@@ -11,8 +11,10 @@ import {
   RefreshCw,
   Search,
   Shield,
+  ShieldAlert,
   ShieldOff,
   ShieldX,
+  Trash2,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -46,14 +48,18 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageLoading } from "@/components/PageLoading";
 import { ReasonFields } from "@/components/admin/ReasonFields";
 import { SEARCH_DEBOUNCE_MS } from "@/lib/search-config";
-import { formatDate } from "@/lib/admin-format";
+import { formatDate, strikeReasonLabel, suspensionLabel } from "@/lib/admin-format";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import {
+  ADMIN_STRIKE_COUNTS_KEY,
   ADMIN_USERS_KEY,
+  ADMIN_USER_STRIKES_KEY,
   adminErrorMessage,
   hasAdminPermission,
   useAdminPermissions,
+  useAdminStrikeCounts,
+  useAdminUserStrikes,
   useAdminUsers,
   type AdminUserRow,
 } from "@/lib/admin";
@@ -94,6 +100,9 @@ function AdminUsersPage() {
     hasAdminPermission(permissions, "privacy", "reveal");
   const canSuspend = hasAdminPermission(permissions, "users", "update");
   const canGrantAdmin = hasAdminPermission(permissions, "access-governance", "approve");
+  // Removing a strike overturns a penalty the system (or another moderator)
+  // applied, so it sits behind moderation:override rather than plain update.
+  const canManageStrikes = hasAdminPermission(permissions, "moderation", "override");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "admins" | "standard">("all");
@@ -109,6 +118,16 @@ function AdminUsersPage() {
     id: string;
     mode: "grant" | "revoke";
     label: string | null;
+  } | null>(null);
+  const [strikeTarget, setStrikeTarget] = useState<{ id: string; label: string | null } | null>(
+    null,
+  );
+  // Set once the operator picks something to remove — the dialog then swaps its
+  // body from the strike ledger to the ticket/justification form.
+  const [strikeAction, setStrikeAction] = useState<{
+    mode: "one" | "all";
+    strikeId?: string;
+    description: string;
   } | null>(null);
   const [ticketRef, setTicketRef] = useState("");
   const [justification, setJustification] = useState("");
@@ -155,6 +174,13 @@ function AdminUsersPage() {
       });
   }, [allUsers, roleFilter, onboardedFilter, sort]);
 
+  const visibleUserIds = useMemo(() => filteredUsers.map((row) => row.id), [filteredUsers]);
+  const strikeCountsQuery = useAdminStrikeCounts(canRead, visibleUserIds);
+  const strikeCounts = strikeCountsQuery.data ?? {};
+  const strikesQuery = useAdminUserStrikes(strikeTarget?.id ?? null);
+  const strikeLedger = strikesQuery.data ?? null;
+  const removableStrikes = (strikeLedger?.strikes ?? []).filter((strike) => !strike.revoked_at);
+
   useEffect(() => {
     if (!authLoading && !user) {
       navigate({ to: "/login", search: { redirect: "/admin/users" } });
@@ -178,6 +204,66 @@ function AdminUsersPage() {
     setAdminTarget(null);
     setTicketRef("");
     setJustification("");
+  };
+
+  const closeStrikes = () => {
+    setStrikeTarget(null);
+    setStrikeAction(null);
+    setTicketRef("");
+    setJustification("");
+  };
+
+  const openStrikes = (row: AdminUserRow) => {
+    setTicketRef("");
+    setJustification("");
+    setStrikeAction(null);
+    setStrikeTarget({ id: row.id, label: row.masked_email ?? row.masked_name });
+  };
+
+  const runStrikeAction = async () => {
+    if (!strikeTarget || !strikeAction || busy) return;
+    if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
+      toast.error("Ticket reference and justification are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } =
+        strikeAction.mode === "all"
+          ? await supabase.rpc("admin_clear_user_strikes", {
+              p_user_id: strikeTarget.id,
+              p_reason_code: "moderation:strike_clear",
+              p_justification: justification.trim(),
+              p_ticket_ref: ticketRef.trim(),
+            })
+          : await supabase.rpc("admin_revoke_user_strike", {
+              p_strike_id: strikeAction.strikeId ?? "",
+              p_reason_code: "moderation:strike_revoke",
+              p_justification: justification.trim(),
+              p_ticket_ref: ticketRef.trim(),
+            });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success(strikeAction.mode === "all" ? "All strikes removed." : "Strike removed.");
+      // Back to the ledger view so the operator can see the updated record.
+      setStrikeAction(null);
+      setTicketRef("");
+      setJustification("");
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ADMIN_USER_STRIKES_KEY(user?.id, strikeTarget.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ADMIN_STRIKE_COUNTS_KEY(user?.id, visibleUserIds.join(",")),
+        }),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove the strike.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const runAdminAction = async () => {
@@ -470,6 +556,14 @@ function AdminUsersPage() {
                         suspended
                       </Badge>
                     )}
+                    {(strikeCounts[row.id] ?? 0) > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400"
+                      >
+                        {strikeCounts[row.id]} strike{strikeCounts[row.id] === 1 ? "" : "s"}
+                      </Badge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell data-label="Last sign-in">{formatDate(row.last_sign_in_at)}</TableCell>
@@ -490,6 +584,14 @@ function AdminUsersPage() {
                       }}
                     >
                       <Eye className="h-4 w-4" /> Reveal
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="View and remove account strikes"
+                      onClick={() => openStrikes(row)}
+                    >
+                      <ShieldAlert className="h-4 w-4" /> Strikes
                     </Button>
                     {canGrantAdmin &&
                       row.id !== user.id &&
@@ -752,6 +854,206 @@ function AdminUsersPage() {
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {adminTarget?.mode === "grant" ? "Make admin" : "Remove admin"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(strikeTarget)} onOpenChange={(open) => !open && closeStrikes()}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{strikeAction ? "Remove strikes" : "Account strikes"}</DialogTitle>
+            <DialogDescription>
+              {strikeAction
+                ? strikeAction.description
+                : "Removing a strike lifts its penalty immediately. The row stays on file marked as removed, and the change is written to the audit chain."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {strikeTarget && (
+            <div className="rounded-xl border border-border/60 bg-background/40 p-3 text-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Target</div>
+              <div className="mt-1 break-all font-medium">
+                {strikeTarget.label ?? strikeTarget.id}
+              </div>
+            </div>
+          )}
+
+          {strikeAction ? (
+            <div className="space-y-4">
+              <ReasonFields
+                ticketRef={ticketRef}
+                justification={justification}
+                onTicketRefChange={setTicketRef}
+                onJustificationChange={setJustification}
+                justificationPlaceholder="Why the strike is being removed (appeal upheld, mis-recorded no-show, ...)."
+              />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {strikesQuery.isLoading && (
+                <div className="text-sm text-muted-foreground">Loading strikes...</div>
+              )}
+              {strikesQuery.isError && (
+                <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  Could not load strikes: {adminErrorMessage(strikesQuery.error)}
+                </div>
+              )}
+              {strikeLedger && (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={strikeLedger.active_weight > 0 ? "destructive" : "outline"}>
+                      {strikeLedger.active_weight} active strike
+                      {strikeLedger.active_weight === 1 ? "" : "s"}
+                    </Badge>
+                    <Badge variant="outline">{suspensionLabel(strikeLedger.suspension_kind)}</Badge>
+                    {strikeLedger.suspension_kind !== "none" &&
+                      strikeLedger.suspension_kind !== "permanent" &&
+                      strikeLedger.suspension_expires_at && (
+                        <span className="text-xs text-muted-foreground">
+                          until {formatDate(strikeLedger.suspension_expires_at)}
+                        </span>
+                      )}
+                  </div>
+                  <div className="max-h-72 space-y-2 overflow-auto">
+                    {strikeLedger.strikes.length === 0 && (
+                      <EmptyState
+                        icon={ShieldAlert}
+                        title="No strikes on this account"
+                        description="This user has never been issued a strike."
+                      />
+                    )}
+                    {strikeLedger.strikes.map((strike) => (
+                      <div
+                        key={strike.id}
+                        className={cn(
+                          "rounded-xl border p-3",
+                          strike.revoked_at
+                            ? "border-border/40 bg-background/20 opacity-70"
+                            : "border-border/60 bg-background/40",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium">
+                                {strikeReasonLabel(strike.reason)}
+                              </span>
+                              <Badge variant="outline" className="text-[10px]">
+                                weight {strike.weight}
+                              </Badge>
+                              {strike.revoked_at ? (
+                                <Badge variant="outline" className="text-[10px]">
+                                  removed
+                                </Badge>
+                              ) : (
+                                !strike.is_active && (
+                                  <Badge variant="outline" className="text-[10px]">
+                                    expired
+                                  </Badge>
+                                )
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Issued {formatDate(strike.created_at)}
+                              {strike.revoked_at
+                                ? ` - removed ${formatDate(strike.revoked_at)}`
+                                : ` - decays ${formatDate(strike.expires_at)}`}
+                            </div>
+                            {strike.notes && (
+                              <p className="break-anywhere text-xs text-muted-foreground">
+                                {strike.notes}
+                              </p>
+                            )}
+                            {strike.revoke_reason && (
+                              <p className="break-anywhere text-xs text-muted-foreground">
+                                Removal note: {strike.revoke_reason}
+                              </p>
+                            )}
+                          </div>
+                          {!strike.revoked_at && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!canManageStrikes}
+                              title={
+                                canManageStrikes
+                                  ? "Remove this strike"
+                                  : "Moderation override permission is required"
+                              }
+                              onClick={() => {
+                                setTicketRef("");
+                                setJustification("");
+                                setStrikeAction({
+                                  mode: "one",
+                                  strikeId: strike.id,
+                                  description: `Removing the "${strikeReasonLabel(strike.reason)}" strike issued ${formatDate(strike.created_at)}.`,
+                                });
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" /> Remove
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            {strikeAction ? (
+              <>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setStrikeAction(null);
+                    setTicketRef("");
+                    setJustification("");
+                  }}
+                >
+                  Back
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => void runStrikeAction()}
+                >
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {strikeAction.mode === "all" ? "Remove all strikes" : "Remove strike"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={closeStrikes}>
+                  Close
+                </Button>
+                {removableStrikes.length > 0 && (
+                  <Button
+                    variant="destructive"
+                    disabled={!canManageStrikes}
+                    title={
+                      canManageStrikes
+                        ? "Remove every strike on this account"
+                        : "Moderation override permission is required"
+                    }
+                    onClick={() => {
+                      setTicketRef("");
+                      setJustification("");
+                      setStrikeAction({
+                        mode: "all",
+                        description: `Removing all ${removableStrikes.length} strike${
+                          removableStrikes.length === 1 ? "" : "s"
+                        } still on this account. Any suspension they caused is lifted straight away.`,
+                      });
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" /> Remove all strikes
+                  </Button>
+                )}
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

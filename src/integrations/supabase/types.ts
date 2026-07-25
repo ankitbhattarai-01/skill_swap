@@ -1740,6 +1740,36 @@ export type Database = {
         };
         Returns: Json;
       };
+      get_admin_user_strikes: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: Json;
+      };
+      get_admin_user_strike_counts: {
+        Args: {
+          p_user_ids: string[];
+        };
+        Returns: Json;
+      };
+      admin_revoke_user_strike: {
+        Args: {
+          p_strike_id: string;
+          p_reason_code: string;
+          p_justification: string;
+          p_ticket_ref: string;
+        };
+        Returns: Json;
+      };
+      admin_clear_user_strikes: {
+        Args: {
+          p_user_id: string;
+          p_reason_code: string;
+          p_justification: string;
+          p_ticket_ref: string;
+        };
+        Returns: Json;
+      };
       get_admin_skills_catalog: {
         Args: Record<string, never>;
         Returns: Json;

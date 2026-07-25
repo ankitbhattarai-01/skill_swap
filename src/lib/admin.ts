@@ -290,6 +290,31 @@ export type AdminUserRow = {
   report_count: number;
 };
 
+// One row of public.user_strikes as the admin console sees it. `is_active` is
+// computed server-side (not revoked AND not past its 90-day decay) because that
+// is the only flavour that still counts toward a suspension.
+export type AdminUserStrike = {
+  id: string;
+  reason: string;
+  weight: number;
+  notes: string | null;
+  session_id: string | null;
+  report_id: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+  is_active: boolean;
+};
+
+export type AdminUserStrikeLedger = {
+  user_id: string;
+  suspension_kind: string;
+  suspension_expires_at: string | null;
+  active_weight: number;
+  strikes: AdminUserStrike[];
+};
+
 export type ComplianceDashboard = {
   privilegedActionVolume24h?: number;
   makerCheckerTurnaroundHours7d?: number;
@@ -411,6 +436,14 @@ export const ADMIN_SESSIONS_DASHBOARD_KEY = (userId: string | null | undefined, 
 
 export const ADMIN_USERS_KEY = (userId: string | null | undefined, search: string) =>
   ["admin-users", userId, search] as const;
+
+export const ADMIN_USER_STRIKES_KEY = (
+  userId: string | null | undefined,
+  subjectId: string | null,
+) => ["admin-user-strikes", userId, subjectId] as const;
+
+export const ADMIN_STRIKE_COUNTS_KEY = (userId: string | null | undefined, subjectIds: string) =>
+  ["admin-strike-counts", userId, subjectIds] as const;
 
 export const ADMIN_COMPLIANCE_DASHBOARD_KEY = (userId: string | null | undefined) =>
   ["admin-compliance-dashboard", userId] as const;
@@ -723,6 +756,59 @@ export function useAdminUsers(enabled: boolean, search: string) {
         })) as AdminUserRow[];
       }
       return (data ?? []) as AdminUserRow[];
+    },
+  });
+}
+
+// The full strike ledger for one user, loaded when the strikes dialog opens.
+export function useAdminUserStrikes(subjectId: string | null) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ADMIN_USER_STRIKES_KEY(user?.id, subjectId),
+    enabled: Boolean(user?.id) && Boolean(subjectId),
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!subjectId) return null;
+      const { data, error } = await supabase.rpc("get_admin_user_strikes", {
+        p_user_id: subjectId,
+      });
+      if (error) throw error;
+      const ledger = (data ?? {}) as Partial<AdminUserStrikeLedger>;
+      return {
+        user_id: subjectId,
+        suspension_kind: ledger.suspension_kind ?? "none",
+        suspension_expires_at: ledger.suspension_expires_at ?? null,
+        active_weight: ledger.active_weight ?? 0,
+        strikes: ledger.strikes ?? [],
+      } satisfies AdminUserStrikeLedger;
+    },
+  });
+}
+
+// Active strike weight for the users currently on screen, keyed by user id, so
+// the table can badge who is carrying strikes without a query per row.
+export function useAdminStrikeCounts(enabled: boolean, userIds: string[]) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ADMIN_STRIKE_COUNTS_KEY(user?.id, userIds.join(",")),
+    enabled: Boolean(user?.id) && enabled && userIds.length > 0,
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_admin_user_strike_counts", {
+        p_user_ids: userIds,
+      });
+      if (error) {
+        // Until the migration is applied the RPC doesn't exist. Degrade to "no
+        // badges" rather than failing the whole users page.
+        const code = (error as { code?: string }).code;
+        if (code === "PGRST202" || code === "42883") return {} as Record<string, number>;
+        throw error;
+      }
+      return (data ?? {}) as Record<string, number>;
     },
   });
 }
