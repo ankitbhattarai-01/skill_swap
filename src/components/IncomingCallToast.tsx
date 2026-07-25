@@ -71,15 +71,27 @@ export function IncomingCallToast() {
   const [visible, setVisible] = useState(false);
   const teardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Track the current route so we can suppress the toast when the user is
-  // already inside the video room for the ringing session. Without this, when
-  // the callee answers and their video page rings the original caller back,
-  // the caller — already in the room — sees a spurious "incoming call" popup
-  // for the call they themselves started. A ref keeps the latest value
-  // readable from inside the broadcast handler's async closure.
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
+  // Track which video room (if any) the user is currently in, so we can
+  // suppress the toast when it is for that very session. Without this, when the
+  // callee answers and their video page rings the original caller back, the
+  // caller — already in the room — sees a spurious "incoming call" popup for
+  // the call they themselves started. Answering or declining it does real
+  // damage, so this check must not be fragile.
+  //
+  // It used to be a raw compare against `/video/${sessionId}`, which any
+  // trailing slash, router basepath or path-mask difference silently defeated.
+  // Reading the matched route's own param instead is exact by construction.
+  const activeVideoSessionId = useRouterState({
+    select: (s) => {
+      const match = s.matches.find((m) => m.routeId === "/video/$sessionId");
+      const params = match?.params as { sessionId?: string } | undefined;
+      return params?.sessionId ?? null;
+    },
+  });
+  // A ref keeps the latest value readable from inside the broadcast handler's
+  // async closure.
+  const activeVideoSessionIdRef = useRef(activeVideoSessionId);
+  activeVideoSessionIdRef.current = activeVideoSessionId;
 
   useEffect(() => {
     if (!user) return;
@@ -118,7 +130,7 @@ export function IncomingCallToast() {
           }
           // Already in this session's video room — don't pop a call toast at
           // ourselves (this is the answerer's ring-back reaching the caller).
-          if (pathnameRef.current === `/video/${payload.sessionId}`) return;
+          if (activeVideoSessionIdRef.current === payload.sessionId) return;
           setCall(payload);
           requestAnimationFrame(() => setVisible(true));
         })();

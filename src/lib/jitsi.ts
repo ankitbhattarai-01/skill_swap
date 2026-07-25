@@ -137,6 +137,55 @@ export type JitsiExternalApiInstance = {
   dispose: () => void;
 };
 
+// How long we wait for Jitsi to finish its own teardown after a hangup before
+// destroying the iframe anyway. Normal hangups resolve in well under 300ms;
+// the ceiling only matters when the client is already wedged.
+export const HANGUP_GRACE_MS = 1500;
+
+/**
+ * Asks the conference to leave and resolves once the client says it has
+ * finished (`readyToClose`), or after `timeoutMs`, whichever comes first.
+ *
+ * The iframe API contract is hangup -> readyToClose -> dispose. Destroying the
+ * iframe without that handshake discards the browsing context before the client
+ * can send its "I'm gone" presence, so the bridge keeps the endpoint alive until
+ * its own ping timeout - and a rejoin inside that window shows up alongside the
+ * stale endpoint as a phantom extra participant.
+ *
+ * Deliberately does NOT dispose: the caller owns the instance and may have
+ * already thrown it away by the time this resolves.
+ */
+export function requestHangUp(
+  api: JitsiExternalApiInstance,
+  timeoutMs: number = HANGUP_GRACE_MS,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      try {
+        api.removeListener("readyToClose", finish);
+      } catch {
+        // Instance already disposed - nothing to detach.
+      }
+      resolve();
+    };
+    // Declared after `finish` so the timeout can be cleared from inside it;
+    // nothing can call `finish` before this line runs.
+    const timer = window.setTimeout(finish, timeoutMs);
+    try {
+      api.addListener("readyToClose", finish);
+      api.executeCommand("hangup");
+    } catch {
+      // Iframe is already detached or the transport is dead; there is no
+      // graceful path left, so let the caller dispose immediately.
+      finish();
+    }
+  });
+}
+
 declare global {
   interface Window {
     JitsiMeetExternalAPI?: JitsiExternalApiConstructor;
