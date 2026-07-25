@@ -975,11 +975,127 @@ export type Database = {
           },
         ];
       };
+      credit_packages: {
+        Row: {
+          amount_paisa: number;
+          created_at: string;
+          credits: number;
+          id: string;
+          is_active: boolean;
+          name: string;
+          slug: string;
+          sort_order: number;
+          tagline: string | null;
+        };
+        // Read-only from a browser: 20260726000000 revokes INSERT/UPDATE/DELETE
+        // from anon and authenticated. `never` per field keeps that visible in
+        // the types rather than only at runtime.
+        Insert: {
+          amount_paisa?: never;
+          created_at?: never;
+          credits?: never;
+          id?: never;
+          is_active?: never;
+          name?: never;
+          slug?: never;
+          sort_order?: never;
+          tagline?: never;
+        };
+        Update: {
+          amount_paisa?: never;
+          created_at?: never;
+          credits?: never;
+          id?: never;
+          is_active?: never;
+          name?: never;
+          slug?: never;
+          sort_order?: never;
+          tagline?: never;
+        };
+        Relationships: [];
+      };
+      credit_purchases: {
+        Row: {
+          amount_paisa: number;
+          completed_at: string | null;
+          created_at: string;
+          credits: number;
+          expires_at: string;
+          failure_reason: string | null;
+          id: string;
+          method: string;
+          package_id: string | null;
+          purchase_order_id: string;
+          status: string;
+          updated_at: string;
+          user_id: string;
+        };
+        // Same story as credit_packages: every write goes through
+        // begin/confirm/cancel_credit_purchase, never straight from the client.
+        Insert: {
+          amount_paisa?: never;
+          completed_at?: never;
+          created_at?: never;
+          credits?: never;
+          expires_at?: never;
+          failure_reason?: never;
+          id?: never;
+          method?: never;
+          package_id?: never;
+          purchase_order_id?: never;
+          status?: never;
+          updated_at?: never;
+          user_id?: never;
+        };
+        Update: {
+          amount_paisa?: never;
+          completed_at?: never;
+          created_at?: never;
+          credits?: never;
+          expires_at?: never;
+          failure_reason?: never;
+          id?: never;
+          method?: never;
+          package_id?: never;
+          purchase_order_id?: never;
+          status?: never;
+          updated_at?: never;
+          user_id?: never;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "credit_purchases_package_id_fkey";
+            columns: ["package_id"];
+            isOneToOne: false;
+            referencedRelation: "credit_packages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      begin_credit_purchase: {
+        Args: { p_package_slug: string; p_method: string };
+        Returns: {
+          purchase_id: string;
+          reference: string;
+          method: string;
+          credits: number;
+          amount_paisa: number;
+          expires_at: string;
+        }[];
+      };
+      confirm_credit_purchase: {
+        Args: { p_purchase_id: string };
+        Returns: { outcome: string; credits_granted: number; new_balance: number | null }[];
+      };
+      cancel_credit_purchase: {
+        Args: { p_purchase_id: string };
+        Returns: string;
+      };
       record_practice_answer: {
         Args: { p_skill_id: string; p_level: string; p_correct: boolean };
         Returns: { solved: number; attempted: number }[];

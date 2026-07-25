@@ -32,6 +32,7 @@ import { Route as AdminSessionsRouteImport } from './routes/admin.sessions'
 import { Route as AdminSkillsRouteImport } from './routes/admin.skills'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
+import { Route as CreditsBuyRouteImport } from './routes/credits_.buy'
 import { Route as MessagesSessionIdRouteImport } from './routes/messages.$sessionId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as UsersUserIdRouteImport } from './routes/users.$userId'
@@ -152,6 +153,11 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CreditsBuyRoute = CreditsBuyRouteImport.update({
+  id: '/credits_/buy',
+  path: '/credits/buy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MessagesSessionIdRoute = MessagesSessionIdRouteImport.update({
   id: '/$sessionId',
   path: '/$sessionId',
@@ -196,6 +202,7 @@ export interface FileRoutesByFullPath {
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/credits/buy': typeof CreditsBuyRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -224,6 +231,7 @@ export interface FileRoutesByTo {
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/credits/buy': typeof CreditsBuyRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -254,6 +262,7 @@ export interface FileRoutesById {
   '/admin/skills': typeof AdminSkillsRoute
   '/admin/users': typeof AdminUsersRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/credits_/buy': typeof CreditsBuyRoute
   '/messages/$sessionId': typeof MessagesSessionIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -285,6 +294,7 @@ export interface FileRouteTypes {
     | '/admin/skills'
     | '/admin/users'
     | '/auth/callback'
+    | '/credits/buy'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -313,6 +323,7 @@ export interface FileRouteTypes {
     | '/admin/skills'
     | '/admin/users'
     | '/auth/callback'
+    | '/credits/buy'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -342,6 +353,7 @@ export interface FileRouteTypes {
     | '/admin/skills'
     | '/admin/users'
     | '/auth/callback'
+    | '/credits_/buy'
     | '/messages/$sessionId'
     | '/sessions/$sessionId'
     | '/users/$userId'
@@ -367,6 +379,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   SkillsRoute: typeof SkillsRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
+  CreditsBuyRoute: typeof CreditsBuyRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
   VideoSessionIdRoute: typeof VideoSessionIdRoute
@@ -535,6 +548,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/credits_/buy': {
+      id: '/credits_/buy'
+      path: '/credits/buy'
+      fullPath: '/credits/buy'
+      preLoaderRoute: typeof CreditsBuyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/messages/$sessionId': {
       id: '/messages/$sessionId'
       path: '/$sessionId'
@@ -616,6 +636,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   SkillsRoute: SkillsRoute,
   AuthCallbackRoute: AuthCallbackRoute,
+  CreditsBuyRoute: CreditsBuyRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
   VideoSessionIdRoute: VideoSessionIdRoute,

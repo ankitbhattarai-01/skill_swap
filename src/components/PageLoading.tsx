@@ -9,6 +9,7 @@ import {
 export type PageLoadingVariant =
   | "hero-stats"
   | "credits"
+  | "credits-buy"
   | "list"
   | "list-wide"
   | "messages"
@@ -277,6 +278,63 @@ export function PageLoading({ variant = "hero-stats" }: { variant?: PageLoadingV
           <NextMoveSkeleton />
           <SuggestionsSkeleton />
           <PeopleSectionSkeleton />
+        </main>
+      </div>
+    );
+  }
+
+  if (variant === "credits-buy") {
+    // Same hero as the credits variant below (the buy page reuses it verbatim),
+    // then the checkout body: package cards and wallet cards on the left, the
+    // order panel on the right.
+    return (
+      <div className="min-h-screen flex flex-col">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-[18px] sm:px-[18px] md:py-6 space-y-6 animate-in fade-in duration-150">
+          <section className="relative overflow-hidden rounded-3xl glass-strong border border-white/10 shadow-glow">
+            <div className="p-6 md:p-8 space-y-6">
+              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div className="flex items-start gap-4">
+                  <Skeleton className="h-12 w-12 shrink-0 rounded-2xl" />
+                  <div className="space-y-3">
+                    <Skeleton className="h-9 w-56 rounded-xl md:h-10 md:w-64" />
+                    <Skeleton className="h-4 w-72 rounded-full" />
+                  </div>
+                </div>
+                <Skeleton className="h-10 w-40 rounded-full self-start md:self-auto" />
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                <Skeleton className="h-28 rounded-2xl" />
+                <Skeleton className="h-28 rounded-2xl" />
+                <Skeleton className="h-28 rounded-2xl" />
+              </div>
+            </div>
+          </section>
+          <div className="grid gap-6 lg:grid-cols-[1fr_360px] lg:items-start">
+            <div className="space-y-6">
+              <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-9 w-9 rounded-xl" />
+                  <Skeleton className="h-5 w-40 rounded-md" />
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <Skeleton key={index} className="h-[132px] rounded-2xl" />
+                  ))}
+                </div>
+              </section>
+              <section className="glass rounded-3xl border border-white/10 p-6 md:p-7">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-9 w-9 rounded-xl" />
+                  <Skeleton className="h-5 w-24 rounded-md" />
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <Skeleton className="h-[68px] rounded-2xl" />
+                  <Skeleton className="h-[68px] rounded-2xl" />
+                </div>
+              </section>
+            </div>
+            <Skeleton className="h-[320px] rounded-3xl" />
+          </div>
         </main>
       </div>
     );

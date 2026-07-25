@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Clock,
   Coins,
+  CreditCard,
   Gift,
   Plus,
   Receipt,
@@ -19,8 +20,8 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
+import { CreditSummaryCard } from "@/components/CreditSummaryCard";
 import { useMyCreditBalance } from "@/hooks/useMyCreditBalance";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 
@@ -69,7 +70,7 @@ type TransactionItem = {
   title: string;
   date: string;
   amount: number;
-  kind: "earned" | "spent" | "bonus" | "refund" | "hold";
+  kind: "earned" | "spent" | "bonus" | "refund" | "hold" | "topup";
   durationMinutes?: number;
   counterpartyId?: string | null;
   counterpartyName?: string | null;
@@ -194,6 +195,10 @@ function CreditsPage() {
         // and a hold+refund pair has to net to zero in the spent card.
         const isRefund = description.startsWith("Refund");
         const isHold = description === "Held for upcoming session";
+        // A wallet top-up (confirm_credit_purchase writes "Credit top-up ·
+        // eSewa"/"· Khalti"). Credits entering the system, not teaching income,
+        // so it gets its own kind and stays out of the Earned card.
+        const isTopUp = description.startsWith("Credit top-up");
         // The counterparty is the other participant in the session. For escrow
         // rows one of from_user/to_user is NULL, so derive it from the session.
         const iAmTeacher = session?.teacher_id === user.id;
@@ -208,6 +213,15 @@ function CreditsPage() {
         const skillName = session?.skills?.name ?? "a skill";
         const durationMinutes = session?.duration_minutes;
 
+        if (isTopUp) {
+          return {
+            id: row.id,
+            title: description,
+            date: row.created_at,
+            amount: Math.abs(row.amount),
+            kind: "topup",
+          };
+        }
         if (isRefund) {
           return {
             id: row.id,
@@ -424,32 +438,45 @@ function CreditsPage() {
                   </p>
                 </div>
               </div>
-              <Link
-                to="/explore"
-                preload="intent"
-                className="inline-flex items-center gap-2 self-start rounded-full border border-brand-purple/30 bg-brand-purple/10 px-4 py-2 text-sm font-medium text-brand-purple transition-all hover:bg-brand-purple/20 hover:shadow-glow md:self-auto"
-              >
-                <Plus className="h-4 w-4" />
-                Earn more
-              </Link>
+              <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                <Link
+                  to="/explore"
+                  preload="intent"
+                  className="inline-flex items-center gap-2 rounded-full border border-brand-purple/30 bg-brand-purple/10 px-4 py-2 text-sm font-medium text-brand-purple transition-all hover:bg-brand-purple/20 hover:shadow-glow"
+                >
+                  <Plus className="h-4 w-4" />
+                  Earn more
+                </Link>
+                {/* The filled sibling: teaching is the free way to get credits,
+                    buying is the fast one, and only one of them should look like
+                    the primary action. */}
+                <Link
+                  to="/credits/buy"
+                  preload="intent"
+                  className="gradient-brand inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-glow transition-all hover:opacity-95 hover:shadow-glow-blue"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  Buy credits
+                </Link>
+              </div>
             </div>
 
             <div className="grid gap-3 lg:grid-cols-3">
-              <SummaryCard
+              <CreditSummaryCard
                 label="Current Balance"
                 value={liveCreditBalance ?? 0}
                 caption="Available to spend"
                 tone="balance"
                 icon={Coins}
               />
-              <SummaryCard
+              <CreditSummaryCard
                 label="Recent Earned"
                 value={totalEarned}
                 caption="From your last 20 entries"
                 tone="earned"
                 icon={TrendingUp}
               />
-              <SummaryCard
+              <CreditSummaryCard
                 label="Recent Spent"
                 value={totalSpent}
                 caption="From your last 20 entries"
@@ -499,71 +526,6 @@ function CreditsPage() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  caption,
-  tone,
-  icon: Icon,
-}: {
-  label: string;
-  value: number;
-  caption: string;
-  tone: "balance" | "earned" | "spent";
-  icon: LucideIcon;
-}) {
-  const toneStyles = {
-    balance: {
-      value: "text-brand-purple",
-      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
-      hover: "hover:border-brand-purple/30 hover:shadow-glow",
-    },
-    earned: {
-      value: "text-emerald-400",
-      badge: "bg-brand-cyan/15 text-brand-cyan ring-1 ring-brand-cyan/20",
-      hover: "hover:border-brand-cyan/30 hover:shadow-glow-blue",
-    },
-    spent: {
-      value: "text-orange-400",
-      badge: "bg-orange-400/15 text-orange-400 ring-1 ring-orange-400/20",
-      hover: "hover:border-orange-400/30",
-    },
-  }[tone];
-
-  return (
-    <article
-      className={cn(
-        "group rounded-2xl border border-white/10 bg-white/5 px-5 py-4 transition-all hover:-translate-y-0.5 sm:px-5 sm:py-5",
-        toneStyles.hover,
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
-          <div
-            className={cn(
-              "mt-2 flex items-baseline gap-1 text-4xl font-bold leading-none sm:text-5xl",
-              toneStyles.value,
-            )}
-          >
-            {value}
-            <span className="text-sm font-medium text-muted-foreground">Credits</span>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">{caption}</p>
-        </div>
-        <div
-          className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-            toneStyles.badge,
-          )}
-        >
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-    </article>
-  );
-}
-
 function TransactionRow({ transaction }: { transaction: TransactionItem }) {
   const isPositive = transaction.amount > 0;
   const styles = {
@@ -592,17 +554,24 @@ function TransactionRow({ transaction }: { transaction: TransactionItem }) {
       amount: "text-brand-purple",
       hover: "hover:border-brand-purple/30",
     },
+    topup: {
+      badge: "bg-brand-purple/15 text-brand-purple ring-1 ring-brand-purple/20",
+      amount: "text-brand-purple",
+      hover: "hover:border-brand-purple/30",
+    },
   }[transaction.kind];
   const Icon =
     transaction.kind === "bonus"
       ? Gift
-      : transaction.kind === "refund"
-        ? RotateCcw
-        : transaction.kind === "hold"
-          ? Clock
-          : isPositive
-            ? ArrowDownLeft
-            : ArrowUpRight;
+      : transaction.kind === "topup"
+        ? CreditCard
+        : transaction.kind === "refund"
+          ? RotateCcw
+          : transaction.kind === "hold"
+            ? Clock
+            : isPositive
+              ? ArrowDownLeft
+              : ArrowUpRight;
 
   const clickable = Boolean(transaction.counterpartyId);
 

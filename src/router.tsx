@@ -15,6 +15,8 @@ import { logClientError } from "@/lib/client-logger";
 function pendingVariantFor(pathname: string): PageLoadingVariant {
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/profile") || pathname.startsWith("/users/")) return "profile";
+  // Before the /credits check — the buy page is a different shell.
+  if (pathname.startsWith("/credits/buy")) return "credits-buy";
   if (pathname.startsWith("/credits")) return "credits";
   if (pathname.startsWith("/messages")) return "messages";
   if (pathname.startsWith("/sessions/")) return "detail";
