@@ -107,7 +107,9 @@ export function useRecordingSignal(input: {
   }, [active, userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    // The hook is held by the app-wide call provider, so it is mounted with an
+    // empty sessionId whenever no call is up. Nothing to listen to then.
+    if (!userId || !sessionId) return;
 
     const clearExpiry = () => {
       if (expiryTimer.current != null) {

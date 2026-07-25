@@ -59,7 +59,10 @@ export function useRecordingStopSignal(input: {
   onPeerStopRef.current = onPeerStop;
 
   useEffect(() => {
-    if (!selfUserId) return;
+    // No sessionId means no call is up (the hook is held by the app-wide call
+    // provider, which outlives any one call). Subscribing then would open a
+    // channel with an empty `session_id=eq.` filter.
+    if (!selfUserId || !sessionId) return;
     const channel = supabase
       .channel(`recording-stop-${sessionId}`)
       .on(
@@ -126,7 +129,8 @@ export function useRecordingConsent(input: {
   }, []);
 
   useEffect(() => {
-    if (!selfUserId) return;
+    // See the note in useRecordingStopSignal: no call, no subscription.
+    if (!selfUserId || !sessionId) return;
     const channel = supabase
       .channel(`recording-consent-${sessionId}`)
       .on(

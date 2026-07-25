@@ -312,6 +312,27 @@ export function useSessionNotesRecorder(input: {
 
   const flushCompanion = useCallback(() => flushCompanionInternal(false), [flushCompanionInternal]);
 
+  // This hook is held by the app-wide call provider now, not by the video
+  // route, so it is no longer unmounted between calls — a stale "ready" status
+  // (or worse, a live capture) would otherwise carry from one session into the
+  // next. Changing session is the reset point.
+  const sessionKeyRef = useRef(sessionId);
+  useEffect(() => {
+    if (sessionKeyRef.current === sessionId) return;
+    sessionKeyRef.current = sessionId;
+    recordingRef.current?.cancel();
+    recordingRef.current = null;
+    companionRef.current?.cancel();
+    companionRef.current = null;
+    companionArmedRef.current = false;
+    companionSawBannerRef.current = false;
+    companionUploadedRef.current = false;
+    setCompanionActive(false);
+    setStatus("idle");
+    setNotes(null);
+    setElapsedMs(0);
+  }, [sessionId]);
+
   // Never leave the microphone running if the page goes away mid-recording.
   // Audio buffered so far is discarded, which is the right call: an unmount
   // means the user navigated off without the route's flush, so nobody is

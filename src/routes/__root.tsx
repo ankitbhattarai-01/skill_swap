@@ -15,6 +15,8 @@ import { AuthProvider } from "@/lib/auth-context";
 import { AuthGateProvider } from "@/lib/auth-gate";
 import { ThemeProvider, themeInitScript } from "@/lib/theme-context";
 import { SiteHeader } from "@/components/SiteHeader";
+import { CallProvider } from "@/lib/call-context";
+import { CallHost } from "@/components/CallHost";
 import { HelpButton } from "@/components/help/HelpButton";
 import { IncomingRequestBanner } from "@/components/IncomingRequestBanner";
 import { MessageHeadsUp } from "@/components/MessageHeadsUp";
@@ -163,41 +165,54 @@ function RootComponent() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <AuthGateProvider>
-            {/* These mount globally and subscribe to realtime channels.
+            {/* Owns the video conference for the whole app rather than for one
+                route. Mounted here so leaving /video - a link, the back button,
+                Home - repositions the call into a mini-player instead of
+                hanging it up. */}
+            <CallProvider>
+              {/* These mount globally and subscribe to realtime channels.
                 Wrapping each in its own boundary means a crash in one
                 (e.g. a malformed realtime payload) can't blank the whole
                 app - the boundary swallows it and the rest keeps working. */}
-            <ErrorBoundary label="CreditBalanceRealtimeBridge">
-              <CreditBalanceRealtimeBridge />
-            </ErrorBoundary>
-            {usesStandaloneLayout ? (
-              <div className="min-h-screen w-full">
-                <Outlet />
-              </div>
-            ) : (
-              <div className="flex min-h-screen w-full flex-col">
-                <SiteHeader sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebar} />
-                <div
-                  className="min-h-screen pt-[calc(118px+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 md:pt-16 md:[padding-left:var(--sidebar-width)] md:transition-[padding-left] md:duration-500 md:ease-[cubic-bezier(0.32,0.72,0,1)]"
-                  style={{ "--sidebar-width": `${sidebarCollapsed ? 72 : 192}px` } as CSSProperties}
-                >
-                  <ErrorBoundary label="IncomingRequestBanner">
-                    <IncomingRequestBanner />
-                  </ErrorBoundary>
-                  <ErrorBoundary label="MessageHeadsUp">
-                    <MessageHeadsUp />
-                  </ErrorBoundary>
-                  <ErrorBoundary label="IncomingCallToast">
-                    <IncomingCallToast />
-                  </ErrorBoundary>
-                  <ErrorBoundary label="SessionEventHeadsUp">
-                    <SessionEventHeadsUp />
-                  </ErrorBoundary>
+              <ErrorBoundary label="CreditBalanceRealtimeBridge">
+                <CreditBalanceRealtimeBridge />
+              </ErrorBoundary>
+              {usesStandaloneLayout ? (
+                <div className="min-h-screen w-full">
                   <Outlet />
                 </div>
-                <HelpButton />
-              </div>
-            )}
+              ) : (
+                <div className="flex min-h-screen w-full flex-col">
+                  <SiteHeader sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebar} />
+                  <div
+                    className="min-h-screen pt-[calc(118px+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 md:pt-16 md:[padding-left:var(--sidebar-width)] md:transition-[padding-left] md:duration-500 md:ease-[cubic-bezier(0.32,0.72,0,1)]"
+                    style={
+                      { "--sidebar-width": `${sidebarCollapsed ? 72 : 192}px` } as CSSProperties
+                    }
+                  >
+                    <ErrorBoundary label="IncomingRequestBanner">
+                      <IncomingRequestBanner />
+                    </ErrorBoundary>
+                    <ErrorBoundary label="MessageHeadsUp">
+                      <MessageHeadsUp />
+                    </ErrorBoundary>
+                    <ErrorBoundary label="IncomingCallToast">
+                      <IncomingCallToast />
+                    </ErrorBoundary>
+                    <ErrorBoundary label="SessionEventHeadsUp">
+                      <SessionEventHeadsUp />
+                    </ErrorBoundary>
+                    <Outlet />
+                  </div>
+                  <HelpButton />
+                </div>
+              )}
+              {/* Last child: the persistent Jitsi frame + the call's consent
+                dialogs. Its own stacking context, never reparented. */}
+              <ErrorBoundary label="CallHost">
+                <CallHost />
+              </ErrorBoundary>
+            </CallProvider>
             <Toaster position="top-center" offset={80} />
           </AuthGateProvider>
         </AuthProvider>
