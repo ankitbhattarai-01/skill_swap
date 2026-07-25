@@ -13,7 +13,6 @@ import {
   MessageCircle,
   MonitorUp,
   PhoneOff,
-  PictureInPicture2,
   RefreshCw,
   VideoOff,
   WifiOff,
@@ -112,10 +111,6 @@ function VideoCallPage() {
           </h1>
           <p className="text-sm text-muted-foreground">
             {session.learnerName} learns from {session.teacherName}
-          </p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <PictureInPicture2 className="h-3.5 w-3.5 shrink-0" />
-            Open another page any time — the call keeps running in the corner.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

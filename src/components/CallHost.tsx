@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeft,
@@ -26,18 +26,75 @@ import { cn } from "@/lib/utils";
 // to track, so it settles into the corner as a mini-player and the call carries
 // on while the user reads their notes, opens chat, or goes home.
 
+// Keeps the dragged mini-player fully on screen, with a little breathing room.
+const DOCK_MARGIN = 12;
+// Below this, a pointer press is a tap on the tile (return to the call), not a
+// drag. Fingers wobble; mice do too.
+const DRAG_THRESHOLD = 4;
+
+type DockPos = { left: number; top: number };
+
+function clampToViewport(pos: DockPos, width: number, height: number): DockPos {
+  const maxLeft = Math.max(DOCK_MARGIN, window.innerWidth - width - DOCK_MARGIN);
+  const maxTop = Math.max(DOCK_MARGIN, window.innerHeight - height - DOCK_MARGIN);
+  return {
+    left: Math.min(Math.max(pos.left, DOCK_MARGIN), maxLeft),
+    top: Math.min(Math.max(pos.top, DOCK_MARGIN), maxTop),
+  };
+}
+
 export function CallHost() {
   const call = useCall();
   const navigate = useNavigate();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const { stageEl, sessionId, docked } = call;
 
+  // Where the user has dragged the mini-player to, or null while it still sits
+  // in its default corner. Lives here rather than in the call context because
+  // it is pure presentation, and it survives navigation because this component
+  // never unmounts for the life of the call.
+  const [dockPos, setDockPos] = useState<DockPos | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    grabX: number;
+    grabY: number;
+    startX: number;
+    startY: number;
+    width: number;
+    height: number;
+    moved: boolean;
+    pos: DockPos;
+  } | null>(null);
+  // A drag that ends over the tile would otherwise fire the "return to call"
+  // click on pointerup. Swallow exactly that one click.
+  const swallowClickRef = useRef(false);
+
   const applyRect = useCallback((host: HTMLDivElement, stage: HTMLElement) => {
     const rect = stage.getBoundingClientRect();
     host.style.top = `${rect.top}px`;
     host.style.left = `${rect.left}px`;
+    host.style.right = "auto";
+    host.style.bottom = "auto";
     host.style.width = `${rect.width}px`;
     host.style.height = `${rect.height}px`;
+  }, []);
+
+  const applyDock = useCallback((host: HTMLDivElement, pos: DockPos | null) => {
+    // Size always comes from the docked utility classes.
+    host.style.width = "";
+    host.style.height = "";
+    if (!pos) {
+      // Hand positioning back to the docked utility classes too.
+      host.style.top = "";
+      host.style.left = "";
+      host.style.right = "";
+      host.style.bottom = "";
+      return;
+    }
+    host.style.top = `${pos.top}px`;
+    host.style.left = `${pos.left}px`;
+    host.style.right = "auto";
+    host.style.bottom = "auto";
   }, []);
 
   // Land on the right rectangle before the browser paints, so anchoring to a
@@ -46,15 +103,94 @@ export function CallHost() {
     const host = hostRef.current;
     if (!host) return;
     if (!stageEl) {
-      // Hand positioning back to the docked utility classes.
-      host.style.top = "";
-      host.style.left = "";
-      host.style.width = "";
-      host.style.height = "";
+      // Mid-drag the pointer owns the position — a re-render from anywhere else
+      // in the call (a peer joining, a notes tick) must not snap the tile back.
+      if (dragRef.current) return;
+      applyDock(host, dockPos);
       return;
     }
     applyRect(host, stageEl);
-  }, [applyRect, stageEl, sessionId]);
+  }, [applyDock, applyRect, dockPos, stageEl, sessionId]);
+
+  // A window that shrinks (rotation, a resized browser) must not strand the
+  // tile off screen.
+  const hasDockPos = dockPos !== null;
+  useEffect(() => {
+    if (!hasDockPos) return;
+    const onResize = () => {
+      const host = hostRef.current;
+      if (!host) return;
+      const { width, height } = host.getBoundingClientRect();
+      setDockPos((pos) => (pos ? clampToViewport(pos, width, height) : pos));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [hasDockPos]);
+
+  // Drag the mini-player anywhere on screen. Pointer events cover mouse,
+  // trackpad, touch and pen in one path, and pointer capture keeps the drag
+  // alive when the cursor outruns the tile or crosses the Jitsi iframe.
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!docked || dragRef.current) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    // The mic / expand / leave buttons are controls, not handles.
+    if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      grabX: event.clientX - rect.left,
+      grabY: event.clientY - rect.top,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: rect.width,
+      height: rect.height,
+      moved: false,
+      pos: { left: rect.left, top: rect.top },
+    };
+    host.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const host = hostRef.current;
+    if (!drag || !host || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved) {
+      const travelled = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (travelled < DRAG_THRESHOLD) return;
+      drag.moved = true;
+    }
+    drag.pos = clampToViewport(
+      { left: event.clientX - drag.grabX, top: event.clientY - drag.grabY },
+      drag.width,
+      drag.height,
+    );
+    // Written straight to the node: a state update per pointermove would
+    // re-render the tree wrapping a live conference for no benefit. The final
+    // position is committed to state on release so later renders keep it.
+    applyDock(host, drag.pos);
+  };
+
+  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    const host = hostRef.current;
+    // pointercancel has already dropped the capture; asking to release it again
+    // throws.
+    if (host?.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+    if (!drag.moved) return;
+    swallowClickRef.current = true;
+    setDockPos(drag.pos);
+  };
+
+  const onClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!swallowClickRef.current) return;
+    swallowClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   // Keep following it. A rAF loop rather than ResizeObserver + scroll listeners
   // because the stage moves for reasons neither of those reports: a banner
@@ -106,6 +242,11 @@ export function CallHost() {
         ref={hostRef}
         role="region"
         aria-label="Video call"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onClickCapture={onClickCapture}
         className={cn(
           "fixed isolate overflow-hidden border border-border/60 bg-card",
           docked
@@ -113,8 +254,13 @@ export function CallHost() {
               // below the heads-up banners that must never be covered (z-98+).
               // The bottom offsets clear the floating Help button, which claims
               // this exact corner (h-12 + a 0.75rem gap = 3.75rem).
+              // touch-none so dragging the tile on a phone moves it instead of
+              // scrolling the page underneath.
               cn(
-                "bottom-[calc(9.25rem+env(safe-area-inset-bottom))] right-4 w-[min(19rem,calc(100vw-2rem))] rounded-2xl shadow-2xl md:bottom-[5.25rem] md:right-6",
+                "w-[min(19rem,calc(100vw-2rem))] cursor-grab touch-none rounded-2xl shadow-2xl active:cursor-grabbing",
+                dockPos
+                  ? null
+                  : "bottom-[calc(9.25rem+env(safe-area-inset-bottom))] right-4 md:bottom-[5.25rem] md:right-6",
                 modalOpen ? "z-40" : "z-[60]",
               )
             : "z-20 rounded-3xl shadow-card",
@@ -132,8 +278,8 @@ export function CallHost() {
             <button
               type="button"
               onClick={returnToCall}
-              className="absolute inset-0 z-10 cursor-pointer bg-transparent transition-colors hover:bg-foreground/5"
-              aria-label="Return to the call"
+              className="absolute inset-0 z-10 cursor-grab bg-transparent transition-colors hover:bg-foreground/5 active:cursor-grabbing"
+              aria-label="Return to the call (drag to move)"
             />
           )}
 
@@ -160,6 +306,7 @@ export function CallHost() {
             <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-2 bg-gradient-to-t from-black/70 to-transparent px-2 pb-2 pt-5">
               <button
                 type="button"
+                data-no-drag
                 onClick={call.toggleAudio}
                 disabled={!call.callReady}
                 className="grid h-8 w-8 place-content-center rounded-full bg-white/15 text-white backdrop-blur transition-colors hover:bg-white/25 disabled:opacity-40"
@@ -169,6 +316,7 @@ export function CallHost() {
               </button>
               <button
                 type="button"
+                data-no-drag
                 onClick={returnToCall}
                 className="grid h-8 w-8 place-content-center rounded-full bg-white/15 text-white backdrop-blur transition-colors hover:bg-white/25"
                 aria-label="Back to the call screen"
@@ -177,6 +325,7 @@ export function CallHost() {
               </button>
               <button
                 type="button"
+                data-no-drag
                 onClick={() => void call.endCall()}
                 disabled={call.leaving}
                 className="grid h-8 w-8 place-content-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-600 disabled:opacity-60"
@@ -217,13 +366,19 @@ export function CallHost() {
               <div
                 className={cn("flex flex-wrap justify-center", docked ? "gap-1.5" : "mt-1 gap-2")}
               >
-                <Button size="sm" onClick={() => void call.retryJoin()} disabled={call.leaving}>
+                <Button
+                  size="sm"
+                  data-no-drag
+                  onClick={() => void call.retryJoin()}
+                  disabled={call.leaving}
+                >
                   <RefreshCw className="h-4 w-4" />
                   Try again
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
+                  data-no-drag
                   onClick={() => void call.dismissFatal()}
                   disabled={call.leaving}
                 >
