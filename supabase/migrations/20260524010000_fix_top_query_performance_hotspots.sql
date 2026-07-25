@@ -22,18 +22,19 @@ CREATE INDEX IF NOT EXISTS sessions_teacher_active_schedule_idx
     AND scheduled_at IS NOT NULL;
 
 -- 2) Make the scheduled session sweepers use narrow partial indexes.
-CREATE INDEX IF NOT EXISTS sessions_review_scheduled_due_idx
-  ON public.sessions (scheduled_at, duration_minutes)
-  WHERE status IN ('accepted', 'active')
-    AND escrow_held = true
-    AND scheduled_at IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS sessions_review_unscheduled_due_idx
-  ON public.sessions (updated_at)
-  WHERE status IN ('accepted', 'active')
-    AND escrow_held = true
-    AND scheduled_at IS NULL;
-
+--
+-- (removed) sessions_review_scheduled_due_idx and
+-- sessions_review_unscheduled_due_idx used to live here. They do not work:
+-- move_due_sessions_to_review() below matches due rows with a single OR
+-- spanning both partial predicates, so neither index matches the whole qual and
+-- the planner seq-scans anyway. 20260526040000 dropped them for that reason,
+-- but this migration was applied to production *after* that one and re-created
+-- both, so 20260725030000 had to drop them a second time. Removed from the
+-- source here so a future re-apply cannot bring them back again.
+--
+-- sessions_pending_review_unsettled_idx is kept: settle_pending_review_sessions()
+-- filters on status = 'pending_review' AND escrow_held with no OR, so this one
+-- the planner can actually use.
 CREATE INDEX IF NOT EXISTS sessions_pending_review_unsettled_idx
   ON public.sessions (updated_at)
   WHERE status = 'pending_review'
