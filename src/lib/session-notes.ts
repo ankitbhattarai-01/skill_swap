@@ -224,15 +224,15 @@ export async function generateNotesFromRecording(input: {
   userId: string;
   blob: Blob;
   durationMs: number;
-}): Promise<SessionNotes> {
+}): Promise<{ notes: SessionNotes; legsUsed: number }> {
   const { sessionId, userId, blob, durationMs } = input;
 
   const path = await uploadRecordingLeg({ sessionId, userId, blob });
 
-  const { data, error } = await supabase.functions.invoke<{ notes: SessionNotes }>(
-    "generate-session-notes",
-    { body: { sessionId, audioPath: path, durationMs } },
-  );
+  const { data, error } = await supabase.functions.invoke<{
+    notes: SessionNotes;
+    legsUsed?: number;
+  }>("generate-session-notes", { body: { sessionId, audioPath: path, durationMs } });
 
   if (error) {
     // The function deletes the audio itself, but if it never ran (network
@@ -248,7 +248,9 @@ export async function generateNotesFromRecording(input: {
   }
 
   if (!data?.notes) throw new RecordingError("No notes were returned.");
-  return data.notes;
+  // Older deployments of the function don't report a leg count. Assume both
+  // sides made it rather than warning about a problem we can't actually see.
+  return { notes: data.notes, legsUsed: data.legsUsed ?? 2 };
 }
 
 export async function fetchSessionNotes(sessionId: string): Promise<SessionNotesRow | null> {

@@ -22,7 +22,6 @@ import { sendCallRinging } from "@/lib/call-signals";
 import { startRingback, stopRingback } from "@/lib/sounds";
 import { signSingleAvatarUrl } from "@/lib/avatars";
 import { useFeatureEnabled } from "@/lib/feature-flags";
-import { useRecordingWatcher } from "@/lib/recording-signal";
 import { SessionNotesRecorder } from "@/components/SessionNotesRecorder";
 import { useSessionNotesRecorder } from "@/lib/use-session-notes-recorder";
 import type { Enums } from "@/integrations/supabase/types";
@@ -132,16 +131,16 @@ function VideoCallPage() {
   const isTeacher = Boolean(session && user && session.teacher_id === user.id);
 
   const notesEnabled = useFeatureEnabled("features.session_notes.enabled", true);
-  // Banner for the participant who is NOT recording. Also arms the companion
-  // capture: the recorder hook treats the banner as proof the initiator's
-  // recording really started.
-  const peerRecordingName = useRecordingWatcher({ sessionId, selfUserId: user?.id });
   const notesRecorder = useSessionNotesRecorder({
     sessionId,
     userId: user?.id,
     displayName: viewer?.displayName ?? "Your session partner",
-    peerRecordingName,
   });
+  // Banner for the participant who is NOT recording. It rides the recorder's
+  // own channel: subscribing to that topic a second time here silently
+  // swallowed the recorder's announcements, so the banner never appeared and
+  // the peer's companion capture was never armed.
+  const peerRecordingName = notesRecorder.peerRecordingName;
   // The exit path closes over the recorder once; a ref keeps it pointed at the
   // current recorder state instead of the state at mount, so ending a call
   // always flushes a recording that is actually live.

@@ -8,7 +8,7 @@ import {
   type ActiveRecording,
   type SessionNotes,
 } from "@/lib/session-notes";
-import { useRecordingAnnouncer } from "@/lib/recording-signal";
+import { useRecordingSignal } from "@/lib/recording-signal";
 import { emitRecordingStop, useRecordingStopSignal } from "@/lib/recording-consent";
 import { toast } from "sonner";
 
@@ -43,6 +43,12 @@ export type SessionNotesRecorder = {
   beginCompanion: () => Promise<void>;
   /** Stops the companion capture and uploads its leg (no notes generation). */
   flushCompanion: () => Promise<void>;
+  /**
+   * The other participant's name while THEY are recording, for the warning
+   * banner. Comes from the same channel this hook announces on, so the route
+   * doesn't open a second subscription to the same topic.
+   */
+  peerRecordingName: string | null;
 };
 
 /**
@@ -63,11 +69,8 @@ export function useSessionNotesRecorder(input: {
   sessionId: string;
   userId: string | undefined;
   displayName: string;
-  /** The recording banner name from useRecordingWatcher — non-null while the
-   *  peer announces an active recording. Arms the companion capture. */
-  peerRecordingName: string | null;
 }): SessionNotesRecorder {
-  const { sessionId, userId, displayName, peerRecordingName } = input;
+  const { sessionId, userId, displayName } = input;
 
   const [status, setStatus] = useState<NotesRecorderStatus>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -94,10 +97,16 @@ export function useSessionNotesRecorder(input: {
   const supported = isRecordingSupported();
   const isActive = status === "recording";
 
-  // Tell the other participant we are recording, and keep telling them.
-  // Only the initiator announces; the companion side's capture was consented
-  // to explicitly in the dialog and mirrors the initiator's banner lifetime.
-  useRecordingAnnouncer({ sessionId, userId, displayName, active: isActive });
+  // Tell the other participant we are recording, and keep telling them — and
+  // hear the same from them. Only the initiator announces; the companion side's
+  // capture was consented to explicitly in the dialog and mirrors the
+  // initiator's banner lifetime.
+  const peerRecordingName = useRecordingSignal({
+    sessionId,
+    userId,
+    displayName,
+    active: isActive,
+  });
 
   useEffect(() => {
     if (!isActive) return;
@@ -141,9 +150,11 @@ export function useSessionNotesRecorder(input: {
     // Fire-and-forget: the peer's companion recorder stops and uploads its leg
     // in parallel with our own stop + upload, so the Edge Function usually
     // finds both legs on its first look.
-    void emitRecordingStop(sessionId).catch(() => {
-      // The function waits for the peer leg only briefly; a lost stop signal
-      // just means single-leg notes.
+    void emitRecordingStop(sessionId).catch((error) => {
+      // Not fatal: losing the banner stops the peer's capture too. But this
+      // fails outright until migration 20260725060000 has been run (the kind
+      // CHECK constraint rejects 'stop'), and a silent catch is what hid that.
+      console.warn("[notes] recording stop signal failed", error);
     });
 
     const run = (async () => {
@@ -157,9 +168,18 @@ export function useSessionNotesRecorder(input: {
           blob,
           durationMs,
         });
-        setNotes(generated);
+        setNotes(generated.notes);
         setStatus("ready");
-        toast.success("Session notes are ready.");
+        // A one-sided result used to be completely silent: the notes simply
+        // covered whoever pressed record and nobody could tell why. Say it.
+        if (generated.legsUsed < 2) {
+          toast.warning("Session notes are ready, but only your microphone was captured.", {
+            description:
+              "Your partner's side didn't arrive, so their questions aren't in the notes.",
+          });
+        } else {
+          toast.success("Session notes are ready.");
+        }
       } catch (error) {
         recordingRef.current = null;
         setStatus("failed");
@@ -268,6 +288,11 @@ export function useSessionNotesRecorder(input: {
   // call itself is holding, long after the recording it existed for had stopped.
   // Losing the banner releases the mic on its own, so the capture can never
   // outlive the recording that justified it.
+  //
+  // Both of those paths were dead at once until 2026-07-25: the 'stop' RPC
+  // because its migration hadn't been run, and the banner because the announcer
+  // shared a realtime topic with the watcher and was silently never subscribed
+  // (see recording-signal.ts). Which is why notes only ever held one voice.
   useEffect(() => {
     if (!companionActive) return;
     if (peerRecordingName) {
@@ -314,5 +339,6 @@ export function useSessionNotesRecorder(input: {
     companionActive,
     beginCompanion,
     flushCompanion,
+    peerRecordingName,
   };
 }
