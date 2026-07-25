@@ -60,16 +60,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const bootstrappingRef = useRef(true);
+  // Last identity this tab was pointed at. Supabase persists auth in
+  // localStorage and broadcasts across tabs, so signing in as another account
+  // in a second tab silently re-points THIS tab to that account. Without
+  // noticing the change we keep rendering the previous user's cached snapshots
+  // (dashboard/explore/credits in sessionStorage, notifications in
+  // localStorage) under the new identity — which reads as the app showing you
+  // someone else's requests, or your own request with Accept buttons on it.
+  const lastUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
     bootstrappingRef.current = true;
     setLoading(true);
 
+    // Shared by both the listener and the bootstrap read below: adopt an
+    // identity, and when it REPLACES a different one, drop everything the
+    // previous user left behind and refetch.
+    const adoptUser = (nextUser: User | null) => {
+      const previousId = lastUserIdRef.current;
+      const nextId = nextUser?.id ?? null;
+      if (previousId === nextId) return;
+      lastUserIdRef.current = nextId;
+      // previousId === null covers first sign-in / bootstrap — nothing stale to
+      // clear. Only an actual account switch needs the scrub.
+      if (previousId !== null && nextId !== null) {
+        scrubLocalCaches();
+        void router.invalidate();
+      }
+    };
+
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (!active) return;
       setSession(newSession);
       setUser(newSession?.user ?? null);
+      adoptUser(newSession?.user ?? null);
       if (!bootstrappingRef.current || event === "SIGNED_OUT") {
         setLoading(false);
       }
@@ -92,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (active) {
           setSession(s);
           setUser(s?.user ?? null);
+          adoptUser(s?.user ?? null);
         }
       } finally {
         if (active) {
