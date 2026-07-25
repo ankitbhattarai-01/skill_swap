@@ -162,6 +162,15 @@ export function IncomingCallToast() {
     stopRing();
   }, [call, visible]);
 
+  // Being in the room ends the ring, however the user got there. Only the
+  // Answer button used to stop it, so joining the same call from the dashboard
+  // Join button, a session-page link or a pasted URL left the ring pulsing at
+  // 440/480 Hz every 1.5s for the full 30s timeout - out of the speakers, into
+  // a call whose microphone is already live and unmuted.
+  useEffect(() => {
+    if (call && activeVideoSessionId === call.sessionId) setVisible(false);
+  }, [call, activeVideoSessionId]);
+
   // After slide-out animation, clear the call state.
   useEffect(() => {
     if (visible || !call) return;

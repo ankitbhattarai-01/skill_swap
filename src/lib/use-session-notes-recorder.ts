@@ -83,6 +83,10 @@ export function useSessionNotesRecorder(input: {
   // without this (and without a genuine stop signal) means the asker never
   // started, so the leg is discarded rather than uploaded.
   const companionArmedRef = useRef(false);
+  // Whether the initiator's banner has been seen at all during this capture.
+  // Distinguishes "their recording hasn't reached us yet" from "their recording
+  // is over", which look identical from a null banner alone.
+  const companionSawBannerRef = useRef(false);
   const companionUploadedRef = useRef(false);
   const companionFlushRef = useRef<Promise<void> | null>(null);
   const companionArmTimerRef = useRef<number | null>(null);
@@ -236,6 +240,7 @@ export function useSessionNotesRecorder(input: {
       });
       companionRef.current = recording;
       companionArmedRef.current = false;
+      companionSawBannerRef.current = false;
       companionUploadedRef.current = false;
       setCompanionActive(true);
       companionArmTimerRef.current = window.setTimeout(() => {
@@ -252,9 +257,25 @@ export function useSessionNotesRecorder(input: {
     }
   }, [userId, supported]);
 
-  // The initiator's banner is the proof their recording actually started.
+  // The initiator's banner is the proof their recording actually started - and
+  // the banner going away is proof it ended.
+  //
+  // The 'stop' signal is the fast path, but it rides emit_recording_consent, an
+  // RPC that can simply fail: offline, RLS, or a database whose CHECK constraint
+  // doesn't know the 'stop' kind yet (migration 20260725060000). Every one of
+  // those failures used to leave this device's companion capture running for the
+  // rest of the call - a second live microphone competing with the one the video
+  // call itself is holding, long after the recording it existed for had stopped.
+  // Losing the banner releases the mic on its own, so the capture can never
+  // outlive the recording that justified it.
   useEffect(() => {
-    if (companionActive && peerRecordingName) companionArmedRef.current = true;
+    if (!companionActive) return;
+    if (peerRecordingName) {
+      companionArmedRef.current = true;
+      companionSawBannerRef.current = true;
+      return;
+    }
+    if (companionSawBannerRef.current) void flushCompanionRef.current(true);
   }, [companionActive, peerRecordingName]);
 
   // The initiator stopped (or their call ended): flush our leg.

@@ -710,6 +710,17 @@ function VideoCallPage() {
       const Ctor = await loadJitsiExternalApi();
       if (cancelled || !containerRef.current) return;
 
+      // Never build a second client on top of a first one. dispose() normally
+      // removes the iframe it created, but it is best-effort by design here -
+      // it is wrapped in try/catch, and a teardown that raced a detach can
+      // leave the old iframe sitting in this container. That iframe is still a
+      // full conference endpoint: still holding the microphone, still playing
+      // the room out of the speakers. Two endpoints on one machine means this
+      // device's mic hears its own speakers, and every "hello" loops back
+      // through the room until it decays - which is exactly the repeat.
+      // The container holds no React children, so clearing it is safe.
+      containerRef.current.replaceChildren();
+
       const options: Record<string, unknown> = Object.create(null);
       Object.assign(options, {
         roomName: apiRoomName,
@@ -728,6 +739,23 @@ function VideoCallPage() {
           enableWelcomePage: false,
           enableClosePage: false,
           disableInviteFunctions: true,
+          // Audio processing, pinned on explicitly rather than left to whatever
+          // the tenant's server-side config.js happens to say. These are the
+          // knobs that decide whether the remote voice coming out of this
+          // device's speakers is scrubbed back out of its microphone; with them
+          // off, two people in the same room hear each other's echo build into
+          // a howl. Jitsi defaults them the way we want, but the defaults live
+          // on the provider's side and we don't control that file.
+          disableAP: false, // master switch - off means none of the below run
+          disableAEC: false, // acoustic echo cancellation
+          disableNS: false, // noise suppression (fans, keyboards, room hiss)
+          disableAGC: false, // auto gain
+          disableHPF: false, // high-pass filter, kills low-end rumble
+          // stereo: true makes Jitsi request the mic with echoCancellation,
+          // noiseSuppression AND autoGainControl all forced off - it is the one
+          // setting that silently undoes everything above.
+          audioQuality: { stereo: false },
+          enableNoisyMicDetection: true,
           toolbarButtons: [
             "microphone",
             "camera",
