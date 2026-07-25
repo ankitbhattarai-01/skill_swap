@@ -25,6 +25,9 @@ import nodemailer from "npm:nodemailer@6";
 
 type SupportedType =
   | "session_requested"
+  // Teacher-initiated offer, awaiting the learner's answer. Same shape as
+  // session_requested, opposite direction (20260725050000).
+  | "session_offered"
   | "session_accepted"
   | "session_rejected"
   | "session_cancelled"
@@ -33,6 +36,7 @@ type SupportedType =
 
 const SUPPORTED_TYPES: ReadonlySet<SupportedType> = new Set([
   "session_requested",
+  "session_offered",
   "session_accepted",
   "session_rejected",
   "session_cancelled",
@@ -139,6 +143,7 @@ function buildSubject(notification: NotificationRow, recipientName: string): str
     case "session_completed":
       return `${baseTitle} — credits transferred`;
     case "session_requested":
+    case "session_offered":
     case "session_accepted":
     case "session_rescheduled":
       return `${namePrefix}${baseTitle}`;
