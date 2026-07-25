@@ -109,11 +109,11 @@ export const TOUR_CARDS: TourCard[] = [
     title: "AI Session Notes",
     body: "Record a lesson and get it written up for you. Both of you get the same notes.",
     bullets: [
-      "Tap Record in the call. The other person has to accept first.",
+      "Tap AI Notes in the call. The other person has to accept first.",
       "You get a summary, key topics, takeaways, action items, and open questions.",
       "Download it as a PDF any time afterwards.",
       "The audio is deleted as soon as the notes are written.",
-      "Recording needs Chrome or Edge on a computer.",
+      "Works on any modern browser, phones included.",
     ],
   },
   {

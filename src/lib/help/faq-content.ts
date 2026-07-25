@@ -229,7 +229,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     category: "Video Calls",
     question: "What do I need for the video call?",
     answer:
-      "A modern browser and permission to use your camera and microphone. It works on phones too. If you plan to record for AI notes, use Chrome or Edge on a laptop or desktop.",
+      "A modern browser and permission to use your camera and microphone. It works on phones too, and recording for AI notes works right in the same browsers — no special setup.",
   },
   {
     id: "video-trouble",
@@ -252,28 +252,28 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     category: "AI Session Notes",
     question: "How do I record a session?",
     answer:
-      "In the video room, tap Record. The other person gets a prompt on their screen and has to accept before anything starts. Once they do, your browser asks which tab to share: choose the SkillSwap tab and tick 'Also share tab audio'. That's what lets both voices be captured.",
+      "In the video room, tap AI Notes. The other person gets a prompt on their screen and has to accept before anything starts. Once they do, tap Start recording — each device records its own microphone, so both voices are captured without any screen sharing or extra steps.",
   },
   {
     id: "notes-consent",
     category: "AI Session Notes",
     question: "Does the other person have to agree?",
     answer:
-      "Always. Nothing is captured until they tap Accept on their own screen. They have 30 seconds to answer, and if they decline or don't reply, recording simply never starts. You can ask again later in the call.",
+      "Always. Nothing is captured until they tap Allow on their own screen — and when they do, both devices start recording their own microphone. They have 30 seconds to answer, and if they decline or don't reply, recording simply never starts. You can ask again later in the call.",
   },
   {
     id: "notes-browser",
     category: "AI Session Notes",
-    question: "Why does it say recording needs Chrome or Edge?",
+    question: "Which browsers can record for notes?",
     answer:
-      "Capturing a tab's audio is a Chromium feature. Firefox and Safari don't offer it, and phones can't do it at all. So recording is a desktop Chrome or Edge job. Anyone can still read and download the finished notes on any browser or phone.",
+      "Practically all of them. Each device only records its own microphone, which works in Chrome, Edge, Firefox and Safari, on computers and phones alike. If one side's browser can't record, notes are still generated from the other side's audio.",
   },
   {
     id: "notes-one-sided",
     category: "AI Session Notes",
     question: "The notes only picked up one of us. Why?",
     answer:
-      "That's the 'Also share tab audio' box being left unticked, or a window or whole screen being shared instead of a tab. Your microphone and the tab audio are mixed together, so if the tab half is missing you only get your own side. Tap Record again, pick the Chrome Tab option, and tick the audio box.",
+      "Each device records its own microphone, so one missing side usually means that person's mic permission was denied, their browser couldn't record, or they lost connection before their audio finished uploading. The notes still generate from whichever side made it through. Check the mic permission on the missing side and record again.",
   },
   {
     id: "notes-audio-kept",

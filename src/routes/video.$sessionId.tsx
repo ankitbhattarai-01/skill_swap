@@ -132,19 +132,21 @@ function VideoCallPage() {
   const isTeacher = Boolean(session && user && session.teacher_id === user.id);
 
   const notesEnabled = useFeatureEnabled("features.session_notes.enabled", true);
+  // Banner for the participant who is NOT recording. Also arms the companion
+  // capture: the recorder hook treats the banner as proof the initiator's
+  // recording really started.
+  const peerRecordingName = useRecordingWatcher({ sessionId, selfUserId: user?.id });
   const notesRecorder = useSessionNotesRecorder({
     sessionId,
     userId: user?.id,
     displayName: viewer?.displayName ?? "Your session partner",
+    peerRecordingName,
   });
   // The exit path closes over the recorder once; a ref keeps it pointed at the
   // current recorder state instead of the state at mount, so ending a call
   // always flushes a recording that is actually live.
   const notesRecorderRef = useRef(notesRecorder);
   notesRecorderRef.current = notesRecorder;
-
-  // Banner for the participant who is NOT recording.
-  const peerRecordingName = useRecordingWatcher({ sessionId, selfUserId: user?.id });
 
   // ── Leaving the conference ────────────────────────────────────────────────
   //
@@ -225,6 +227,15 @@ function VideoCallPage() {
         // cap keeps a stalled upload from becoming a trap of its own.
         await Promise.race([
           notesRecorderRef.current.stopAndGenerate().catch(() => {}),
+          new Promise((resolve) => window.setTimeout(resolve, NOTES_FLUSH_MAX_MS)),
+        ]);
+      }
+      if (notesRecorderRef.current.companionActive) {
+        // Same reasoning for the silent companion leg: upload it before the
+        // unmount cleanup would discard it. This is just a stop + upload, so
+        // it's quick, but it still gets the same cap.
+        await Promise.race([
+          notesRecorderRef.current.flushCompanion().catch(() => {}),
           new Promise((resolve) => window.setTimeout(resolve, NOTES_FLUSH_MAX_MS)),
         ]);
       }

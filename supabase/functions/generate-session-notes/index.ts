@@ -1,14 +1,21 @@
 // Turns the recorded audio of a skill-exchange call into structured session
-// notes, then destroys the recording.
+// notes, then destroys the recordings.
 //
-// The client (src/lib/session-notes.ts) captures a MIXED audio stream — the
-// remote participant via tab capture plus the local mic via getUserMedia —
-// uploads it to the private `session-audio` bucket, and calls this function
-// with the object path. We hand the audio to Gemini as multimodal input, which
-// transcribes AND summarises in a single call (no separate speech-to-text
-// service), persist the notes to public.session_notes, and delete the raw
-// audio object in a `finally` block so it never outlives one invocation —
-// success or failure.
+// DUAL-SIDED CAPTURE: each participant's client records ONLY its own mic
+// (src/lib/session-notes.ts) and uploads its leg under
+// {sessionId}/{userId}/... in the private `session-audio` bucket. The
+// recording INITIATOR calls this function with their own leg's path; the
+// peer's client uploads its leg on the 'stop' signal and never calls us. We
+// look for the peer's leg ourselves — waiting briefly, since it may still be
+// uploading — and hand BOTH files to Gemini in one prompt ("these are the two
+// sides of one conversation"). If only one leg exists, notes are generated
+// from that leg alone: a one-sided recording beats no notes.
+//
+// Audio reaches Gemini through the Files API (upload, reference by URI, then
+// delete) rather than inline base64 — two 60-minute legs blow straight past
+// the 20 MB inline request cap. Files are deleted from Gemini after the
+// attempt, and the raw objects in the bucket are destroyed in a `finally`
+// block so no recording outlives one invocation — success or failure.
 //
 // Required Supabase secrets — up to five Gemini keys are tried in order, and
 // ANY failure from one (rate limit, quota, bad key, model error, malformed
@@ -31,7 +38,6 @@
 //   Returns: { notes: SessionNotes, generatedAt: string, cached: boolean }
 
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 import { z } from "npm:zod@3";
 import { corsJson, corsPreflight } from "../_shared/cors.ts";
 
@@ -53,21 +59,37 @@ const GEMINI_MODELS = [
 ];
 
 // One Gemini call may not hang the whole request. Audio transcription is far
-// slower than a text prompt; 110s gives a long recording room to finish.
-const MODEL_CALL_TIMEOUT_MS = 110_000;
+// slower than a text prompt; 100s gives a long recording room to finish.
+const MODEL_CALL_TIMEOUT_MS = 100_000;
 
-// Everything the key x model ladder may spend in total, so a slow failure on
-// an early rung can't push the function past the Edge Function wall clock.
-const GENERATION_BUDGET_MS = 120_000;
+// Everything the key x model ladder may spend in total — INCLUDING the Files
+// API uploads each key needs its own copies of. Sized so peer-leg wait +
+// generation + cleanup stays under the Edge Function wall clock.
+const GENERATION_BUDGET_MS = 110_000;
 
 // Don't start another rung with less than this left — an audio call that has
 // under 10s cannot realistically finish.
 const MIN_ATTEMPT_MS = 10_000;
 
-// Mirrors the bucket's file_size_limit (migration 20260718000000). Checked
-// again here because the bucket cap protects storage, while this protects the
-// Gemini request — inline audio must keep the whole request under 20 MB, and
-// base64 inflates bytes by ~4/3.
+// How long we wait for the peer's leg to appear in the bucket. The peer's
+// client uploads on the same 'stop' signal that triggered this request, so
+// the leg usually lands while we're still downloading the caller's. Missing
+// it is not fatal — notes generate from the caller's leg alone.
+const PEER_LEG_WAIT_MS = 15_000;
+const PEER_LEG_POLL_MS = 2_500;
+
+// A peer leg older than this is an orphan from a crashed earlier run, not part
+// of this recording. Generous because the peer may have hung up (and uploaded)
+// near the start of a long call that the initiator kept recording.
+const PEER_LEG_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
+// Uploading a leg to the Files API and waiting for it to become ACTIVE.
+// Audio activates near-instantly; the poll is a formality.
+const FILE_UPLOAD_TIMEOUT_MS = 60_000;
+const FILE_ACTIVE_TIMEOUT_MS = 15_000;
+
+// Mirrors the bucket's file_size_limit (migration 20260718000000), per leg.
+// Checked again here so a mis-sized object can't be shipped to Gemini.
 const MAX_AUDIO_BYTES = 18 * 1024 * 1024;
 
 // A 'processing' row older than this is treated as abandoned (function timed
@@ -96,6 +118,18 @@ type SessionNotes = {
   actionItems: string[];
   questionsRaised: string[];
 };
+
+type AudioLeg = {
+  bytes: Uint8Array;
+  mimeType: string;
+  /** Display name of the participant whose device recorded this leg. */
+  ownerName: string;
+  role: "teacher" | "learner";
+};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function readSecret(name: string) {
   const value = Deno.env.get(name)?.trim();
@@ -152,7 +186,12 @@ function coerceNotes(raw: unknown): SessionNotes | null {
   return notes;
 }
 
-function buildPrompt(skillName: string | null, teacherName: string, learnerName: string): string {
+function buildPrompt(input: {
+  skillName: string | null;
+  teacherName: string;
+  learnerName: string;
+  legs: Pick<AudioLeg, "ownerName" | "role">[];
+}): string {
   const clean = (value: string | null, fallback: string) =>
     (value ?? "")
       .replace(/[\r\n\t]+/g, " ")
@@ -160,12 +199,27 @@ function buildPrompt(skillName: string | null, teacherName: string, learnerName:
       .trim()
       .slice(0, 80) || fallback;
 
+  const teacher = clean(input.teacherName, "the teacher");
+  const learner = clean(input.learnerName, "the learner");
+  const name = (leg: Pick<AudioLeg, "ownerName" | "role">) =>
+    clean(leg.ownerName, leg.role === "teacher" ? teacher : learner);
+
+  const audioDescription =
+    input.legs.length === 2
+      ? `Attached are TWO audio files: the two sides of ONE live conversation, recorded at the same time on each participant's own device.
+- Audio file 1 is ${name(input.legs[0])}'s microphone (the ${input.legs[0].role}).
+- Audio file 2 is ${name(input.legs[1])}'s microphone (the ${input.legs[1].role}).
+The files are not perfectly time-aligned. Merge them into a single conversation using content and turn-taking; never treat them as two separate calls.`
+      : `Attached is ONE audio file, recorded on ${name(input.legs[0])}'s device (the ${input.legs[0].role}). It may contain both voices, or mostly ${name(input.legs[0])}'s side of the conversation. Base the notes only on what is audible; never invent what the other person might have said.`;
+
   return `You are SkillSwap's session scribe. The attached audio is a recording of a peer-to-peer skill-exchange video call on SkillSwap, a platform where students teach each other.
 
+${audioDescription}
+
 Session context (trusted metadata, not spoken content):
-- Skill being taught: ${clean(skillName, "unspecified")}
-- Teacher: ${clean(teacherName, "the teacher")}
-- Learner: ${clean(learnerName, "the learner")}
+- Skill being taught: ${clean(input.skillName, "unspecified")}
+- Teacher: ${teacher}
+- Learner: ${learner}
 
 Transcribe the audio internally, then produce structured study notes written FOR THE LEARNER, in the second person ("you covered...", "practice..."). Do not output the transcript itself.
 
@@ -186,12 +240,89 @@ Return ONLY valid JSON matching this exact shape, no markdown fence, no prose:
 }`;
 }
 
-async function callGeminiWithAudio(
+// ── Gemini Files API ─────────────────────────────────────────────────────────
+// Files belong to the API key's Google project, so every key in the ladder
+// needs its own copies. Each upload is deleted again after the attempt — raw
+// audio must not linger in Google's file store any more than in our bucket.
+
+type GeminiFileRef = { name: string; uri: string };
+
+async function geminiUploadFile(
+  apiKey: string,
+  bytes: Uint8Array,
+  mimeType: string,
+  displayName: string,
+  timeoutMs: number,
+): Promise<GeminiFileRef> {
+  const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
+      "X-Goog-Upload-Header-Content-Type": mimeType,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({ file: { display_name: displayName } }),
+  });
+  if (!start.ok) {
+    const errText = await start.text().catch(() => "");
+    throw new Error(`Files API start failed ${start.status}: ${errText.slice(0, 300)}`);
+  }
+  const uploadUrl = start.headers.get("x-goog-upload-url");
+  if (!uploadUrl) throw new Error("Files API returned no upload URL");
+
+  const finish = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: bytes,
+  });
+  if (!finish.ok) throw new Error(`Files API upload failed ${finish.status}`);
+  const meta = (await finish.json()) as {
+    file?: { name?: string; uri?: string; state?: string };
+  };
+  const file = meta?.file;
+  if (!file?.name || !file?.uri) throw new Error("Files API returned no file URI");
+
+  // Audio is normally ACTIVE immediately; poll briefly in case it isn't.
+  let state = file.state ?? "ACTIVE";
+  const deadline = Date.now() + FILE_ACTIVE_TIMEOUT_MS;
+  while (state === "PROCESSING" && Date.now() < deadline) {
+    await sleep(1000);
+    const check = await fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}`, {
+      headers: { "x-goog-api-key": apiKey },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!check.ok) break;
+    state = ((await check.json()) as { state?: string }).state ?? "ACTIVE";
+  }
+  if (state !== "ACTIVE") throw new Error(`Files API file stuck in state ${state}`);
+  return { name: file.name, uri: file.uri };
+}
+
+async function geminiDeleteFile(apiKey: string, name: string): Promise<void> {
+  try {
+    await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, {
+      method: "DELETE",
+      headers: { "x-goog-api-key": apiKey },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // Best-effort; Gemini expires files on its own after 48h regardless.
+  }
+}
+
+async function callGeminiWithFiles(
   apiKey: string,
   model: string,
   prompt: string,
-  audioBase64: string,
-  mimeType: string,
+  files: { uri: string; mimeType: string }[],
   timeoutMs: number,
 ): Promise<SessionNotes> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -205,7 +336,10 @@ async function callGeminiWithAudio(
       body: JSON.stringify({
         contents: [
           {
-            parts: [{ text: prompt }, { inlineData: { mimeType, data: audioBase64 } }],
+            parts: [
+              { text: prompt },
+              ...files.map((f) => ({ fileData: { mimeType: f.mimeType, fileUri: f.uri } })),
+            ],
           },
         ],
         generationConfig: {
@@ -247,48 +381,138 @@ async function callGeminiWithAudio(
 
 // The resilience ladder: every key x every model, in order, and ANY failure —
 // rate limit, quota, bad key, unavailable model, timeout, malformed output —
-// falls through to the next rung. The shared deadline bounds the whole sweep:
-// fast failures (401/404/429) cost a second or two each, so the ladder can
-// walk many rungs, while a timed-out audio call naturally exhausts the budget
-// rather than retrying a recording that is simply too long.
+// falls through to the next rung. Per key, the legs are uploaded to the Files
+// API once and shared across that key's model attempts. The shared deadline
+// bounds the whole sweep, uploads included.
 async function generateNotes(
   apiKeys: string[],
   prompt: string,
-  audioBase64: string,
-  mimeType: string,
+  legs: AudioLeg[],
 ): Promise<{ notes: SessionNotes; model: string }> {
   const deadline = Date.now() + GENERATION_BUDGET_MS;
   let lastError = "No Gemini key produced usable notes";
+  const uploaded: { apiKey: string; name: string }[] = [];
 
-  for (let i = 0; i < apiKeys.length; i++) {
-    for (const model of GEMINI_MODELS) {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs < MIN_ATTEMPT_MS) {
-        console.warn("[generate-session-notes] generation budget exhausted");
-        throw new Error(lastError);
-      }
-      try {
-        const notes = await callGeminiWithAudio(
-          apiKeys[i],
-          model,
-          prompt,
-          audioBase64,
-          mimeType,
-          Math.min(MODEL_CALL_TIMEOUT_MS, remainingMs),
-        );
-        if (i > 0) {
-          console.warn(`[generate-session-notes] fallback key ${i + 1} succeeded (${model})`);
+  try {
+    for (let i = 0; i < apiKeys.length; i++) {
+      // Upload this key's copies of the legs. A failed upload skips the key.
+      const files: { uri: string; mimeType: string }[] = [];
+      let uploadsOk = true;
+      for (let legIndex = 0; legIndex < legs.length; legIndex++) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs < MIN_ATTEMPT_MS) {
+          console.warn("[generate-session-notes] generation budget exhausted");
+          throw new Error(lastError);
         }
-        return { notes, model };
-      } catch (attemptError) {
-        lastError = attemptError instanceof Error ? attemptError.message : String(attemptError);
-        console.warn(
-          `[generate-session-notes] key ${i + 1}/${apiKeys.length} ${model}: ${lastError}`,
-        );
+        try {
+          const ref = await geminiUploadFile(
+            apiKeys[i],
+            legs[legIndex].bytes,
+            legs[legIndex].mimeType,
+            `session-leg-${legIndex + 1}`,
+            Math.min(FILE_UPLOAD_TIMEOUT_MS, remainingMs),
+          );
+          uploaded.push({ apiKey: apiKeys[i], name: ref.name });
+          files.push({ uri: ref.uri, mimeType: legs[legIndex].mimeType });
+        } catch (uploadError) {
+          lastError = uploadError instanceof Error ? uploadError.message : String(uploadError);
+          console.warn(
+            `[generate-session-notes] key ${i + 1}/${apiKeys.length} upload: ${lastError}`,
+          );
+          uploadsOk = false;
+          break;
+        }
+      }
+      if (!uploadsOk) continue;
+
+      for (const model of GEMINI_MODELS) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs < MIN_ATTEMPT_MS) {
+          console.warn("[generate-session-notes] generation budget exhausted");
+          throw new Error(lastError);
+        }
+        try {
+          const notes = await callGeminiWithFiles(
+            apiKeys[i],
+            model,
+            prompt,
+            files,
+            Math.min(MODEL_CALL_TIMEOUT_MS, remainingMs),
+          );
+          if (i > 0) {
+            console.warn(`[generate-session-notes] fallback key ${i + 1} succeeded (${model})`);
+          }
+          return { notes, model };
+        } catch (attemptError) {
+          lastError = attemptError instanceof Error ? attemptError.message : String(attemptError);
+          console.warn(
+            `[generate-session-notes] key ${i + 1}/${apiKeys.length} ${model}: ${lastError}`,
+          );
+        }
       }
     }
+    throw new Error(lastError);
+  } finally {
+    // The Files API copies must not outlive the attempt either.
+    await Promise.allSettled(uploaded.map((u) => geminiDeleteFile(u.apiKey, u.name)));
   }
-  throw new Error(lastError);
+}
+
+// ── Peer leg discovery ───────────────────────────────────────────────────────
+
+function mimeFromName(name: string): string {
+  if (name.endsWith(".ogg")) return "audio/ogg";
+  if (name.endsWith(".mp4")) return "audio/mp4";
+  return "audio/webm";
+}
+
+type StoredLeg = { bytes: Uint8Array; mimeType: string };
+
+/**
+ * Looks for the peer's uploaded leg under {sessionId}/{peerId}/, polling
+ * briefly because the peer's client uploads on the same stop signal that
+ * triggered this request. Returns null when no usable leg shows up — the
+ * caller's leg alone still makes notes.
+ */
+async function waitForPeerLeg(
+  admin: SupabaseClient,
+  sessionId: string,
+  peerId: string,
+): Promise<StoredLeg | null> {
+  const prefix = `${sessionId}/${peerId}`;
+  const deadline = Date.now() + PEER_LEG_WAIT_MS;
+
+  while (true) {
+    try {
+      const { data: entries } = await admin.storage.from(AUDIO_BUCKET).list(prefix, {
+        limit: 20,
+        sortBy: { column: "created_at", order: "desc" },
+      });
+      const fresh = (entries ?? []).find((entry) => {
+        if (!entry.name) return false;
+        const created = entry.created_at ? new Date(entry.created_at).getTime() : 0;
+        return Date.now() - created < PEER_LEG_MAX_AGE_MS;
+      });
+      if (fresh) {
+        const path = `${prefix}/${fresh.name}`;
+        const { data: blob, error } = await admin.storage.from(AUDIO_BUCKET).download(path);
+        if (!error && blob) {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          if (bytes.byteLength > 0 && bytes.byteLength <= MAX_AUDIO_BYTES) {
+            return { bytes, mimeType: blob.type?.split(";")[0] || mimeFromName(fresh.name) };
+          }
+        }
+        // Present but unusable (empty, oversized, unreadable): don't keep
+        // waiting for a better one that will never come.
+        console.warn(`[generate-session-notes] peer leg at ${path} unusable, skipping`);
+        return null;
+      }
+    } catch (listError) {
+      console.warn("[generate-session-notes] peer leg lookup failed", listError);
+    }
+    if (Date.now() >= deadline) return null;
+    await sleep(PEER_LEG_POLL_MS);
+  }
 }
 
 Deno.serve(async (req) => {
@@ -302,6 +526,11 @@ Deno.serve(async (req) => {
   // generating". Setting it only after winning the claim would strand the
   // audio the loser just uploaded in the bucket permanently.
   let audioPathToDelete: string | null = null;
+  // Set only after WINNING the claim: the whole session's audio folders are
+  // swept, which also removes the peer's leg and any orphans from crashed
+  // runs. A losing request must NOT sweep — the winner may not have downloaded
+  // the legs yet — so losers fall back to deleting just their own upload.
+  let sweepFolders: string[] | null = null;
   let adminClient: SupabaseClient | null = null;
 
   try {
@@ -434,6 +663,13 @@ Deno.serve(async (req) => {
       }
     }
 
+    // We hold the claim: every leg in this session's folders is now ours to
+    // consume and destroy, including orphans from crashed earlier runs.
+    sweepFolders = [
+      `${sessionId}/${session.learner_id}`,
+      `${sessionId}/${session.teacher_id}`,
+    ];
+
     const { data: audioBlob, error: downloadError } = await adminClient.storage
       .from(AUDIO_BUCKET)
       .download(audioPath);
@@ -452,7 +688,7 @@ Deno.serve(async (req) => {
         .from("session_notes")
         .update({ status: "failed", error: "Recording was empty." })
         .eq("session_id", sessionId);
-      return json(400, { error: "The recording was empty. Check that tab audio was shared." });
+      return json(400, { error: "The recording was empty. Try recording again." });
     }
     if (audioBytes.byteLength > MAX_AUDIO_BYTES) {
       await adminClient
@@ -462,28 +698,54 @@ Deno.serve(async (req) => {
       return json(413, { error: "That recording is too long to process." });
     }
 
-    const [{ data: skill }, { data: profiles }] = await Promise.all([
-      userClient.from("skills").select("name").eq("id", session.skill_id).maybeSingle(),
-      userClient
-        .from("profiles")
-        .select("id, full_name")
-        .in("id", [session.learner_id, session.teacher_id]),
+    // The peer's leg and the session metadata arrive in parallel — the peer
+    // wait dominates, so the metadata fetch rides inside it for free.
+    const peerId = session.learner_id === user.id ? session.teacher_id : session.learner_id;
+    const [peerLeg, [{ data: skill }, { data: profiles }]] = await Promise.all([
+      waitForPeerLeg(adminClient, sessionId, peerId),
+      Promise.all([
+        userClient.from("skills").select("name").eq("id", session.skill_id).maybeSingle(),
+        userClient
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", [session.learner_id, session.teacher_id]),
+      ]),
     ]);
 
     const nameById = new Map((profiles ?? []).map((p) => [p.id, p.full_name]));
-    const prompt = buildPrompt(
-      skill?.name ?? null,
-      nameById.get(session.teacher_id) ?? "the teacher",
-      nameById.get(session.learner_id) ?? "the learner",
-    );
+    const roleOf = (id: string): "teacher" | "learner" =>
+      id === session.teacher_id ? "teacher" : "learner";
 
-    const mimeType = audioBlob.type?.split(";")[0] || "audio/webm";
+    const legs: AudioLeg[] = [
+      {
+        bytes: audioBytes,
+        mimeType: audioBlob.type?.split(";")[0] || mimeFromName(audioPath),
+        ownerName: nameById.get(user.id) ?? "",
+        role: roleOf(user.id),
+      },
+    ];
+    if (peerLeg) {
+      legs.push({
+        bytes: peerLeg.bytes,
+        mimeType: peerLeg.mimeType,
+        ownerName: nameById.get(peerId) ?? "",
+        role: roleOf(peerId),
+      });
+    } else {
+      console.warn("[generate-session-notes] no peer leg found; generating from one leg");
+    }
+
+    const prompt = buildPrompt({
+      skillName: skill?.name ?? null,
+      teacherName: nameById.get(session.teacher_id) ?? "the teacher",
+      learnerName: nameById.get(session.learner_id) ?? "the learner",
+      legs,
+    });
 
     let notes: SessionNotes;
     let usedModel: string;
     try {
-      const audioBase64 = encodeBase64(audioBytes);
-      const generated = await generateNotes(apiKeys, prompt, audioBase64, mimeType);
+      const generated = await generateNotes(apiKeys, prompt, legs);
       notes = generated.notes;
       usedModel = generated.model;
     } catch (llmError) {
@@ -520,18 +782,47 @@ Deno.serve(async (req) => {
     return json(500, { error: "Internal error" });
   } finally {
     // The privacy guarantee: raw audio never survives an invocation, whatever
-    // the outcome. Best-effort — a delete failure is logged, not surfaced,
-    // because the user's notes may well have succeeded.
-    if (audioPathToDelete && adminClient) {
-      const { error: removeError } = await adminClient.storage
-        .from(AUDIO_BUCKET)
-        .remove([audioPathToDelete]);
-      if (removeError) {
-        console.error(
-          "[generate-session-notes] FAILED TO DELETE RAW AUDIO",
-          audioPathToDelete,
-          removeError.message,
-        );
+    // the outcome. Winners sweep both participants' folders (their leg, the
+    // peer's leg, stray orphans); losers remove only their own upload so they
+    // can't yank legs out from under the winner. Best-effort — a delete
+    // failure is logged, not surfaced, because the notes may well have
+    // succeeded.
+    if (adminClient) {
+      try {
+        if (sweepFolders) {
+          for (const folder of sweepFolders) {
+            const { data: entries } = await adminClient.storage
+              .from(AUDIO_BUCKET)
+              .list(folder, { limit: 100 });
+            const paths = (entries ?? [])
+              .filter((entry) => entry.name)
+              .map((entry) => `${folder}/${entry.name}`);
+            if (paths.length === 0) continue;
+            const { error: removeError } = await adminClient.storage
+              .from(AUDIO_BUCKET)
+              .remove(paths);
+            if (removeError) {
+              console.error(
+                "[generate-session-notes] FAILED TO DELETE RAW AUDIO",
+                folder,
+                removeError.message,
+              );
+            }
+          }
+        } else if (audioPathToDelete) {
+          const { error: removeError } = await adminClient.storage
+            .from(AUDIO_BUCKET)
+            .remove([audioPathToDelete]);
+          if (removeError) {
+            console.error(
+              "[generate-session-notes] FAILED TO DELETE RAW AUDIO",
+              audioPathToDelete,
+              removeError.message,
+            );
+          }
+        }
+      } catch (cleanupError) {
+        console.error("[generate-session-notes] audio cleanup failed", cleanupError);
       }
     }
   }

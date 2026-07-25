@@ -2,25 +2,26 @@ import { supabase } from "@/integrations/supabase/client";
 
 // Client-side capture of a skill-exchange call for AI note generation.
 //
-// WHY TWO STREAMS: tab capture alone is not enough. Jitsi plays the REMOTE
-// participant's audio through the tab, so getDisplayMedia picks them up — but
-// it deliberately does NOT play your own microphone back (that would be an
-// echo loop), so display capture on its own yields a one-sided conversation.
-// We therefore capture the mic separately and mix both into a single stream
-// with the Web Audio API before handing it to MediaRecorder. Still free, still
-// entirely client-side, no server-side recording (Jibri) involved.
+// DUAL-SIDED DESIGN: each participant's device records ONLY its own microphone
+// with getUserMedia + MediaRecorder. Your own mic is the one thing every
+// browser that matters (desktop Chrome/Edge/Firefox, Android Chrome, iOS
+// Safari) can capture reliably, so there is no tab capture, no screen picker
+// and no Web Audio mixing here anymore. The initiator records their leg; the
+// peer's client quietly records its own leg after accepting the consent
+// request; both legs are uploaded under {sessionId}/{userId}/ and the Edge
+// Function merges them into one set of notes.
 //
-// BROWSER SUPPORT: tab-audio capture is a Chromium feature. Firefox and Safari
-// do not implement it, and even in Chrome the user must pick a *tab* (not a
-// window or screen) and tick "Also share tab audio" in the picker. We detect
-// the missing audio track and say so explicitly rather than silently producing
-// a mic-only recording.
+// echoCancellation stays ON deliberately: it scrubs the remote voice (played
+// through this device's speakers) out of the local mic, so each leg contains
+// one speaker. That is what lets the Edge Function tell Gemini exactly who is
+// talking in each file.
 
 export const AUDIO_BUCKET = "session-audio";
 
 // Mirrors the bucket's file_size_limit in migration 20260718000000 and the
-// Edge Function's MAX_AUDIO_BYTES. Enforced live during capture so a long call
-// stops cleanly at the limit instead of failing on upload after the fact.
+// Edge Function's MAX_AUDIO_BYTES — per leg. Enforced live during capture so a
+// long call stops cleanly at the limit instead of failing on upload after the
+// fact.
 export const MAX_AUDIO_BYTES = 18 * 1024 * 1024;
 
 // 32 kbps mono Opus is plainly good enough for speech transcription and keeps
@@ -56,64 +57,27 @@ function pickMimeType(): string {
 export function isRecordingSupported(): boolean {
   return (
     typeof navigator !== "undefined" &&
-    typeof navigator.mediaDevices?.getDisplayMedia === "function" &&
     typeof navigator.mediaDevices?.getUserMedia === "function" &&
     typeof MediaRecorder !== "undefined" &&
-    typeof window.AudioContext === "function" &&
     pickMimeType() !== ""
   );
 }
 
 export type ActiveRecording = {
-  /** Resolves with the mixed audio once stop() is called or capture ends. */
+  /** Resolves with the captured audio once stop() is called or capture ends. */
   stop: () => Promise<{ blob: Blob; durationMs: number }>;
   /** Tear everything down without producing a blob (user cancelled). */
   cancel: () => void;
 };
 
 type StartOptions = {
-  /** Fired when capture ends on its own — browser "Stop sharing", or the size cap. */
-  onAutoStop?: (reason: "shared-stopped" | "size-limit") => void;
+  /** Fired when capture ends on its own — the mic vanished, or the size cap. */
+  onAutoStop?: (reason: "capture-ended" | "size-limit") => void;
 };
 
 export async function startSessionRecording(options: StartOptions = {}): Promise<ActiveRecording> {
   if (!isRecordingSupported()) {
-    throw new RecordingError(
-      "Recording needs Chrome or Edge on desktop. This browser cannot capture tab audio.",
-    );
-  }
-
-  // Chrome refuses audio-only display capture: requesting { video: false }
-  // throws, because there is no picker UI without a visual surface. So we ask
-  // for video, then immediately discard the video track and keep only audio.
-  let displayStream: MediaStream;
-  try {
-    displayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "NotAllowedError") {
-      throw new RecordingError("Screen share was cancelled, so nothing was recorded.");
-    }
-    throw new RecordingError("Could not start tab capture.");
-  }
-
-  for (const track of displayStream.getVideoTracks()) {
-    track.stop();
-    displayStream.removeTrack(track);
-  }
-
-  const displayAudio = displayStream.getAudioTracks();
-  if (displayAudio.length === 0) {
-    displayStream.getTracks().forEach((t) => t.stop());
-    throw new RecordingError(
-      'No tab audio was shared. Re-run it, choose the "Chrome Tab" option, and tick "Also share tab audio".',
-    );
+    throw new RecordingError("This browser can't record audio for notes.");
   }
 
   let micStream: MediaStream;
@@ -121,19 +85,15 @@ export async function startSessionRecording(options: StartOptions = {}): Promise
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-  } catch {
-    displayStream.getTracks().forEach((t) => t.stop());
-    throw new RecordingError("Microphone access was denied, so your side could not be recorded.");
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotAllowedError") {
+      throw new RecordingError("Microphone access was denied, so nothing was recorded.");
+    }
+    throw new RecordingError("Could not access the microphone.");
   }
 
-  // Mix: remote (tab) + local (mic) -> one track for MediaRecorder.
-  const audioContext = new AudioContext();
-  const destination = audioContext.createMediaStreamDestination();
-  audioContext.createMediaStreamSource(displayStream).connect(destination);
-  audioContext.createMediaStreamSource(micStream).connect(destination);
-
   const mimeType = pickMimeType();
-  const recorder = new MediaRecorder(destination.stream, {
+  const recorder = new MediaRecorder(micStream, {
     mimeType,
     audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
   });
@@ -144,12 +104,7 @@ export async function startSessionRecording(options: StartOptions = {}): Promise
   let settled = false;
 
   const cleanup = () => {
-    displayStream.getTracks().forEach((t) => t.stop());
     micStream.getTracks().forEach((t) => t.stop());
-    destination.stream.getTracks().forEach((t) => t.stop());
-    void audioContext.close().catch(() => {
-      // Context may already be closed — nothing to do.
-    });
   };
 
   const stopped = new Promise<{ blob: Blob; durationMs: number }>((resolve, reject) => {
@@ -179,11 +134,11 @@ export async function startSessionRecording(options: StartOptions = {}): Promise
     });
   });
 
-  // The user can end capture from Chrome's own "Stop sharing" bar. Treat that
-  // as a normal stop so we still keep whatever was captured up to that point.
-  displayAudio[0].addEventListener("ended", () => {
+  // The mic can end on its own — device unplugged, OS-level permission pulled.
+  // Treat that as a normal stop so whatever was captured is still usable.
+  micStream.getAudioTracks()[0]?.addEventListener("ended", () => {
     if (recorder.state === "recording") {
-      options.onAutoStop?.("shared-stopped");
+      options.onAutoStop?.("capture-ended");
       recorder.stop();
     }
   });
@@ -223,29 +178,28 @@ async function readFunctionError(error: unknown) {
 }
 
 /**
- * Uploads the recording to the private staging bucket and asks the Edge
- * Function to turn it into notes. The function deletes the raw audio as soon
- * as it is done, so nothing here needs to clean up on the happy path — but we
- * do remove the object ourselves if the call never reaches the function.
+ * Uploads one leg of the recording to the private staging bucket. Used by the
+ * initiator (who then invokes the Edge Function) AND by the companion side,
+ * which uploads its leg and does nothing else — the initiator's invocation
+ * picks the peer leg up from the bucket.
+ * Path shape is enforced by both the storage policy and the Edge Function:
+ * {session_id}/{uploader_user_id}/{uuid}.{ext}
  */
-export async function generateNotesFromRecording(input: {
+export async function uploadRecordingLeg(input: {
   sessionId: string;
   userId: string;
   blob: Blob;
-  durationMs: number;
-}): Promise<SessionNotes> {
-  const { sessionId, userId, blob, durationMs } = input;
+}): Promise<string> {
+  const { sessionId, userId, blob } = input;
 
   if (blob.size === 0) {
-    throw new RecordingError("The recording was empty. Check that tab audio was shared.");
+    throw new RecordingError("The recording was empty.");
   }
   if (blob.size > MAX_AUDIO_BYTES) {
     throw new RecordingError("That recording is too long to process.");
   }
 
   const extension = blob.type.includes("ogg") ? "ogg" : blob.type.includes("mp4") ? "mp4" : "webm";
-  // Path shape is enforced by both the storage policy and the Edge Function:
-  // {session_id}/{uploader_user_id}/{uuid}.{ext}
   const path = `${sessionId}/${userId}/${crypto.randomUUID()}.${extension}`;
 
   const { error: uploadError } = await supabase.storage
@@ -255,6 +209,25 @@ export async function generateNotesFromRecording(input: {
   if (uploadError) {
     throw new RecordingError(`Could not upload the recording: ${uploadError.message}`);
   }
+  return path;
+}
+
+/**
+ * Uploads the initiator's leg and asks the Edge Function to turn the session's
+ * audio into notes. The function collects the peer's leg from the bucket by
+ * itself (waiting briefly if it is still uploading), and deletes all audio as
+ * soon as it is done — but we do remove our own object if the call never
+ * reaches the function.
+ */
+export async function generateNotesFromRecording(input: {
+  sessionId: string;
+  userId: string;
+  blob: Blob;
+  durationMs: number;
+}): Promise<SessionNotes> {
+  const { sessionId, userId, blob, durationMs } = input;
+
+  const path = await uploadRecordingLeg({ sessionId, userId, blob });
 
   const { data, error } = await supabase.functions.invoke<{ notes: SessionNotes }>(
     "generate-session-notes",

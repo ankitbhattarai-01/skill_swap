@@ -47,11 +47,19 @@ export function SessionNotesRecorder({
 
   const startRequest = () => {
     if (!supported) {
-      toast.error("Recording needs Chrome or Edge on desktop.");
+      toast.error("This browser can't record audio for notes.");
       return;
     }
     setAskOpen(true);
     consent.request();
+  };
+
+  // Accepting starts this device's own silent mic capture — the click is the
+  // user gesture the mic permission prompt hangs off. If capture fails here,
+  // the accept still stands and the asker records alone.
+  const allowAndRecord = () => {
+    consent.accept();
+    void recorder.beginCompanion();
   };
 
   const beginRecording = () => {
@@ -67,7 +75,11 @@ export function SessionNotesRecorder({
           {/* 'ready' is included so a second stretch of the same call can be
               recorded — the notes are regenerated from the newer audio. */}
           {status === "idle" || status === "failed" || status === "ready" ? (
-            <Button variant="outline" onClick={startRequest} disabled={disabled}>
+            <Button
+              variant="outline"
+              onClick={startRequest}
+              disabled={disabled || recorder.companionActive}
+            >
               <Sparkles className="h-4 w-4" />
               {status === "failed"
                 ? "Retry AI Notes"
@@ -103,8 +115,8 @@ export function SessionNotesRecorder({
                       {peerName} is in
                     </DialogTitle>
                     <DialogDescription className="pt-1">
-                      When the screen picker opens, choose <strong>This tab</strong> and turn on{" "}
-                      <strong>Also share tab audio</strong> so both voices are captured.
+                      Recording runs on both devices — each side captures its own microphone, so
+                      both voices come through clearly. Start whenever you’re ready.
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
@@ -182,15 +194,16 @@ export function SessionNotesRecorder({
               {peerName} wants to record for AI notes
             </DialogTitle>
             <DialogDescription className="pt-1">
-              SkillSwap turns the call audio into study notes, then deletes the recording. You’ll
-              both be able to download the notes.
+              If you allow it, both devices record their own microphone — your browser may ask for
+              mic access. SkillSwap turns the audio into study notes, then deletes the recordings.
+              You’ll both be able to download the notes.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={consent.decline}>
               Not now
             </Button>
-            <Button variant="hero" onClick={consent.accept}>
+            <Button variant="hero" onClick={allowAndRecord}>
               <Check className="h-4 w-4" />
               Allow
             </Button>

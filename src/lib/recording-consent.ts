@@ -11,8 +11,14 @@ import { toast } from "sonner";
 // forged accept is the dangerous direction. RLS guarantees only a real
 // participant of the session can produce an accept, exactly like the call
 // decline signal.
+//
+// The same table also carries 'stop' (migration 20260725060000): when the
+// initiator ends their recording, the peer's client hears the stop and flushes
+// its own companion leg. A stop uploads audio the peer already consented to
+// capture, so it rides the RLS-gated table too rather than spoofable
+// broadcast.
 
-type ConsentKind = "request" | "accept" | "decline";
+type ConsentKind = "request" | "accept" | "decline" | "stop";
 
 /** State of the request *I* sent to the other participant. */
 export type OutgoingConsent = "idle" | "waiting" | "accepted" | "declined" | "timeout";
@@ -27,6 +33,55 @@ async function emitRecordingConsent(sessionId: string, kind: ConsentKind): Promi
     p_kind: kind,
   });
   if (error) throw error;
+}
+
+/**
+ * Sent by the recording initiator when they stop (or the call ends), so the
+ * peer's companion recorder knows to stop and upload its leg.
+ */
+export async function emitRecordingStop(sessionId: string): Promise<void> {
+  return emitRecordingConsent(sessionId, "stop");
+}
+
+/**
+ * Fires `onPeerStop` when the OTHER participant emits a recording stop.
+ * Lives on its own channel so the recorder hook (in the video route) can
+ * listen without reaching into the consent dialog's hook instance.
+ */
+export function useRecordingStopSignal(input: {
+  sessionId: string;
+  selfUserId: string | undefined;
+  onPeerStop: () => void;
+}): void {
+  const { sessionId, selfUserId, onPeerStop } = input;
+  // Keep the subscription stable while always calling the latest handler.
+  const onPeerStopRef = useRef(onPeerStop);
+  onPeerStopRef.current = onPeerStop;
+
+  useEffect(() => {
+    if (!selfUserId) return;
+    const channel = supabase
+      .channel(`recording-stop-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "recording_consent_signals",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (msg) => {
+          const row = msg.new as { from_user_id?: string; kind?: ConsentKind };
+          if (!row || row.from_user_id === selfUserId) return;
+          if (row.kind === "stop") onPeerStopRef.current();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId, selfUserId]);
 }
 
 export type RecordingConsent = {
