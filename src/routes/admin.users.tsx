@@ -5,6 +5,7 @@ import {
   Ban,
   CheckCircle2,
   ClipboardCopy,
+  Coins,
   Eye,
   FileText,
   Loader2,
@@ -29,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -54,11 +56,13 @@ import { useAuth } from "@/lib/auth-context";
 import {
   ADMIN_STRIKE_COUNTS_KEY,
   ADMIN_USERS_KEY,
+  ADMIN_USER_CREDITS_KEY,
   ADMIN_USER_STRIKES_KEY,
   adminErrorMessage,
   hasAdminPermission,
   useAdminPermissions,
   useAdminStrikeCounts,
+  useAdminUserCredits,
   useAdminUserStrikes,
   useAdminUsers,
   type AdminUserRow,
@@ -69,6 +73,10 @@ export const Route = createFileRoute("/admin/users")({
   head: () => ({ meta: [{ title: "Users - SkillSwap Admin" }] }),
   component: AdminUsersPage,
 });
+
+// Mirrors the ceiling admin_grant_user_credits enforces, so the dialog can say
+// no before the round trip does. Keep the two in step.
+const MAX_CREDIT_GRANT = 1000;
 
 const SORT_OPTIONS = [
   { value: "sessions", label: "Most sessions" },
@@ -103,6 +111,9 @@ function AdminUsersPage() {
   // Removing a strike overturns a penalty the system (or another moderator)
   // applied, so it sits behind moderation:override rather than plain update.
   const canManageStrikes = hasAdminPermission(permissions, "moderation", "override");
+  // Adding credits mints balance out of nothing, so it takes the same
+  // permission as the maker-checker wallet adjustment in /admin/finance.
+  const canGrantCredits = hasAdminPermission(permissions, "wallet", "override");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "admins" | "standard">("all");
@@ -129,6 +140,10 @@ function AdminUsersPage() {
     strikeId?: string;
     description: string;
   } | null>(null);
+  const [creditTarget, setCreditTarget] = useState<{ id: string; label: string | null } | null>(
+    null,
+  );
+  const [creditAmount, setCreditAmount] = useState("5");
   const [ticketRef, setTicketRef] = useState("");
   const [justification, setJustification] = useState("");
   const [revealed, setRevealed] = useState<Record<string, unknown> | null>(null);
@@ -177,6 +192,8 @@ function AdminUsersPage() {
   const visibleUserIds = useMemo(() => filteredUsers.map((row) => row.id), [filteredUsers]);
   const strikeCountsQuery = useAdminStrikeCounts(canRead, visibleUserIds);
   const strikeCounts = strikeCountsQuery.data ?? {};
+  const creditsQuery = useAdminUserCredits(canRead, visibleUserIds);
+  const creditBalances = creditsQuery.data ?? {};
   const strikesQuery = useAdminUserStrikes(strikeTarget?.id ?? null);
   const strikeLedger = strikesQuery.data ?? null;
   const removableStrikes = (strikeLedger?.strikes ?? []).filter((strike) => !strike.revoked_at);
@@ -211,6 +228,61 @@ function AdminUsersPage() {
     setStrikeAction(null);
     setTicketRef("");
     setJustification("");
+  };
+
+  const closeCredits = () => {
+    setCreditTarget(null);
+    setCreditAmount("5");
+    setTicketRef("");
+    setJustification("");
+  };
+
+  const openCredits = (row: AdminUserRow) => {
+    setCreditAmount("5");
+    setTicketRef("");
+    setJustification("");
+    setCreditTarget({ id: row.id, label: row.masked_email ?? row.masked_name });
+  };
+
+  const runCreditGrant = async () => {
+    if (!creditTarget || busy) return;
+    const amount = Number(creditAmount);
+    if (!Number.isInteger(amount) || amount < 1 || amount > MAX_CREDIT_GRANT) {
+      toast.error(`Enter a whole number of credits between 1 and ${MAX_CREDIT_GRANT}.`);
+      return;
+    }
+    if (ticketRef.trim().length < 3 || justification.trim().length < 8) {
+      toast.error("Ticket reference and justification are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("admin_grant_user_credits", {
+        p_user_id: creditTarget.id,
+        p_amount: amount,
+        p_reason_code: "wallet:admin_grant",
+        p_justification: justification.trim(),
+        p_ticket_ref: ticketRef.trim(),
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      const newBalance = (data as { new_balance?: number } | null)?.new_balance;
+      toast.success(
+        newBalance == null
+          ? `${amount} credit${amount === 1 ? "" : "s"} added.`
+          : `${amount} credit${amount === 1 ? "" : "s"} added - new balance ${newBalance}.`,
+      );
+      closeCredits();
+      await queryClient.invalidateQueries({
+        queryKey: ADMIN_USER_CREDITS_KEY(user?.id, visibleUserIds.join(",")),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not add the credits.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openStrikes = (row: AdminUserRow) => {
@@ -513,6 +585,7 @@ function AdminUsersPage() {
             <TableRow>
               <TableHead>User</TableHead>
               <TableHead>Activity</TableHead>
+              <TableHead>Credits</TableHead>
               <TableHead>Admin</TableHead>
               <TableHead>Last sign-in</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -544,6 +617,19 @@ function AdminUsersPage() {
                         <FileText className="ml-1 inline h-3 w-3 text-amber-400" />
                       )}
                     </div>
+                  </div>
+                </TableCell>
+                <TableCell data-label="Credits">
+                  <div className="text-right md:text-left">
+                    {creditBalances[row.id] == null ? (
+                      <span className="text-sm text-muted-foreground">
+                        {creditsQuery.isLoading ? "..." : "-"}
+                      </span>
+                    ) : (
+                      <span className="text-sm font-medium tabular-nums">
+                        {creditBalances[row.id]}
+                      </span>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell data-label="Admin">
@@ -593,6 +679,16 @@ function AdminUsersPage() {
                     >
                       <ShieldAlert className="h-4 w-4" /> Strikes
                     </Button>
+                    {canGrantCredits && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Add credits to this account"
+                        onClick={() => openCredits(row)}
+                      >
+                        <Coins className="h-4 w-4" /> Add credits
+                      </Button>
+                    )}
                     {canGrantAdmin &&
                       row.id !== user.id &&
                       (row.has_admin_role ? (
@@ -736,6 +832,14 @@ function AdminUsersPage() {
                 <DetailField label="Learning mode" value={detailUser.learning_mode ?? "N/A"} />
                 <DetailField label="Sessions" value={String(detailUser.session_count)} />
                 <DetailField label="Reports" value={String(detailUser.report_count)} />
+                <DetailField
+                  label="Credits"
+                  value={
+                    creditBalances[detailUser.id] == null
+                      ? "N/A"
+                      : String(creditBalances[detailUser.id])
+                  }
+                />
                 <DetailField label="Created" value={formatDate(detailUser.created_at)} />
                 <DetailField label="Last sign-in" value={formatDate(detailUser.last_sign_in_at)} />
                 <DetailField
@@ -853,6 +957,102 @@ function AdminUsersPage() {
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {adminTarget?.mode === "grant" ? "Make admin" : "Remove admin"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(creditTarget)} onOpenChange={(open) => !open && closeCredits()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add credits</DialogTitle>
+            <DialogDescription>
+              The credits land on the balance immediately and show up in the user's credit history.
+              The change is recorded in the audit chain. To take credits away, use the maker-checker
+              adjustment in Finance.
+            </DialogDescription>
+          </DialogHeader>
+          {creditTarget && (
+            <div className="rounded-xl border border-border/60 bg-background/40 p-3 text-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Target</div>
+              <div className="mt-1 break-all font-medium">
+                {creditTarget.label ?? creditTarget.id}
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                {creditBalances[creditTarget.id] == null ? (
+                  "Current balance unavailable"
+                ) : (
+                  <>
+                    Balance {creditBalances[creditTarget.id]}
+                    {creditGrantPreview(creditAmount) !== null && (
+                      <>
+                        {" -> "}
+                        <span className="font-medium text-foreground">
+                          {creditBalances[creditTarget.id] + creditGrantPreview(creditAmount)!}
+                        </span>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {creditTarget?.id === user.id && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+              You are adding credits to your own account. That is allowed, but the audit event
+              records it as a self-grant.
+            </div>
+          )}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="credit-amount">Credits to add</Label>
+              <Input
+                id="credit-amount"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_CREDIT_GRANT}
+                step={1}
+                value={creditAmount}
+                onChange={(event) => setCreditAmount(event.target.value)}
+              />
+              <div className="flex flex-wrap gap-1">
+                {[5, 10, 25, 50].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setCreditAmount(String(preset))}
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs transition-colors",
+                      creditAmount === String(preset)
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-card text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    +{preset}
+                  </button>
+                ))}
+                <span className="self-center pl-1 text-xs text-muted-foreground">
+                  max {MAX_CREDIT_GRANT} per action
+                </span>
+              </div>
+            </div>
+            <ReasonFields
+              ticketRef={ticketRef}
+              justification={justification}
+              onTicketRefChange={setTicketRef}
+              onJustificationChange={setJustification}
+              ticketPlaceholder="FIN- or SUP- reference"
+              justificationPlaceholder="Why the credits are being added (failed payment, goodwill after a broken session, ...)."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeCredits}>
+              Cancel
+            </Button>
+            <Button disabled={busy} onClick={() => void runCreditGrant()}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              <Coins className="h-4 w-4" /> Add credits
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1167,6 +1367,14 @@ function revealedPiiEntries(revealed: Record<string, unknown>) {
   PII_FIELD_ORDER.forEach(push);
   Object.keys(revealed).forEach(push);
   return entries;
+}
+
+// The amount box is free text until it is submitted, so the "new balance"
+// preview only renders for a value the RPC would actually accept.
+function creditGrantPreview(value: string): number | null {
+  const amount = Number(value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > MAX_CREDIT_GRANT) return null;
+  return amount;
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {

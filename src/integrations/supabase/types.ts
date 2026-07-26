@@ -1770,6 +1770,22 @@ export type Database = {
         };
         Returns: Json;
       };
+      get_admin_user_credits: {
+        Args: {
+          p_user_ids: string[];
+        };
+        Returns: Json;
+      };
+      admin_grant_user_credits: {
+        Args: {
+          p_user_id: string;
+          p_amount: number;
+          p_reason_code: string;
+          p_justification: string;
+          p_ticket_ref: string;
+        };
+        Returns: Json;
+      };
       get_admin_skills_catalog: {
         Args: Record<string, never>;
         Returns: Json;

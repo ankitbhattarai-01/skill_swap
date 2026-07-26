@@ -199,6 +199,10 @@ function CreditsPage() {
         // eSewa"/"· Khalti"). Credits entering the system, not teaching income,
         // so it gets its own kind and stays out of the Earned card.
         const isTopUp = description.startsWith("Credit top-up");
+        // Credits an admin put on the account by hand (admin_grant_user_credits
+        // writes "Credits added by an admin"). Also credits entering the system
+        // rather than teaching income, so it reads like the welcome bonus.
+        const isAdminGrant = description.startsWith("Credits added by an admin");
         // The counterparty is the other participant in the session. For escrow
         // rows one of from_user/to_user is NULL, so derive it from the session.
         const iAmTeacher = session?.teacher_id === user.id;
@@ -220,6 +224,15 @@ function CreditsPage() {
             date: row.created_at,
             amount: Math.abs(row.amount),
             kind: "topup",
+          };
+        }
+        if (isAdminGrant) {
+          return {
+            id: row.id,
+            title: description,
+            date: row.created_at,
+            amount: Math.abs(row.amount),
+            kind: "bonus",
           };
         }
         if (isRefund) {

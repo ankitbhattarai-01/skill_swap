@@ -445,6 +445,9 @@ export const ADMIN_USER_STRIKES_KEY = (
 export const ADMIN_STRIKE_COUNTS_KEY = (userId: string | null | undefined, subjectIds: string) =>
   ["admin-strike-counts", userId, subjectIds] as const;
 
+export const ADMIN_USER_CREDITS_KEY = (userId: string | null | undefined, subjectIds: string) =>
+  ["admin-user-credits", userId, subjectIds] as const;
+
 export const ADMIN_COMPLIANCE_DASHBOARD_KEY = (userId: string | null | undefined) =>
   ["admin-compliance-dashboard", userId] as const;
 
@@ -804,6 +807,32 @@ export function useAdminStrikeCounts(enabled: boolean, userIds: string[]) {
       if (error) {
         // Until the migration is applied the RPC doesn't exist. Degrade to "no
         // badges" rather than failing the whole users page.
+        const code = (error as { code?: string }).code;
+        if (code === "PGRST202" || code === "42883") return {} as Record<string, number>;
+        throw error;
+      }
+      return (data ?? {}) as Record<string, number>;
+    },
+  });
+}
+
+// Credit balance for the users currently on screen, keyed by user id, so the
+// table can show what everyone is holding without a query per row.
+export function useAdminUserCredits(enabled: boolean, userIds: string[]) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ADMIN_USER_CREDITS_KEY(user?.id, userIds.join(",")),
+    enabled: Boolean(user?.id) && enabled && userIds.length > 0,
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_admin_user_credits", {
+        p_user_ids: userIds,
+      });
+      if (error) {
+        // Until the migration is applied the RPC doesn't exist. Degrade to "no
+        // balances shown" rather than failing the whole users page.
         const code = (error as { code?: string }).code;
         if (code === "PGRST202" || code === "42883") return {} as Record<string, number>;
         throw error;
