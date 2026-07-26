@@ -99,36 +99,51 @@ function sessionWindow({ scheduledAt, durationMinutes }: SessionCalendarDetails)
   return { start, end };
 }
 
+// Calendar entries used to carry the raw provider room URL
+// (https://8x8.vc/vpaas-magic-cookie-.../skillswap-...), which is neither
+// recognisably SkillSwap nor a good place to land: opening it straight from the
+// invite drops you into 8x8's own client, outside the app that mints the room
+// token and enforces the join window. Point invites at the in-app call page
+// instead — same room, but you arrive signed in, through SkillSwap.
+export function buildSessionJoinUrl(sessionId: string) {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  return origin ? `${origin}/video/${sessionId}` : "";
+}
+
 function sessionTitleAndDetails({
+  sessionId,
   skillName,
   meetLink,
   organizerName,
   attendeeName,
 }: SessionCalendarDetails) {
   const title = `SkillSwap: ${skillName}`;
-  const details = `${organizerName} teaching ${skillName} to ${attendeeName}.${meetLink ? `\nJoin: ${meetLink}` : ""}`;
-  return { title, details };
+  // meetLink stays the gate: no provider room means there is nothing to join,
+  // so the invite is just a time and a description.
+  const joinUrl = meetLink ? buildSessionJoinUrl(sessionId) : "";
+  const details = `${organizerName} teaching ${skillName} to ${attendeeName}.${joinUrl ? `\nJoin on SkillSwap: ${joinUrl}` : ""}`;
+  return { title, details, joinUrl };
 }
 
 // Opens Google Calendar with a pre-filled "new event" form in a new tab.
 // https://calendar.google.com/calendar/render?action=TEMPLATE&...
 export function buildGoogleCalendarUrl(details: SessionCalendarDetails) {
   const { start, end } = sessionWindow(details);
-  const { title, details: description } = sessionTitleAndDetails(details);
+  const { title, details: description, joinUrl } = sessionTitleAndDetails(details);
   const params = new URLSearchParams({
     action: "TEMPLATE",
     text: title,
     dates: `${formatCalendarUtc(start)}/${formatCalendarUtc(end)}`,
     details: description,
   });
-  if (details.meetLink) params.set("location", details.meetLink);
+  if (joinUrl) params.set("location", joinUrl);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 // Opens Outlook on the web with a pre-filled "new event" form in a new tab.
 export function buildOutlookCalendarUrl(details: SessionCalendarDetails) {
   const { start, end } = sessionWindow(details);
-  const { title, details: description } = sessionTitleAndDetails(details);
+  const { title, details: description, joinUrl } = sessionTitleAndDetails(details);
   const params = new URLSearchParams({
     path: "/calendar/action/compose",
     rru: "addevent",
@@ -137,19 +152,13 @@ export function buildOutlookCalendarUrl(details: SessionCalendarDetails) {
     enddt: end.toISOString(),
     body: description,
   });
-  if (details.meetLink) params.set("location", details.meetLink);
+  if (joinUrl) params.set("location", joinUrl);
   return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
 }
 
-export function buildSessionIcsFile({
-  sessionId,
-  skillName,
-  scheduledAt,
-  durationMinutes,
-  meetLink,
-  organizerName,
-  attendeeName,
-}: SessionCalendarDetails) {
+export function buildSessionIcsFile(details: SessionCalendarDetails) {
+  const { sessionId, scheduledAt, durationMinutes } = details;
+  const { title, details: description, joinUrl } = sessionTitleAndDetails(details);
   const start = new Date(scheduledAt);
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
   const fmt = formatCalendarUtc;
@@ -163,10 +172,10 @@ export function buildSessionIcsFile({
     `DTSTAMP:${fmt(new Date())}`,
     `DTSTART:${fmt(start)}`,
     `DTEND:${fmt(end)}`,
-    `SUMMARY:${escape(`SkillSwap: ${skillName}`)}`,
-    `DESCRIPTION:${escape(`${organizerName} teaching ${skillName} to ${attendeeName}.${meetLink ? `\nJoin: ${meetLink}` : ""}`)}`,
-    meetLink ? `URL:${meetLink}` : null,
-    meetLink ? `LOCATION:${escape(meetLink)}` : null,
+    `SUMMARY:${escape(title)}`,
+    `DESCRIPTION:${escape(description)}`,
+    joinUrl ? `URL:${joinUrl}` : null,
+    joinUrl ? `LOCATION:${escape(joinUrl)}` : null,
     "END:VEVENT",
     "END:VCALENDAR",
   ].filter((line): line is string => line !== null);
