@@ -2,8 +2,9 @@
 //
 // Called by a Postgres AFTER INSERT trigger on `public.notifications` (see
 // migration 20260518000000_session_email_dispatch.sql). For every row with a
-// `session_*` type the trigger POSTs `{ notificationId }` here, signed with
-// HMAC-SHA256 using the shared secret from `private.email_dispatch_config`.
+// `session_*` type — plus `welcome`, added in 20260725070000 — the trigger
+// POSTs `{ notificationId }` here, signed with HMAC-SHA256 using the shared
+// secret from `private.email_dispatch_config`.
 //
 // This function:
 //   1. Verifies the HMAC signature — refuses anything else, so the function
@@ -19,6 +20,15 @@
 //   GMAIL_FROM_NAME        - display name shown in inbox (e.g. "SkillSwap Connect")
 //   EMAIL_WEBHOOK_SECRET   - matches private.email_dispatch_config.shared_secret
 //   APP_PUBLIC_URL         - e.g. "https://skillswap-connect.pages.dev" (no trailing slash)
+//   EMAIL_TIMEZONE         - optional IANA zone for rendering session times,
+//                            defaults to Asia/Kathmandu
+//
+// Deliverability note: every message this function sends is transactional —
+// it is addressed to one person about one thing that just happened on their
+// own account. That shape has to be visible in the headers and the body, or
+// Gmail scores it as unsolicited bulk mail. See docs/EMAIL_SETUP.md for the
+// full reasoning behind the choices here (no List-Unsubscribe, no name-first
+// subject lines, real session detail in the body).
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import nodemailer from "npm:nodemailer@6";
@@ -32,7 +42,13 @@ type SupportedType =
   | "session_rejected"
   | "session_cancelled"
   | "session_completed"
-  | "session_rescheduled";
+  | "session_rescheduled"
+  // Account created. Fired once per user by the AFTER INSERT trigger on
+  // public.profiles (20260725070000) — the only non-session type this
+  // function handles, and the only mail an OAuth signup ever produces
+  // (Supabase sends no confirmation mail when Google already verified the
+  // address).
+  | "welcome";
 
 const SUPPORTED_TYPES: ReadonlySet<SupportedType> = new Set([
   "session_requested",
@@ -42,6 +58,7 @@ const SUPPORTED_TYPES: ReadonlySet<SupportedType> = new Set([
   "session_cancelled",
   "session_completed",
   "session_rescheduled",
+  "welcome",
 ]);
 
 type NotificationRow = {
@@ -64,6 +81,29 @@ type RenderedEmail = {
   subject: string;
   html: string;
   text: string;
+};
+
+// Everything we can say about the session this notification is about, resolved
+// from `metadata.sessionId`. All fields are optional: the notification is the
+// source of truth for *what happened*, this is only enrichment, so a deleted
+// session or an unapplied migration degrades to a thinner email rather than a
+// failed send.
+type SessionContext = {
+  skillName: string | null;
+  whenText: string | null;
+  durationText: string | null;
+  creditsText: string | null;
+  counterpartName: string | null;
+  counterpartLabel: string | null;
+};
+
+const EMPTY_CONTEXT: SessionContext = {
+  skillName: null,
+  whenText: null,
+  durationText: null,
+  creditsText: null,
+  counterpartName: null,
+  counterpartLabel: null,
 };
 
 function readSecret(name: string): string {
@@ -127,45 +167,258 @@ function absoluteLink(path: string | null): string {
   return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
-function buildSubject(notification: NotificationRow, recipientName: string): string {
-  // Personalize with recipient's first name when we have it — Gmail treats
-  // first-name subjects as a positive engagement signal. Keep it conversational
-  // and avoid bracket-prefixes (Gmail treats unknown-brand brackets as low-rep).
-  const namePrefix = recipientName ? `${recipientName}, ` : "";
+// Session times are stored as timestamptz and rendered here without a browser
+// to supply a locale, so pick the zone explicitly. Deno ships full ICU, so any
+// IANA name works; an invalid one falls back to UTC rather than throwing.
+const EMAIL_TIMEZONE = Deno.env.get("EMAIL_TIMEZONE")?.trim() || "Asia/Kathmandu";
+
+function formatWhen(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: EMAIL_TIMEZONE,
+      timeZoneName: "short",
+    }).format(date);
+  } catch {
+    return `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  }
+}
+
+function counterpartLabelFor(type: string, recipientIsTeacher: boolean): string {
+  switch (type) {
+    case "session_requested":
+      return "Requested by";
+    case "session_offered":
+      return "Offered by";
+    default:
+      return recipientIsTeacher ? "Learner" : "Teacher";
+  }
+}
+
+// Pull the concrete session facts into the email. Without this the entire body
+// is the notification's own one-liner ("Exam Strategy • 2 credits"), which is
+// too thin to read as a real transactional message — to a human *and* to a
+// content classifier, which sees a couple of words wrapped around a single
+// call-to-action link and scores it accordingly.
+async function loadSessionContext(
+  supabase: ReturnType<typeof createClient>,
+  notification: NotificationRow,
+): Promise<SessionContext> {
+  const meta = notification.metadata ?? {};
+  const asId = (value: unknown) => (typeof value === "string" && value ? value : null);
+  const sessionId = asId(meta.sessionId);
+  if (!sessionId) return EMPTY_CONTEXT;
+
+  const teacherId = asId(meta.teacherId);
+  const learnerId = asId(meta.learnerId);
+  const recipientIsTeacher = teacherId !== null && notification.user_id === teacherId;
+  const counterpartId = recipientIsTeacher
+    ? learnerId
+    : notification.user_id === learnerId
+      ? teacherId
+      : null;
+
+  const [sessionResult, counterpartResult] = await Promise.all([
+    supabase
+      .from("sessions")
+      .select("credits, duration_minutes, scheduled_at, skills(name)")
+      .eq("id", sessionId)
+      .maybeSingle(),
+    counterpartId
+      ? supabase.from("profiles").select("full_name").eq("id", counterpartId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (sessionResult.error) {
+    console.error("[send-session-email] session lookup failed", sessionResult.error);
+  }
+
+  const session = sessionResult.data as {
+    credits: number | null;
+    duration_minutes: number | null;
+    scheduled_at: string | null;
+    skills: { name: string | null } | { name: string | null }[] | null;
+  } | null;
+
+  // PostgREST returns an embedded to-one relation as an object, but older
+  // clients and views can hand back a single-element array — accept both.
+  const skill = Array.isArray(session?.skills) ? session?.skills[0] : session?.skills;
+  const credits = session?.credits ?? null;
+  const duration = session?.duration_minutes ?? null;
+  const counterpartName =
+    (counterpartResult.data as { full_name: string | null } | null)?.full_name ?? null;
+
+  return {
+    skillName: skill?.name ?? null,
+    whenText: formatWhen(session?.scheduled_at ?? null),
+    durationText: duration ? `${duration} minutes` : null,
+    creditsText: credits === null ? null : `${credits} ${credits === 1 ? "credit" : "credits"}`,
+    counterpartName,
+    counterpartLabel: counterpartName
+      ? counterpartLabelFor(notification.type, recipientIsTeacher)
+      : null,
+  };
+}
+
+function buildSubject(
+  notification: NotificationRow,
+  recipientName: string,
+  ctx: SessionContext,
+): string {
+  // Deliberately NOT prefixed with the recipient's first name. "Dwane, Utsab
+  // Karki requested a session" is the exact shape of cold bulk outreach, and
+  // Gmail weights a bare leading first name accordingly. What actually helps a
+  // transactional subject is being specific about the thing itself, so append
+  // the skill — it also makes each message's subject distinct, which keeps a
+  // run of notifications from looking like one blast.
   const baseTitle = notification.title;
+  const skillSuffix =
+    ctx.skillName && !baseTitle.toLowerCase().includes(ctx.skillName.toLowerCase())
+      ? `: ${ctx.skillName}`
+      : "";
 
   switch (notification.type) {
     case "session_rejected":
-      // Soften "rejected" — same meaning, less alarming for spam classifiers.
-      return `${namePrefix}${baseTitle.replace(/ rejected your session$/, " declined your session")}`;
-    case "session_cancelled":
-      return `Heads-up: ${baseTitle}`;
+      // Soften "rejected" — same meaning, reads less like an alarm.
+      return `${baseTitle.replace(/ rejected your session$/, " declined your session")}${skillSuffix}`;
     case "session_completed":
-      return `${baseTitle} — credits transferred`;
+      return `${baseTitle} - credits transferred`;
     case "session_requested":
     case "session_offered":
     case "session_accepted":
     case "session_rescheduled":
-      return `${namePrefix}${baseTitle}`;
+    case "session_cancelled":
+      return `${baseTitle}${skillSuffix}`;
+    case "welcome":
+      // Brand first, name second. This is the first mail we ever send this
+      // address, so it has to be recognisable in the inbox before it's
+      // personal — and a trailing name reads as a greeting rather than as the
+      // "Firstname, <pitch>" opener that bulk senders use.
+      return recipientName ? `${baseTitle}, ${recipientName}` : baseTitle;
     default:
       return baseTitle;
   }
 }
 
-function renderTemplate(notification: NotificationRow, recipientName: string): RenderedEmail {
-  const subject = buildSubject(notification, recipientName);
+function ctaLabelFor(type: string): string {
+  switch (type) {
+    case "session_completed":
+      return "View history";
+    case "session_rejected":
+      return "Find another teacher";
+    case "welcome":
+      return "Get started";
+    default:
+      return "Open session";
+  }
+}
+
+// First-session checklist, welcome mail only. Kept short — three concrete
+// actions, in the order the app actually asks for them during onboarding.
+const WELCOME_STEPS: readonly string[] = [
+  "Add the skills you can teach — teaching is how you earn credits.",
+  "Tell us what you want to learn so we can suggest people to swap with.",
+  "Book your first session. You already have 10 credits to spend.",
+];
+
+// One plain sentence saying what happened and what, if anything, is expected of
+// the reader. The notification's own `body` is a fragment ("Exam Strategy • 2
+// credits") that repeats the detail table below, so it is only used as a
+// fallback for types this switch doesn't know about.
+function leadParagraph(notification: NotificationRow, ctx: SessionContext): string {
+  const who = ctx.counterpartName ?? "Someone on SkillSwap Connect";
+  const onSkill = ctx.skillName ? ` on ${ctx.skillName}` : "";
+
+  switch (notification.type) {
+    case "session_requested":
+      return `${who} would like to book a session with you${onSkill}. Nothing is booked yet — it stays pending until you accept or decline it.`;
+    case "session_offered":
+      return `${who} has offered to teach you${onSkill}. Accept to lock in the time, or decline if it doesn't suit you.`;
+    case "session_accepted":
+      return `Your session${onSkill} is confirmed. The video room opens from the session page when it's time to start.`;
+    case "session_rescheduled":
+      return `The time for your session${onSkill} has changed. The new slot is below — check it still works for you.`;
+    case "session_rejected":
+      return `${who} isn't able to take this session${onSkill}. No credits were deducted, so you can book someone else whenever you're ready.`;
+    case "session_cancelled":
+      return `This session${onSkill} has been called off, and any credits held for it have been released.`;
+    case "session_completed":
+      return `Your session${onSkill} is marked complete and the credits have been transferred. A short review helps the next person choose.`;
+    case "welcome":
+      return `Your SkillSwap Connect account is ready. SkillSwap is where you trade skills with other people: you teach what you already know, earn credits for it, and spend those credits learning something new.`;
+    default:
+      return notification.body ?? "";
+  }
+}
+
+function detailRows(ctx: SessionContext): Array<[string, string]> {
+  const rows: Array<[string, string]> = [];
+  if (ctx.skillName) rows.push(["Skill", ctx.skillName]);
+  if (ctx.counterpartLabel && ctx.counterpartName) {
+    rows.push([ctx.counterpartLabel, ctx.counterpartName]);
+  }
+  if (ctx.whenText) rows.push(["When", ctx.whenText]);
+  if (ctx.durationText) rows.push(["Length", ctx.durationText]);
+  if (ctx.creditsText) rows.push(["Cost", ctx.creditsText]);
+  return rows;
+}
+
+function renderTemplate(
+  notification: NotificationRow,
+  recipientName: string,
+  ctx: SessionContext,
+): RenderedEmail {
+  const subject = buildSubject(notification, recipientName, ctx);
   const greeting = recipientName ? `Hi ${recipientName},` : "Hi,";
-  const bodyText = notification.body ?? "";
+  const lead = leadParagraph(notification, ctx);
   const ctaUrl = absoluteLink(notification.link);
-  const ctaLabel =
-    notification.type === "session_completed"
-      ? "View history"
-      : notification.type === "session_rejected"
-        ? "Find another teacher"
-        : "Open session";
+  const ctaLabel = ctaLabelFor(notification.type);
+  const isWelcome = notification.type === "welcome";
+  const rows = detailRows(ctx);
+
+  const detailsHtml = rows.length
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px 0;border-collapse:collapse;font-size:15px;line-height:1.5;">
+                ${rows
+                  .map(
+                    ([label, value]) =>
+                      `<tr>
+                  <td style="padding:6px 16px 6px 0;color:#71717a;white-space:nowrap;vertical-align:top;">${escapeHtml(
+                    label,
+                  )}</td>
+                  <td style="padding:6px 0;color:#18181b;font-weight:600;vertical-align:top;">${escapeHtml(
+                    value,
+                  )}</td>
+                </tr>`,
+                  )
+                  .join("")}
+              </table>`
+    : "";
+
+  const stepsHtml = isWelcome
+    ? `<ul style="margin:0 0 24px 0;padding-left:20px;font-size:15px;line-height:1.6;color:#3f3f46;">
+                ${WELCOME_STEPS.map((step) => `<li style="margin-bottom:6px;">${escapeHtml(step)}</li>`).join("")}
+              </ul>`
+    : "";
+
+  const footerNote = isWelcome
+    ? "You're receiving this because an account was just created with this email address on SkillSwap Connect."
+    : "This is an automatic notification about activity on your SkillSwap Connect account. You can turn these emails off in your";
 
   const html = `<!doctype html>
 <html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(notification.title)}</title>
+  </head>
   <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#18181b;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
       <tr>
@@ -174,19 +427,29 @@ function renderTemplate(notification: NotificationRow, recipientName: string): R
             <tr><td style="padding-bottom:16px;">
               <div style="font-weight:700;font-size:18px;color:#0f172a;">SkillSwap Connect</div>
             </td></tr>
-            <tr><td style="padding-bottom:8px;font-size:20px;font-weight:600;line-height:1.3;">
+            <tr><td style="padding-bottom:12px;font-size:20px;font-weight:600;line-height:1.3;">
               ${escapeHtml(notification.title)}
             </td></tr>
-            <tr><td style="padding-bottom:24px;font-size:15px;line-height:1.5;color:#3f3f46;">
+            <tr><td style="padding-bottom:20px;font-size:15px;line-height:1.6;color:#3f3f46;">
               <p style="margin:0 0 12px 0;">${escapeHtml(greeting)}</p>
-              ${bodyText ? `<p style="margin:0;">${escapeHtml(bodyText)}</p>` : ""}
+              ${lead ? `<p style="margin:0;">${escapeHtml(lead)}</p>` : ""}
             </td></tr>
-            <tr><td style="padding-bottom:24px;">
+            <tr><td>
+              ${detailsHtml}
+              ${stepsHtml}
+            </td></tr>
+            <tr><td style="padding-bottom:8px;">
               <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;font-size:14px;">${escapeHtml(ctaLabel)}</a>
             </td></tr>
+            <tr><td style="padding-bottom:24px;font-size:12px;line-height:1.5;color:#71717a;word-break:break-all;">
+              Or open this address in your browser:<br />${escapeHtml(ctaUrl)}
+            </td></tr>
             <tr><td style="border-top:1px solid #e4e4e7;padding-top:16px;font-size:12px;color:#71717a;line-height:1.5;">
-              You're receiving this because you have session notifications enabled.
-              Manage your preferences in your <a href="${escapeHtml(absoluteLink("/profile"))}" style="color:#0f172a;">profile</a>.
+              ${escapeHtml(footerNote)}${
+                isWelcome
+                  ? ""
+                  : ` <a href="${escapeHtml(absoluteLink("/profile"))}" style="color:#0f172a;">profile settings</a>.`
+              }
             </td></tr>
           </table>
         </td>
@@ -195,15 +458,23 @@ function renderTemplate(notification: NotificationRow, recipientName: string): R
   </body>
 </html>`;
 
+  // The plain-text alternative carries the same information as the HTML part.
+  // A text part that is much shorter than its HTML sibling is itself a spam
+  // signal, and it's what filters read when they don't want to render markup.
   const text = [
     greeting,
     "",
     notification.title,
-    bodyText ? `\n${bodyText}` : "",
+    lead ? `\n${lead}` : "",
+    rows.length ? `\n${rows.map(([label, value]) => `  ${label}: ${value}`).join("\n")}` : "",
+    isWelcome ? `\n${WELCOME_STEPS.map((step) => `  - ${step}`).join("\n")}` : "",
     "",
     `${ctaLabel}: ${ctaUrl}`,
     "",
     "— SkillSwap Connect",
+    isWelcome
+      ? "You're receiving this because an account was just created with this email address."
+      : `Automatic notification about your account. Turn these off: ${absoluteLink("/profile")}`,
   ]
     .filter((line) => line !== null && line !== undefined)
     .join("\n");
@@ -237,17 +508,47 @@ async function sendViaGmail(to: string, rendered: RenderedEmail): Promise<void> 
   await getTransporter().sendMail({
     from: `"${fromName}" <${fromAddress}>`,
     to,
-    replyTo: fromAddress,
     subject: rendered.subject,
     html: rendered.html,
     text: rendered.text,
-    headers: {
-      // Plain mailto-based List-Unsubscribe. Don't add List-Unsubscribe-Post
-      // unless we also provide an HTTPS one-click endpoint — Gmail's filter
-      // rejects mail with inconsistent unsubscribe headers (RFC 8058).
-      "List-Unsubscribe": `<mailto:${fromAddress}?subject=unsubscribe>`,
-    },
+    // No List-Unsubscribe, and no Reply-To duplicating From.
+    //
+    // List-Unsubscribe was here on the theory that it helps deliverability.
+    // It does — for bulk mail. These messages are transactional: one
+    // recipient, one thing that just happened on their own account, no
+    // mailing list. Declaring an unsubscribe header tells Gmail the opposite,
+    // it renders the "Unsubscribe from this sender" chip, and the message is
+    // then judged as bulk against a sender with no bulk reputation to lean
+    // on. The opt-out still exists and is linked in the footer — it just
+    // isn't advertised in the headers as if this were a newsletter.
+    //
+    // Reply-To identical to From is redundant (replies already go there) and
+    // shows up as an extra machine-generated header in Gmail's detail view.
   });
+}
+
+// Nodemailer errors carry the useful part outside `.message` — `code` is the
+// class of failure (EAUTH, ECONNECTION, ETIMEDOUT, ESOCKET) and `response` is
+// Gmail's verbatim SMTP reply. Flatten all of it into one string so a failure
+// is diagnosable from `net._http_response` alone, without dashboard access.
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error).slice(0, 500);
+  const extra = error as Error & {
+    code?: string;
+    responseCode?: number;
+    response?: string;
+    command?: string;
+  };
+  return [
+    extra.code ? `[${extra.code}]` : null,
+    extra.responseCode ? `(${extra.responseCode})` : null,
+    extra.command ? `cmd=${extra.command}` : null,
+    error.message,
+    extra.response && extra.response !== error.message ? `| ${extra.response}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500);
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -373,19 +674,21 @@ Deno.serve(async (req) => {
   }
 
   const recipientName = profile?.full_name?.split(" ")[0] ?? "";
-  const rendered = renderTemplate(notification, recipientName);
+  const sessionContext = await loadSessionContext(supabase, notification);
+  const rendered = renderTemplate(notification, recipientName, sessionContext);
 
   try {
     await sendViaGmail(authUser.user.email, rendered);
   } catch (error) {
     // SMTP errors can include the relay banner, auth method names, etc.
     console.error("[send-session-email] gmail send failed", error);
-    await recordOutcome(
-      "failed",
-      error instanceof Error ? error.message.slice(0, 500) : "smtp send failed",
-      authUser.user.email,
-    );
-    return jsonResponse(502, { error: "Email send failed" });
+    const detail = describeError(error);
+    await recordOutcome("failed", detail, authUser.user.email);
+    // Echo the detail back to the caller. Only an HMAC-signed request (i.e.
+    // the DB trigger) can reach this line, so this leaks nothing publicly —
+    // and it lands the real SMTP error in `net._http_response.content`, which
+    // is the one place we can read it back with plain SQL.
+    return jsonResponse(502, { error: "Email send failed", detail });
   }
 
   await recordOutcome("sent", null, authUser.user.email);

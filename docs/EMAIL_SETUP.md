@@ -1,16 +1,18 @@
 # Session email pipeline setup
 
 This walks through enabling transactional emails for session lifecycle events
-(`session_requested`, `session_accepted`, `session_rejected`, `session_cancelled`,
-`session_completed`). The pipeline is also ready to handle `session_rescheduled`
-the moment a notification of that type starts being inserted — no extra wiring
-needed.
+(`session_requested`, `session_offered`, `session_accepted`, `session_rejected`,
+`session_cancelled`, `session_completed`, `session_rescheduled`) plus the
+one-off `welcome` email sent when an account is created (20260725070000) —
+the only mail an OAuth signup produces, since Supabase skips its confirmation
+email when Google has already verified the address.
 
 The pipeline is:
 
 ```
-session insert/update
+session insert/update                 (or: new row in public.profiles)
     └─ trigger notify_session_lifecycle  →  row in public.notifications
+       (welcome: trigger notify_new_user_welcome)
                                                   └─ trigger fanout_session_email
                                                          └─ private.dispatch_session_email
                                                                 └─ net.http_post (HMAC-signed)
@@ -53,6 +55,18 @@ supabase secrets set `
   EMAIL_WEBHOOK_SECRET="paste_a_long_random_string_here" `
   APP_PUBLIC_URL="https://your-deployed-app.example.com"
 ```
+
+Optionally also set `EMAIL_TIMEZONE` (any IANA zone name) to control how
+session times are printed in the email — there's no browser to infer it from,
+so it defaults to `Asia/Kathmandu`:
+
+```powershell
+supabase secrets set EMAIL_TIMEZONE="Asia/Kathmandu"
+```
+
+> `GMAIL_FROM_NAME` affects deliverability more than it looks. A brand name in
+> front of a personal `@gmail.com` address is a phishing pattern to Gmail's
+> filter — see [Deliverability](#deliverability-why-these-emails-land-in-spam).
 
 Generate the webhook secret with:
 
@@ -121,6 +135,112 @@ await supabase.from("profiles").update({ email_notifications_enabled: enabled })
 
 The Edge Function checks this flag before sending — opted-out users still get
 in-app notifications, they just don't get email.
+
+---
+
+## Deliverability: why these emails land in spam
+
+Gmail put the "requested a session" email in spam even though the headers said
+`SPF: PASS`, `DKIM: signed-by gmail.com`, `TLS`. That is worth understanding,
+because it means **authentication was never the problem** — the message was
+correctly signed and still filtered. Gmail rejected it on reputation and shape.
+
+Four things were working against us, in rough order of weight.
+
+### 1. A brand identity on a free personal Gmail address (biggest factor)
+
+The mail goes out as `SkillSwap Connect <utsabkarki1377@gmail.com>`. A company
+display name in front of a personal `@gmail.com` mailbox is the exact pattern
+consumer phishing uses, so Gmail discounts it heavily. It also means:
+
+- DKIM signs for `gmail.com`, not for us — we accumulate **no domain
+  reputation**, ever. The reputation being judged is that of one personal
+  mailbox that has never sent templated HTML before.
+- We can't publish SPF/DKIM/DMARC records, because we don't own `gmail.com`.
+- We can't register in Google Postmaster Tools, so we're blind to our own
+  spam rate.
+
+**The real fix is to send from a domain we control** (see below). Everything
+else on this list is worth doing, but this is the one that decides the
+outcome.
+
+Cheap interim improvement: set `GMAIL_FROM_NAME` to something that matches the
+address instead of contradicting it — e.g. `Utsab Karki (SkillSwap Connect)`.
+Gmail→Gmail personal mail is trusted far more than Gmail→Gmail brand mail.
+
+### 2. We were declaring ourselves bulk mail
+
+The function used to set a `List-Unsubscribe` header. That header is for
+mailing lists, and Gmail rendered it as the "Unsubscribe from this sender"
+chip in the screenshot — proof it had bucketed the message as bulk. Once a
+message is judged as bulk, it is scored against bulk-sender expectations
+(domain reputation, complaint rate, volume history) that a personal Gmail
+account cannot satisfy.
+
+These messages are transactional: one recipient, one event on their own
+account, no list. The header is now gone, along with the redundant `Reply-To`
+that duplicated `From`. The opt-out itself still exists — it's linked in the
+footer and enforced by `profiles.email_notifications_enabled`.
+
+### 3. The subject line opened with the recipient's first name
+
+`Dwane, Utsab Karki requested a session` — a bare `Firstname,` opener is the
+signature of cold outreach, and it was buying us nothing. Subjects are now
+event-first and carry the skill name (`Utsab Karki requested a session: Exam
+Strategy`), which is both more useful and more distinct per message.
+
+### 4. There was almost no content
+
+The body was one fragment (`Exam Strategy • 2 credits`), one big dark button,
+and a footer — a very high link-to-text ratio with nothing a content
+classifier can read as legitimate correspondence. The function now looks the
+session up from `metadata.sessionId` and renders real detail (skill, who,
+when, length, cost), a plain sentence explaining what happened and what to do,
+the destination URL in visible text under the button, and a plain-text part
+that carries the same information as the HTML part.
+
+> Note on what we deliberately did **not** add: a hidden preheader block.
+> Hiding text with `display:none` so it shows in the inbox preview is a
+> standard marketing trick and a well-known spam heuristic.
+
+### The durable fix: send from your own domain
+
+Content and header hygiene shift the odds. They do not override sender
+reputation, and no amount of template editing will reliably inbox mail sent
+as a brand from a free consumer mailbox. To actually solve it:
+
+1. Register a domain (roughly $1–12/year — `.xyz` and `.site` are cheapest).
+2. Sign up for a transactional email provider on its free tier — Resend
+   (3,000/month, 100/day), Brevo (300/day), or Mailgun. Note the pipeline
+   originally shipped against Resend, so that path is well-trodden here.
+3. Add the DNS records the provider gives you: SPF (`TXT`), DKIM
+   (`CNAME`/`TXT`), and DMARC (`_dmarc` `TXT`, start at `p=none`). Wait for
+   the provider to show the domain verified.
+4. Send as `notifications@yourdomain.com` instead of the Gmail address.
+
+This also removes Gmail's ~500 recipients/day cap and gives you real bounce
+and complaint reporting.
+
+### If you need it inboxing *now* (demo / assessment)
+
+Per-recipient filter training is immediate and beats every content signal:
+
+- In the recipient's inbox, open the spam folder and click **Not spam**. One
+  click permanently changes how that sender is scored for that recipient.
+- Add the sending address to the recipient's Google Contacts.
+- Or create an explicit rule: Gmail → Settings → Filters and Blocked Addresses
+  → Create a new filter → `From: utsabkarki1377@gmail.com` → **Never send it
+  to Spam**.
+
+Do this on the accounts you'll be demoing with. It doesn't fix delivery for
+new users, which is what the domain move is for.
+
+### One more thing that hurts: the link target
+
+Every link points at `*.vercel.app`. Free-hosting subdomains are abused
+constantly and carry poor reputation, and the sending identity and the link
+identity don't match. Pointing a custom domain at the Vercel deployment fixes
+this at the same time as it fixes the `From` address.
 
 ---
 

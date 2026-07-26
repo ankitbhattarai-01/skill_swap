@@ -1,1 +1,15 @@
 project_id = "hgkgeosmpsznumuhqrck"
+
+# Session lifecycle emails are dispatched by a Postgres trigger through pg_net
+# (see 20260518000000_session_email_dispatch.sql). pg_net has no user session,
+# so it cannot attach an Authorization header — with JWT verification on, the
+# API gateway rejects every dispatch with 401 UNAUTHORIZED_NO_AUTH_HEADER
+# before the function code ever runs, and no email is sent (the in-app
+# notification still appears, which is what makes this failure so quiet).
+#
+# The function is not unprotected: it verifies an HMAC-SHA256 signature over
+# the request body and refuses anything unsigned. Pinning verify_jwt here
+# means a plain `supabase functions deploy` can no longer silently re-enable
+# gateway auth and break the pipeline again.
+[functions.send-session-email]
+verify_jwt = false
